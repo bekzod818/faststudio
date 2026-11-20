@@ -388,3 +388,15 @@ class Hooked(Base):
     string_sub: Mapped[Any] = mapped_column(StringSub(30))
     plain_sub: Mapped[str | None] = mapped_column(PlainStringSub(30))
     ratio: Mapped[float] = mapped_column(Numeric(5, 2, asdecimal=False), default=Decimal("1.5"))
+
+
+# --- single-table inheritance: the subclass shares employees.id with its base
+class Manager(Employee):
+    __mapper_args__ = {"polymorphic_identity": "manager"}  # noqa: RUF012
+
+
+class Assignment(Base):
+    __tablename__ = "assignments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))

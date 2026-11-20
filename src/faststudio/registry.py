@@ -34,6 +34,7 @@ from faststudio.introspection._fields import (
     is_required_column,
     looks_sensitive,
 )
+from faststudio.introspection._types import FieldType
 from faststudio.model_admin import OPTION_NAMES, ModelAdmin
 
 logger = logging.getLogger("faststudio.registry")
@@ -64,7 +65,8 @@ _UNSUPPORTED_OPTIONS: dict[str, str] = {
     "fieldsets": "use exclude and readonly_fields to control the form",
     "form_columns": "use exclude and readonly_fields to control the form",
     "column_details_list": "use exclude to hide fields from the detail view",
-    "column_sortable_list": "every visible list_display column is sortable",
+    "column_sortable_list": "list_display and ordering columns are sortable "
+    "(except json/unsupported)",
     "list_display_links": "rows link to the edit view automatically",
     "list_editable": "inline list editing is not available yet (see ROADMAP.md)",
 }
@@ -90,6 +92,8 @@ class RegisteredModel:
     list_filter: tuple[str, ...]
     #: (field, descending) pairs.
     ordering: tuple[tuple[str, bool], ...]
+    #: Allowlist for client sorting: list_display + ordering, minus json/unsupported.
+    sortable_fields: tuple[str, ...]
     readonly_fields: frozenset[str]
     exclude: frozenset[str]
     column_labels: Mapping[str, str]
@@ -193,6 +197,7 @@ class _Validator:
             self._warn_create_blocked(field_specs)
 
         name = self._name()
+        ordering = self._ordering()
         return RegisteredModel(
             admin_class=self.cls,
             model=self.mapper.class_,
@@ -206,7 +211,8 @@ class _Validator:
             list_display=tuple(list_display),
             search_fields=tuple(search_fields),
             list_filter=tuple(list_filter),
-            ordering=self._ordering(),
+            ordering=ordering,
+            sortable_fields=_sortable(list_display, ordering, field_specs),
             readonly_fields=readonly_fields,
             exclude=self.excluded,
             column_labels=column_labels,
@@ -467,6 +473,22 @@ def resolve_model_admin(admin_class: object, *, max_page_size: int) -> Registere
         msg = f"{label}: {model!r} is not a mapped SQLAlchemy class."
         raise ConfigurationError(msg)
     return _Validator(admin_class, mapper, max_page_size).resolve()
+
+
+# Values the database cannot order meaningfully (or portably).
+_UNSORTABLE: frozenset[FieldType] = frozenset({"json", "unsupported"})
+
+
+def _sortable(
+    list_display: Sequence[str],
+    ordering: Sequence[tuple[str, bool]],
+    field_specs: Mapping[str, FieldSpec],
+) -> tuple[str, ...]:
+    result: list[str] = []
+    for field in (*list_display, *(f for f, _ in ordering)):
+        if field not in result and field_specs[field].type not in _UNSORTABLE:
+            result.append(field)
+    return tuple(result)
 
 
 def _managed_column_ids(mapper: Mapper[Any]) -> frozenset[int]:
