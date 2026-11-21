@@ -29,7 +29,12 @@ def _make_wheel(tmp_path: Path, names: list[str]) -> Path:
 def test_valid_wheel(tmp_path: Path, verify_wheel: ModuleType) -> None:
     wheel = _make_wheel(
         tmp_path,
-        ["faststudio/py.typed", "faststudio/static/index.html", "faststudio/static/assets/a.js"],
+        [
+            "faststudio/py.typed",
+            "faststudio/static/index.html",
+            "faststudio/static/assets/a.js",
+            "faststudio/schemas/contract.schema.json",
+        ],
     )
     assert verify_wheel.verify(wheel) == []
     assert verify_wheel.main([str(wheel)]) == 0

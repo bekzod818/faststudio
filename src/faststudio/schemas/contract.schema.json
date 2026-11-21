@@ -1,0 +1,643 @@
+{
+  "$defs": {
+    "ChoiceMeta": {
+      "additionalProperties": false,
+      "description": "One allowed value: wire `value` and display `label`.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ChoicesResponse": {
+      "additionalProperties": false,
+      "description": "`GET /models/{identity}/fields/{field}/choices`.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ChoiceMeta"
+          },
+          "type": "array"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "total"
+      ],
+      "type": "object"
+    },
+    "ErrorBody": {
+      "additionalProperties": false,
+      "description": "Error details: a list of issues for `validation_error`, otherwise null.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ValidationIssue"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "details"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid_query",
+        "not_authenticated",
+        "invalid_credentials",
+        "csrf_failed",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "validation_error",
+        "rate_limited",
+        "internal_error"
+      ],
+      "type": "string"
+    },
+    "ErrorResponse": {
+      "additionalProperties": false,
+      "description": "Every non-2xx response body.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "FieldMeta": {
+      "additionalProperties": false,
+      "description": "Description of one visible field (see docs/api-contract.md, \"Field flags\").\n\n`min_value`/`max_value` are only published within ±(2**53 - 1); wider\nranges (BigInteger) are null and enforced by the server.",
+      "properties": {
+        "choices": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ChoiceMeta"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "create_only": {
+          "type": "boolean"
+        },
+        "default": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "has_default": {
+          "type": "boolean"
+        },
+        "help_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "max_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary_key": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "relation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RelationMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/FieldType"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "type",
+        "nullable",
+        "required",
+        "readonly",
+        "create_only",
+        "primary_key",
+        "default",
+        "has_default",
+        "max_length",
+        "min_value",
+        "max_value",
+        "choices",
+        "relation",
+        "timezone",
+        "precision",
+        "scale",
+        "help_text"
+      ],
+      "type": "object"
+    },
+    "FieldType": {
+      "enum": [
+        "foreign_key",
+        "string",
+        "text",
+        "integer",
+        "float",
+        "decimal",
+        "boolean",
+        "date",
+        "datetime",
+        "enum",
+        "json",
+        "uuid",
+        "unsupported"
+      ],
+      "type": "string"
+    },
+    "FilterMeta": {
+      "additionalProperties": false,
+      "description": "A list filter. Boolean filters have no choices (true/false/null).",
+      "properties": {
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/ChoiceMeta"
+          },
+          "type": "array"
+        },
+        "field": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "boolean",
+            "choice"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "kind",
+        "choices"
+      ],
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ListResponse": {
+      "additionalProperties": false,
+      "description": "`GET /models/{identity}/items`.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Row"
+          },
+          "type": "array"
+        },
+        "page": {
+          "type": "integer"
+        },
+        "page_size": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "total",
+        "page",
+        "page_size"
+      ],
+      "type": "object"
+    },
+    "LoginRequest": {
+      "additionalProperties": false,
+      "description": "`POST /auth/login` body. The password never appears in repr or errors.",
+      "properties": {
+        "password": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "username": {
+          "maxLength": 150,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ],
+      "type": "object"
+    },
+    "MetaResponse": {
+      "additionalProperties": false,
+      "description": "`GET /meta`.",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelMeta"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1",
+          "type": "string"
+        },
+        "show_powered_by": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "user": {
+          "$ref": "#/$defs/UserMeta"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "version",
+        "title",
+        "show_powered_by",
+        "user",
+        "models"
+      ],
+      "type": "object"
+    },
+    "ModelMeta": {
+      "additionalProperties": false,
+      "description": "Everything the SPA needs to render one registered model.",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldMeta"
+          },
+          "type": "array"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identity": {
+          "type": "string"
+        },
+        "list_display": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "list_filter": {
+          "items": {
+            "$ref": "#/$defs/FilterMeta"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "name_plural": {
+          "type": "string"
+        },
+        "ordering": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "page_size": {
+          "type": "integer"
+        },
+        "permissions": {
+          "$ref": "#/$defs/PermissionsMeta"
+        },
+        "pk_field": {
+          "type": "string"
+        },
+        "search_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sortable_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identity",
+        "name",
+        "name_plural",
+        "icon",
+        "pk_field",
+        "list_display",
+        "search_fields",
+        "list_filter",
+        "ordering",
+        "sortable_fields",
+        "page_size",
+        "permissions",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "PermissionsMeta": {
+      "additionalProperties": false,
+      "description": "Actions allowed on a model.",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "delete": {
+          "type": "boolean"
+        },
+        "edit": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "create",
+        "edit",
+        "delete"
+      ],
+      "type": "object"
+    },
+    "RelationMeta": {
+      "additionalProperties": false,
+      "description": "Many-to-one target.\n\n`target_identity` and `target_field` are both null when the target model is\nnot registered; otherwise `target_field` is the target's primary key.",
+      "properties": {
+        "target_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_identity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value_type": {
+          "$ref": "#/$defs/FieldType"
+        }
+      },
+      "required": [
+        "target_identity",
+        "target_field",
+        "value_type"
+      ],
+      "type": "object"
+    },
+    "Row": {
+      "additionalProperties": false,
+      "description": "One record: primary key as a string, visible field values, relation labels.",
+      "properties": {
+        "data": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pk": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pk",
+        "data",
+        "labels"
+      ],
+      "type": "object"
+    },
+    "UserMeta": {
+      "additionalProperties": false,
+      "description": "The signed-in admin.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "username"
+      ],
+      "type": "object"
+    },
+    "UserResponse": {
+      "additionalProperties": false,
+      "description": "`POST /auth/login` and `GET /auth/me`.",
+      "properties": {
+        "user": {
+          "$ref": "#/$defs/UserMeta"
+        }
+      },
+      "required": [
+        "user"
+      ],
+      "type": "object"
+    },
+    "ValidationIssue": {
+      "additionalProperties": false,
+      "description": "One invalid input. Never echoes the submitted value.",
+      "properties": {
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "msg": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "loc",
+        "msg",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "FastStudio API contract, schema_version 1. Generated by scripts/export_contract.py - do not edit.",
+  "properties": {
+    "ChoicesResponse": {
+      "$ref": "#/$defs/ChoicesResponse"
+    },
+    "ErrorResponse": {
+      "$ref": "#/$defs/ErrorResponse"
+    },
+    "ListResponse": {
+      "$ref": "#/$defs/ListResponse"
+    },
+    "LoginRequest": {
+      "$ref": "#/$defs/LoginRequest"
+    },
+    "MetaResponse": {
+      "$ref": "#/$defs/MetaResponse"
+    },
+    "Row": {
+      "$ref": "#/$defs/Row"
+    },
+    "UserResponse": {
+      "$ref": "#/$defs/UserResponse"
+    }
+  },
+  "title": "FastStudioContract",
+  "type": "object"
+}

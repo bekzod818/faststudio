@@ -9,7 +9,11 @@ import sys
 import zipfile
 from pathlib import Path
 
-REQUIRED = ("faststudio/py.typed", "faststudio/static/index.html")
+REQUIRED = (
+    "faststudio/py.typed",
+    "faststudio/static/index.html",
+    "faststudio/schemas/contract.schema.json",
+)
 
 
 def verify(wheel: Path) -> list[str]:
