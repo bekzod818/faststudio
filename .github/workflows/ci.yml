@@ -29,6 +29,8 @@ jobs:
       - run: uv sync
       - run: uv run ruff check --output-format=github .
       - run: uv run ruff format --check .
+      - name: API contract JSON Schema is up to date
+        run: uv run python scripts/export_contract.py --check
 
   typecheck:
     name: Typecheck (mypy --strict)
@@ -78,6 +80,8 @@ jobs:
         with:
           package_json_file: frontend/package.json
       - run: pnpm -C frontend audit --prod --audit-level=high
+      - name: pnpm audit (including dev tooling such as codegen)
+        run: pnpm -C frontend audit --audit-level=high
 
   frontend:
     name: Frontend (lint, test, build)
@@ -93,6 +97,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm -C frontend install --frozen-lockfile
+      - name: Generated TypeScript contract is up to date
+        run: pnpm -C frontend check:contract
       - run: pnpm -C frontend lint
       - run: pnpm -C frontend format:check
       - run: pnpm -C frontend typecheck

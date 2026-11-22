@@ -2,8 +2,27 @@
 
 Base path: `{base_url}/api/v1` (default `/admin/api/v1`). Metadata
 `schema_version`: `"1"`. The contract is defined by Pydantic models in
-`faststudio.schemas`, exported to `schemas/contract.schema.json` and generated
-into `frontend/src/api/contract.gen.ts` (ADR-0007). CI fails if they drift.
+`faststudio/schemas/contract.py` (frozen, `extra="forbid"`), exported to
+`src/faststudio/schemas/contract.schema.json` and generated into
+`frontend/src/api/contract.gen.ts` (ADR-0007). Both artifacts are committed;
+CI and pre-commit fail if they drift.
+
+```bash
+uv run python scripts/export_contract.py      # Pydantic -> JSON Schema
+pnpm -C frontend gen:contract                 # JSON Schema -> TypeScript
+uv run python scripts/export_contract.py --check && pnpm -C frontend check:contract
+```
+
+`FieldType` and `ErrorCode` are named definitions in the schema (and TypeScript
+unions); the frontend must handle every `FieldType` (an exhaustive `switch`
+is enforced by `tsc`). `LoginRequest` limits `username` to 150 characters
+without control or bidi-override characters, and `password` to 1024
+characters; the password never appears in `repr` or validation errors.
+
+**Integers:** JavaScript represents integers exactly only up to ±(2^53 − 1).
+Field bounds (`min_value`/`max_value`) and integer defaults outside that range
+are published as `null` (the server still enforces bounds), and integer
+*values* outside it are sent as strings in `Row.data`.
 
 ## Endpoints
 
@@ -76,6 +95,9 @@ Every error response, including 404 and 500, has this body:
 ```json
 { "error": { "code": "validation_error", "message": "Invalid input.", "details": [ { "loc": ["email"], "msg": "...", "type": "string_too_long" } ] } }
 ```
+
+`details` is a list of `{loc, msg, type}` for `validation_error` and `null`
+for every other code. It never contains the submitted values.
 
 | Status | `code` | When |
 |---|---|---|

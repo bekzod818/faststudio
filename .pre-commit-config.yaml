@@ -42,6 +42,18 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: contract-schema
+        name: API contract JSON Schema up to date
+        entry: uv run python scripts/export_contract.py --check
+        language: system
+        files: ^(src/faststudio/schemas/.*|src/faststudio/introspection/_types\.py|scripts/export_contract\.py|uv\.lock|pyproject\.toml)$
+        pass_filenames: false
+      - id: contract-ts
+        name: generated TypeScript contract up to date
+        entry: pnpm -C frontend check:contract
+        language: system
+        files: ^(src/faststudio/schemas/contract\.schema\.json|frontend/src/api/contract\.gen\.ts|frontend/scripts/gen-contract\.mjs|frontend/package\.json|frontend/pnpm-lock\.yaml)$
+        pass_filenames: false
       - id: forbid-static-build
         name: never commit built SPA (src/faststudio/static)
         entry: built SPA files must not be committed (ADR-0002)

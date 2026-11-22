@@ -48,6 +48,18 @@ listed under **Changed** or **Removed** with migration notes.
   unsupported types are read-only; relations only target primary keys;
   sensitive and unsupported defaults are not published. A warning is logged
   when `can_create` is enabled but a required column can never be supplied.
+- Versioned API contract (`schema_version` "1") as frozen Pydantic models
+  (`MetaResponse`, `ModelMeta`, `FieldMeta`, `ListResponse`, `Row`,
+  `ChoicesResponse`, `UserResponse`, `LoginRequest`, `ErrorResponse`), with
+  `ModelMeta` built from registered models (relation targets resolved
+  across the registry, preferring the table owner under single-table
+  inheritance; sortable-field allowlist computed at registration). Login
+  passwords never appear in `repr` or errors, usernames reject control
+  characters, error details never echo inputs, and unsafe integer bounds
+  are not published.
+- `scripts/export_contract.py` exports the contract to a committed,
+  deterministic JSON Schema; `pnpm gen:contract` generates
+  `frontend/src/api/contract.gen.ts` from it. CI and pre-commit fail on drift.
 
 ## [0.0.1] - 2026-11-23
 

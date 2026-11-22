@@ -45,7 +45,7 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 
 | Control | Tests |
 |---|---|
-| argon2id hashing (`argon2-cffi` defaults); no plaintext ever stored or logged. | `test_passwords.py` |
+| argon2id hashing (`argon2-cffi` defaults); no plaintext ever stored or logged. `LoginRequest` hides the password from `repr` and validation errors; passwords are capped at 1024 chars (argon2 cost) and usernames reject control/bidi characters (log injection). | `test_passwords.py`, `tests/unit/schemas/test_contract.py` |
 | Identical status, body and code for unknown user vs wrong password vs inactive/non-admin. | `test_login.py` |
 | Dummy argon2 verification for unknown users to equalize timing; the `AuthBackend` protocol documents this as a requirement for custom backends. | `test_login.py` (asserts verify called) |
 | Login rate limit (default 5 / 15 min per client IP + username) ⇒ 429 with `Retry-After`; pluggable `RateLimiter`. | `test_rate_limit.py` |
@@ -70,7 +70,7 @@ configure trusted proxy headers correctly.
 | Control | Tests |
 |---|---|
 | No SQL text is built from input; all queries are SQLAlchemy Core/ORM expressions with bound parameters. | code review, bandit |
-| `ordering` fields must be in the sortable allowlist; `filter[...]` fields in `list_filter`; values in declared choices. Unknown ⇒ 400. | `test_list_injection.py` |
+| `ordering` fields must be in the sortable allowlist (`RegisteredModel.sortable_fields`: `list_display` + default `ordering`, minus `json`/`unsupported`, computed at `register()`); `filter[...]` fields in `list_filter`; values in declared choices. Unknown ⇒ 400. | `tests/unit/schemas/test_contract.py`, `test_list_injection.py` |
 | Search uses `ILIKE` with bound parameters on `search_fields` only; `%`/`_` in input are escaped. | `test_list_injection.py` |
 | Model identity and field names resolved via registry dicts, never `getattr` on user input. The allowlists are validated at `register()` (unknown names, non-text search fields and non-boolean/enum filters fail startup). | `tests/unit/test_model_admin_validation.py`, `test_list_injection.py` |
 | `page_size` capped at `max_page_size`; `page` bounded. | `test_pagination.py` |
@@ -82,9 +82,9 @@ configure trusted proxy headers correctly.
 | Write bodies validated by generated Pydantic models with `extra="forbid"`; only writable fields exist on them. Readonly, excluded and unknown fields ⇒ 422 and the row is unchanged. Primary keys are never writable on update; only natural keys (`create_only`) are accepted on create. | `test_mass_assignment.py` |
 | Writability is derived at `register()` and fails closed: database/SQLAlchemy-maintained columns (autoincrement, identity, computed, sequence, trigger defaults, `onupdate`, discriminator, version id), unsupported or value-converting types, and FKs whose own type is unsupported are `readonly`. Relations only point at primary keys. | `tests/unit/introspection/test_fields.py` |
 | Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
-| `exclude`d fields never appear in metadata, list, retrieve or choices responses, and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `test_exclude.py` |
+| `exclude`d fields never appear in metadata (checked on the whole serialized payload), list, retrieve or choices responses, and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `tests/unit/schemas/test_contract.py`, `test_exclude.py` |
 | `can_create` / `can_edit` / `can_delete` enforced server-side (403), not only hidden in the UI. | `test_permissions.py` |
-| Integrity errors return 409 with a generic message; SQL/driver text is only logged. | `test_errors.py` |
+| Integrity errors return 409 with a generic message; SQL/driver text is only logged. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `test_errors.py` |
 
 ### T6. Cross-site scripting
 

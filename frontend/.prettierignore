@@ -3,4 +3,4 @@ coverage
 playwright-report
 test-results
 pnpm-lock.yaml
-src/api/*.gen.ts
+src/api/contract.gen.ts
