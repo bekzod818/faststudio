@@ -132,6 +132,18 @@ class Registry:
         """Return the model registered under ``identity`` or raise ``KeyError``."""
         return self._by_identity[identity]
 
+    def target_of(self, target: Column[Any]) -> RegisteredModel | None:
+        """Return the registered model whose primary key is `target`.
+
+        Several models can share the column (single-table inheritance): the
+        model that owns the table is preferred, then registration order.
+        """
+        candidates = [c for c in self if c.fields[c.pk_field] is target]
+        if not candidates:
+            return None
+        owners = [c for c in candidates if not sa_inspect(c.model).single]
+        return (owners or candidates)[0]
+
     def __iter__(self) -> Iterator[RegisteredModel]:
         """Iterate in registration order."""
         return iter(self._by_identity.values())
@@ -489,6 +501,20 @@ def _sortable(
         if field not in result and field_specs[field].type not in _UNSORTABLE:
             result.append(field)
     return tuple(result)
+
+
+def label_field(registered: RegisteredModel) -> str:
+    """Field used as the display label of a record in relations and choices.
+
+    The first visible string/text field of `list_display` (then of all
+    fields), falling back to the primary key. A model's `__str__` is never
+    used: it could include excluded columns.
+    """
+    for name in (*registered.list_display, *registered.fields):
+        spec = registered.field_specs[name]
+        if name != registered.pk_field and spec.type in {"string", "text"}:
+            return name
+    return registered.pk_field
 
 
 def _managed_column_ids(mapper: Mapper[Any]) -> frozenset[int]:

@@ -81,6 +81,12 @@ listed under **Changed** or **Removed** with migration notes.
   revocation when a user's password or access changes.
 - CSRF protection for every unsafe API request: signed double-submit tokens
   bound to the session, rotated on login and logout.
+- Read API (session required): `GET /meta`, `GET /models/{identity}/items`
+  (pagination, case-insensitive search, sorting and filters, all validated
+  against the `ModelAdmin` allowlists; anything else is `400`),
+  `GET /models/{identity}/items/{pk}` and foreign-key
+  `GET /models/{identity}/fields/{field}/choices`. Rows carry relation labels
+  from visible fields; large integers are sent as strings.
 - `Admin(title=...)` rejects control and invisible formatting characters.
 - Playwright E2E now runs the built SPA through the real admin mount and
   fails on any CSP violation.

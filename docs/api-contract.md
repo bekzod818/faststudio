@@ -78,13 +78,38 @@ built, a `503` placeholder page is served.
 
 | Param | Rules |
 |---|---|
-| `page` | integer ≥ 1 (default 1) |
+| `page` | integer 1 … 100 000 (default 1) |
 | `page_size` | 1 … `max_page_size` (default `ModelAdmin.page_size`) |
-| `q` | free text; `ILIKE` across `search_fields` with bound parameters; ignored if none declared |
-| `ordering` | `field` or `-field`, comma-separated; each must be sortable and allowlisted |
-| `filter[field]` | `field ∈ list_filter`; value must be `true`/`false`/`null` (boolean) or a declared choice |
+| `q` | ≤ 200 characters, no control characters, trimmed; case-insensitive *contains* across `search_fields` with bound parameters; `%`, `_` and `\` match literally; ignored if none declared |
+| `ordering` | `field` or `-field`, comma-separated, at most 5, no repeats; each must be in `sortable_fields`; an empty value is `400` (omit the parameter for the default). The primary key is appended as a tie-breaker. Default: `ModelAdmin.ordering`, else primary key |
+| `filter[field]` | `field ∈ list_filter`; value `true`/`false` (boolean), a declared choice value (enum), or `null` if the column is nullable |
 
-Unknown parameters or values outside these rules return `400 invalid_query`.
+Any other parameter, a repeated parameter or a value outside these rules
+returns `400 invalid_query`; messages name the parameter, never the value.
+
+### Rows
+
+- `data` holds the `list_display` fields in lists and every visible field when
+  retrieving one record.
+- `labels` maps each foreign-key field to the display label of the referenced
+  record when its model is registered. The label is the target's first
+  visible string/text field (`list_display` first), falling back to its
+  primary key (also used when the value is empty); `__str__` is never used.
+  Labels are at most 200 characters. With inheritance, only rows of the
+  registered target class are labelled.
+- Integers outside ±(2^53 − 1) are strings, also when nested inside JSON values.
+- Unsupported values are shown as text (binary data as `<N bytes>`, other
+  values truncated to 200 characters).
+
+### Choices
+
+`GET /models/{identity}/fields/{field}/choices?page=&q=` works only for
+foreign-key fields whose target model is registered (otherwise `404`). It
+returns 20 options per page ordered by label, each `{value: <target pk as
+string>, label}`. `q` searches the target's `search_fields`, or its label field
+when it has none (and is ignored if the label is the primary key). Only rows
+of the registered target class are offered (joined and single-table
+inheritance respected).
 
 ## Shapes
 
@@ -192,7 +217,7 @@ relation).
 | `readonly` | in `readonly_fields` ∨ maintained by the database or SQLAlchemy (autoincrement, `Identity`, `Computed`, `Sequence`, `FetchedValue` server default, `onupdate`/`server_onupdate`, joined-inheritance subclass PK, polymorphic discriminator, `version_id_col`) ∨ `unsupported` ∨ a primary key that is not `create_only` |
 | `create_only` | natural primary keys only: a PK with no default that is not generated (e.g. `code: String(2)`). Accepted on create, never on update. A PK with a default (`uuid4`) is `readonly`: clients never choose it. |
 | `required` | not nullable ∧ no default ∧ not generated/managed ∧ not readonly |
-| `min_value`, `max_value` | `integer` fields: portable ranges for `SmallInteger` (16-bit), `Integer` (32-bit), `BigInteger` (64-bit) |
+| `min_value`, `max_value` | `integer` fields: portable ranges for `SmallInteger` (16-bit), `Integer` (32-bit), `BigInteger` (64-bit). The same ranges bound integer keys in URLs, so a plain `Integer` primary key above 2^31 − 1 (possible on SQLite) is not addressable: declare it `BigInteger` |
 | `max_length` | `String(n)` length, else `null` |
 | `choices` | enums only: `[{value, label}]`, value = member name, label humanized (`IN_PROGRESS` → "In progress") |
 | `relation` | single-column many-to-one foreign keys **to the target table's single-column primary key** only: `{target_identity, target_field, value_type}`; `target_identity` is `null` when the target model is not registered. Composite foreign keys and foreign keys to non-key columns are plain values. A foreign key to a table missing from the metadata is a `ConfigurationError`. |

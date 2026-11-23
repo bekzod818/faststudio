@@ -431,7 +431,7 @@ async def test_every_api_route_except_login_requires_a_session(
             )
             assert response.status_code == 401, (method, path, response.text)
             checked += 1
-    assert checked >= 2  # /auth/me and /auth/logout at least
+    assert checked >= 6  # auth/me, auth/logout, meta, items, item, choices
 
 
 @pytest.mark.usefixtures("admin")

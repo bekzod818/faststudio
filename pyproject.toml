@@ -143,6 +143,8 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 source = ["faststudio"]
 branch = true
+# SQLAlchemy's asyncio layer runs code in greenlets; trace them too.
+concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
 fail_under = 90

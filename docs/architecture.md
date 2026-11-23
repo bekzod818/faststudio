@@ -44,8 +44,8 @@ FastStudio is two halves joined by a versioned JSON contract:
 | `registry.py` | validates `ModelAdmin` classes into frozen `RegisteredModel`s; identity → model (private) |
 | `introspection/` | SQLAlchemy column → `FieldSpec` (`_types.py` type mapping, `_fields.py` flags; see `api-contract.md`) |
 | `schemas/` | Pydantic API contract `contract.py` (exported to JSON Schema / TypeScript) and `_meta.py` (registered model → `ModelMeta`) |
-| `query/` | safe search/filter/sort/paginate builders |
-| `api/` | sub-app factory, routers (`auth`, `meta`, `crud`), error handling |
+| `query/` | strict parameter parsing (`_params.py`) and statement building (`_list.py`); the only place request input meets SQL |
+| `api/` | sub-app factory (`_app.py`), shared deps, routers `auth.py` (login/logout/me) and `models.py` (meta, list, retrieve, choices), serialization, error handling |
 | `auth/` | `AuthBackend` protocol, `ModelUserBackend`, passwords, session, CSRF |
 | `security/` | security headers, same-origin API guard, secret validation, rate limiting |
 | `_spa.py` | index.html rendering, runtime config injection, history fallback |
@@ -71,7 +71,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M4 | Contract schemas + TypeScript codegen | done |
 | M5 | Sub-app mount, SPA serving, security headers | done |
 | M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | done |
-| M7 | Meta + read API | planned |
+| M7 | Meta + read API | done |
 | M8 | Write API | planned |
 | M9 | Frontend foundation (layout, login, dashboard) | planned |
 | M10 | List view | planned |

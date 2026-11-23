@@ -10,6 +10,7 @@ from faststudio._spa import AdminRootRecorder, SpaSite
 from faststudio.api._context import AdminContext
 from faststudio.api.auth import protected_router, public_router
 from faststudio.api.errors import install_error_handlers
+from faststudio.api.models import router as models_router
 from faststudio.security.csrf import CsrfMiddleware
 from faststudio.security.headers import SecurityHeadersMiddleware
 from faststudio.security.origin import SameOriginGuard
@@ -32,6 +33,7 @@ def create_admin_app(context: AdminContext) -> FastAPI:
     app.state.faststudio = context
     app.include_router(public_router)
     app.include_router(protected_router)
+    app.include_router(models_router)
     app.mount(
         "/assets",
         StaticFiles(directory=context.static_dir / "assets", check_dir=False),

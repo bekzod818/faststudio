@@ -480,3 +480,32 @@ class TenantAdmin(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Gauge(Base):
+    """Portable value-encoding fixture (creatable on SQLite)."""
+
+    __tablename__ = "gauges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(50))
+    big: Mapped[int | None] = mapped_column(BigInteger)
+    ratio: Mapped[float | None] = mapped_column(Float)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    role: Mapped[Role | None] = mapped_column(Enum(Role))
+    token: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    blob: Mapped[bytes | None] = mapped_column(LargeBinary)
+    doc: Mapped[Any | None] = mapped_column(JSON)
+    day: Mapped[date | None] = mapped_column(Date)
+    stamp: Mapped[datetime | None] = mapped_column(DateTime)
+    flag: Mapped[bool | None] = mapped_column(Boolean)
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"))
+
+
+class Mentorship(Base):
+    """FK to a joined-inheritance subclass (engineers.id)."""
+
+    __tablename__ = "mentorships"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engineer_id: Mapped[int | None] = mapped_column(ForeignKey("engineers.id"))

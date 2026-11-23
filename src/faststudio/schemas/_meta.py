@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy import inspect as sa_inspect
-
 from faststudio.introspection._fields import FieldSpec, JsonValue, Relation
 from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas.contract import (
@@ -57,25 +55,15 @@ def _filter_meta(field: str, spec: FieldSpec) -> FilterMeta:
 
 
 def _relation_meta(relation: Relation, registry: Registry) -> RelationMeta:
-    """Resolve the target model now: it may have been registered after the source.
-
-    Several models can share the target column (single-table inheritance); the
-    model that owns the table (not a single-table subclass) is preferred, then
-    registration order.
-    """
-    candidates = [c for c in registry if c.fields[c.pk_field] is relation.target]
-    if not candidates:
+    """Resolve the target model now: it may have been registered after the source."""
+    target = registry.target_of(relation.target)
+    if target is None:
         return RelationMeta(target_identity=None, target_field=None, value_type=relation.value_type)
-    owner = next((c for c in candidates if not _is_single_table_subclass(c)), candidates[0])
     return RelationMeta(
-        target_identity=owner.identity,
-        target_field=owner.pk_field,
+        target_identity=target.identity,
+        target_field=target.pk_field,
         value_type=relation.value_type,
     )
-
-
-def _is_single_table_subclass(registered: RegisteredModel) -> bool:
-    return bool(sa_inspect(registered.model).single)
 
 
 def _safe_default(value: JsonValue) -> JsonValue:

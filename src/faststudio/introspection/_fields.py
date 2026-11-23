@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias, TypeGuard
 
 from sqlalchemy import (
     BigInteger,
@@ -232,18 +232,19 @@ def json_default(value: object, field_type: FieldType | None = None) -> JsonValu
         return value.name
     if isinstance(value, datetime | date | time | uuid.UUID):
         return str(value) if isinstance(value, uuid.UUID) else value.isoformat()
-    return cast("JsonValue", value) if _is_plain_json(value) else None
+    return value if is_plain_json(value) else None
 
 
-def _is_plain_json(value: object) -> bool:
+def is_plain_json(value: object) -> TypeGuard[JsonValue]:
+    """Return True for values JSON can represent exactly (no NaN/inf, str keys)."""
     if value is None or isinstance(value, str | bool | int):
         return True
     if isinstance(value, float):
         return math.isfinite(value)
     if isinstance(value, list):
-        return all(_is_plain_json(v) for v in value)
+        return all(is_plain_json(v) for v in value)
     if isinstance(value, dict):
-        return all(isinstance(k, str) and _is_plain_json(v) for k, v in value.items())
+        return all(isinstance(k, str) and is_plain_json(v) for k, v in value.items())
     return False
 
 
