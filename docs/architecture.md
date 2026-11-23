@@ -42,7 +42,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | `exceptions.py` | `FastStudioError` hierarchy (`ConfigurationError`, ...) |
 | `model_admin.py` | `ModelAdmin` declarative options |
 | `registry.py` | validates `ModelAdmin` classes into frozen `RegisteredModel`s; identity → model (private) |
-| `introspection/` | SQLAlchemy column → `FieldMeta` (type mapping in `api-contract.md`) |
+| `introspection/` | SQLAlchemy column → `FieldSpec` (`_types.py` type mapping, `_fields.py` flags; see `api-contract.md`) |
 | `schemas/` | Pydantic API contract (exported to JSON Schema / TypeScript) |
 | `query/` | safe search/filter/sort/paginate builders |
 | `api/` | sub-app factory, routers (`auth`, `meta`, `crud`), error handling |
@@ -67,7 +67,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M0 | Scaffold, tooling, CI | done |
 | M1 | Config, exceptions, `Admin` init, secret validation | done |
 | M2 | `ModelAdmin` + registry validation | done |
-| M3 | Introspection | planned |
+| M3 | Introspection | done |
 | M4 | Contract schemas + TypeScript codegen | planned |
 | M5 | Sub-app mount, SPA serving, security headers | planned |
 | M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | planned |

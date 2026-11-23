@@ -79,7 +79,9 @@ configure trusted proxy headers correctly.
 
 | Control | Tests |
 |---|---|
-| Write bodies validated by generated Pydantic models with `extra="forbid"`; only writable fields exist on them. Readonly, excluded, PK and unknown fields ⇒ 422 and the row is unchanged. | `test_mass_assignment.py` |
+| Write bodies validated by generated Pydantic models with `extra="forbid"`; only writable fields exist on them. Readonly, excluded and unknown fields ⇒ 422 and the row is unchanged. Primary keys are never writable on update; only natural keys (`create_only`) are accepted on create. | `test_mass_assignment.py` |
+| Writability is derived at `register()` and fails closed: database/SQLAlchemy-maintained columns (autoincrement, identity, computed, sequence, trigger defaults, `onupdate`, discriminator, version id), unsupported or value-converting types, and FKs whose own type is unsupported are `readonly`. Relations only point at primary keys. | `tests/unit/introspection/test_fields.py` |
+| Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
 | `exclude`d fields never appear in metadata, list, retrieve or choices responses, and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `test_exclude.py` |
 | `can_create` / `can_edit` / `can_delete` enforced server-side (403), not only hidden in the UI. | `test_permissions.py` |
 | Integrity errors return 409 with a generic message; SQL/driver text is only logged. | `test_errors.py` |

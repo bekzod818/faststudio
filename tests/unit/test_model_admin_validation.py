@@ -597,7 +597,7 @@ def test_sensitive_visible_fields_log_warning(
     ],
 )
 def test_sensitive_name_pattern_matches(name: str) -> None:
-    from faststudio.registry import _looks_sensitive  # noqa: PLC0415
+    from faststudio.introspection._fields import looks_sensitive as _looks_sensitive  # noqa: PLC0415
 
     assert _looks_sensitive(name)
 
@@ -617,7 +617,7 @@ def test_sensitive_name_pattern_matches(name: str) -> None:
     ],
 )
 def test_sensitive_name_pattern_ignores_harmless_names(name: str) -> None:
-    from faststudio.registry import _looks_sensitive  # noqa: PLC0415
+    from faststudio.introspection._fields import looks_sensitive as _looks_sensitive  # noqa: PLC0415
 
     assert not _looks_sensitive(name)
 
@@ -625,7 +625,7 @@ def test_sensitive_name_pattern_ignores_harmless_names(name: str) -> None:
 def test_no_sensitive_warning_when_excluded(admin: Admin, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level("WARNING", logger="faststudio"):
         admin.register(_admin_class(exclude=["password_hash"]))
-    assert caplog.records == []
+    assert not any("look sensitive" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize(

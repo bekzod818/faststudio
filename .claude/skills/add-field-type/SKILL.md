@@ -17,19 +17,28 @@ a type that renders but cannot be edited safely (or vice versa).
 - Update the mapping table in `docs/api-contract.md` first.
 
 ## 1. Tests first (backend)
-- Add a column of the new type to the test models in `tests/factories/`.
-- `tests/unit/introspection/`: parametrized case asserting `type`, `nullable`,
-  `required`, `readonly`, `max_length`/`choices` as applicable.
+- Add a column of the new type to `AllTypes` in `tests/factories/models.py`
+  and the matching row to `TYPE_TABLE` in
+  `tests/unit/introspection/test_fields.py` (same order:
+  `test_every_column_is_classified` checks it).
+- Add cases asserting `type`, `nullable`, `required`, `readonly`,
+  `create_only`, `default` (wire format) and any type-specific flag.
 - `tests/integration/`: create + retrieve round trip; invalid value → 422 with
   `validation_error` details; value appears correctly in list response.
 
 ## 2. Introspection
-- `src/faststudio/introspection/_types.py`: register the SQLAlchemy type class
-  in the resolver, **more specific classes before their bases**. Remember
-  `TypeDecorator.impl` unwrapping and dialect variants.
+- `src/faststudio/introspection/_types.py`: add the literal to `FieldType` and
+  the SQLAlchemy class to `_SIMPLE_TYPES`, **more specific classes before their
+  bases**. If SQLAlchemy emulates it with a `TypeDecorator`, add it to
+  `_EMULATED` instead. `base_type()` in `_columns.py` already fails closed for
+  dialect variants and value-converting decorators.
+- `src/faststudio/introspection/_fields.py`: add type-specific flags (like
+  `_max_length`, `_choices`, `_int_range`, the timezone/precision guards) and
+  extend `json_default` if the wire format of defaults differs.
 
 ## 3. Contract + validation
-- Add the literal to `FieldType` in `src/faststudio/schemas/contract.py`.
+- The contract's field type in `src/faststudio/schemas/contract.py` must reuse
+  `introspection._types.FieldType` (single source of truth); never redeclare it.
 - `src/faststudio/schemas/_dynamic.py`: map to the Pydantic input type
   (strict where possible) and to the serializer for the wire format.
 - Run the `api-contract-sync` skill.

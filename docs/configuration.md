@@ -61,7 +61,16 @@ and Django/SQLAdmin names (`list_per_page`, `column_details_exclude_list`,
 
 At registration FastStudio logs a warning for visible fields whose names look
 sensitive (`password`, `hash`, `secret`, `token`, `api_key`, `salt`, `otp`).
-Add them to `exclude`.
+Add them to `exclude`. It also warns when `can_create` is enabled but a
+required database column can never be supplied (excluded, readonly or of an
+unsupported type).
+
+Field metadata sent to the admin UI includes scalar column **defaults** and
+column **comments** (as help text). Don't put secrets in either.
+Columns maintained by the database or SQLAlchemy (`onupdate`, `Sequence`,
+`Computed`, `Identity`, triggers, version id, polymorphic discriminator) are
+read-only automatically. Custom `TypeDecorator`s that convert values are shown
+read-only (see `docs/api-contract.md`).
 
 | Option | Default | Notes |
 |---|---|---|

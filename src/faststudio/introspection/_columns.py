@@ -21,7 +21,7 @@ def mapped_columns(mapper: Mapper[Any]) -> dict[str, Column[Any]]:
     own_tables = {id(table) for table in mapper.tables}
     result: dict[str, Column[Any]] = {}
     for prop in mapper.column_attrs:
-        columns = [_canonical(c) for c in prop.columns if isinstance(c, Column)]
+        columns = [canonical_column(c) for c in prop.columns if isinstance(c, Column)]
         local = [c for c in columns if c.table is mapper.local_table]
         own = [c for c in columns if id(c.table) in own_tables]
         chosen = next(iter(local or own), None)
@@ -30,7 +30,7 @@ def mapped_columns(mapper: Mapper[Any]) -> dict[str, Column[Any]]:
     return result
 
 
-def _canonical(column: Column[Any]) -> Column[Any]:
+def canonical_column(column: Column[Any]) -> Column[Any]:
     """Return the table's own ``Column`` object.
 
     ``column_property(Model.attr)`` stores an *annotated copy* of the column, a
@@ -43,17 +43,46 @@ def _canonical(column: Column[Any]) -> Column[Any]:
     return canonical if isinstance(canonical, Column) else column
 
 
-def base_type(type_: TypeEngine[Any]) -> TypeEngine[Any] | None:
-    """Unwrap ``TypeDecorator`` layers; ``None`` if the type is dialect-dependent.
+# Hooks through which a type can transform values on the way to or from the
+# database. Overriding any of them means the Python type may differ from the
+# storage type, so the column cannot be classified by its base type.
+_VALUE_HOOKS = (
+    "process_bind_param",
+    "process_result_value",
+    "bind_processor",
+    "result_processor",
+    "bind_expression",
+    "column_expression",
+)
 
-    Types whose implementation depends on the database dialect (``with_variant``
-    or a ``TypeDecorator`` overriding ``load_dialect_impl``) cannot be classified
-    safely without an engine and are treated as unknown.
+
+def _builtin_base(cls: type[Any]) -> type[Any]:
+    """Return the nearest SQLAlchemy-defined class in ``cls``'s MRO."""
+    return next(k for k in cls.__mro__ if k.__module__.startswith("sqlalchemy."))
+
+
+def _converts_values(type_: TypeEngine[Any]) -> bool:
+    cls = type(type_)
+    base = TypeDecorator if isinstance(type_, TypeDecorator) else _builtin_base(cls)
+    return any(getattr(cls, hook, None) is not getattr(base, hook, None) for hook in _VALUE_HOOKS)
+
+
+def base_type(type_: TypeEngine[Any]) -> TypeEngine[Any] | None:
+    """Unwrap ``TypeDecorator`` layers; ``None`` if the type cannot be classified.
+
+    Returns ``None`` (fail closed) for types whose implementation depends on the
+    database dialect (``with_variant``, a ``TypeDecorator`` overriding
+    ``load_dialect_impl``) and for types that convert values through any of
+    ``_VALUE_HOOKS`` (custom ``TypeDecorator``s or direct subclasses of built-in
+    types): their Python type may differ from the storage type, e.g. JSON
+    stored as VARCHAR or values encrypted in SQL.
     """
     while True:
         # `_variant_mapping` is private SQLAlchemy API (checked against 2.0 and 2.1);
         # tests with `with_variant()` columns catch any change in behaviour.
         if getattr(type_, "_variant_mapping", None):
+            return None
+        if _converts_values(type_):
             return None
         if not isinstance(type_, TypeDecorator):
             return type_

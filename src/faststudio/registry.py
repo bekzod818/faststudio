@@ -18,21 +18,28 @@ from typing import Any
 
 from sqlalchemy import Column
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import NoReferenceError
 from sqlalchemy.orm import Mapper
 
 from faststudio.exceptions import ConfigurationError
-from faststudio.introspection._columns import is_filterable, is_text, mapped_columns
+from faststudio.introspection._columns import (
+    canonical_column,
+    is_filterable,
+    is_text,
+    mapped_columns,
+)
+from faststudio.introspection._fields import (
+    FieldSpec,
+    build_field_spec,
+    is_required_column,
+    looks_sensitive,
+)
 from faststudio.model_admin import OPTION_NAMES, ModelAdmin
 
 logger = logging.getLogger("faststudio.registry")
 
 _IDENTITY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _ICON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-# Whole '_'-separated name segments only, so "passenger_count" or "hashtag" do not match.
-_SENSITIVE = re.compile(
-    r"(?:^|_)(?:pass(?:word|wd)?|pwd|hash(?:ed)?|secret|token|api_?key|salt|otp)(?:_|$)",
-    re.IGNORECASE,
-)
 _MAX_ICON_LENGTH = 64
 _MAX_NAME_LENGTH = 100
 _DEFAULT_LIST_COLUMNS = 4
@@ -76,6 +83,8 @@ class RegisteredModel:
     pk_field: str
     #: Visible (non-excluded) fields in declaration order -> Column.
     fields: Mapping[str, Column[Any]]
+    #: Visible fields in declaration order -> introspected description.
+    field_specs: Mapping[str, FieldSpec]
     list_display: tuple[str, ...]
     search_fields: tuple[str, ...]
     list_filter: tuple[str, ...]
@@ -139,6 +148,7 @@ class _Validator:
         self.mapper = mapper
         self.max_page_size = max_page_size
         self.available: Mapping[str, Column[Any]] = mapped_columns(mapper)
+        self.managed: frozenset[int] = _managed_column_ids(mapper)
         self.excluded: frozenset[str] = frozenset()  # set once `exclude` is validated
 
     def fail(self, message: str) -> ConfigurationError:
@@ -172,6 +182,15 @@ class _Validator:
                     f"list_filter: {field!r} must be a boolean or enum column in this version."
                 )
         self._warn_sensitive(visible)
+        readonly_fields = frozenset(self._fields("readonly_fields", visible_only=True))
+        column_labels = self._column_labels()
+        field_specs = {
+            key: self._field_spec(key, column, column_labels.get(key), key in readonly_fields)
+            for key, column in visible.items()
+        }
+        can_create = self._flag("can_create")
+        if can_create:
+            self._warn_create_blocked(field_specs)
 
         name = self._name()
         return RegisteredModel(
@@ -183,15 +202,16 @@ class _Validator:
             icon=self._icon(),
             pk_field=pk_field,
             fields=MappingProxyType(visible),
+            field_specs=MappingProxyType(field_specs),
             list_display=tuple(list_display),
             search_fields=tuple(search_fields),
             list_filter=tuple(list_filter),
             ordering=self._ordering(),
-            readonly_fields=frozenset(self._fields("readonly_fields", visible_only=True)),
+            readonly_fields=readonly_fields,
             exclude=self.excluded,
-            column_labels=self._column_labels(),
+            column_labels=column_labels,
             page_size=self._page_size(),
-            can_create=self._flag("can_create"),
+            can_create=can_create,
             can_edit=self._flag("can_edit"),
             can_delete=self._flag("can_delete"),
         )
@@ -226,8 +246,55 @@ class _Validator:
             visible[key] = column
         return visible
 
+    def _siblings(self, key: str, column: Column[Any]) -> list[Column[Any]]:
+        """Other columns of the same attribute (joined-inheritance primary keys)."""
+        prop = self.mapper.get_property(key)
+        others = [
+            canonical_column(c) for c in getattr(prop, "columns", ()) if isinstance(c, Column)
+        ]
+        return [c for c in others if c is not column]
+
+    def _is_managed(self, column: Column[Any], siblings: Sequence[Column[Any]]) -> bool:
+        return any(id(c) in self.managed for c in (column, *siblings))
+
+    def _field_spec(
+        self, key: str, column: Column[Any], label: str | None, readonly: bool
+    ) -> FieldSpec:
+        siblings = self._siblings(key, column)
+        try:
+            return build_field_spec(
+                key,
+                column,
+                label=label,
+                readonly=readonly,
+                siblings=siblings,
+                managed=self._is_managed(column, siblings),
+            )
+        except NoReferenceError as exc:
+            raise self.fail(
+                f"field {key!r} has a foreign key that cannot be resolved: {exc}"
+            ) from exc
+
+    def _warn_create_blocked(self, field_specs: Mapping[str, FieldSpec]) -> None:
+        """Warn if the database needs a value that no create request can supply."""
+        blocked: list[str] = []
+        for key, column in self.available.items():
+            siblings = self._siblings(key, column)
+            if not is_required_column(column, siblings, managed=self._is_managed(column, siblings)):
+                continue
+            spec = field_specs.get(key)
+            if spec is None or spec.readonly:
+                blocked.append(key)
+        if blocked:
+            logger.warning(
+                "%s: creating rows will fail because required field(s) %s are excluded or "
+                "readonly; set can_create = False or give them a default.",
+                self.label,
+                ", ".join(repr(k) for k in blocked),
+            )
+
     def _warn_sensitive(self, visible: Mapping[str, Column[Any]]) -> None:
-        exposed = [key for key in visible if _looks_sensitive(key)]
+        exposed = [key for key in visible if looks_sensitive(key)]
         if exposed:
             logger.warning(
                 "%s: field(s) %s look sensitive but are not excluded; add them to "
@@ -402,10 +469,14 @@ def resolve_model_admin(admin_class: object, *, max_page_size: int) -> Registere
     return _Validator(admin_class, mapper, max_page_size).resolve()
 
 
-def _looks_sensitive(name: str) -> bool:
-    """Match sensitive words as whole segments of snake_case or camelCase names."""
-    snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
-    return bool(_SENSITIVE.search(snake))
+def _managed_column_ids(mapper: Mapper[Any]) -> frozenset[int]:
+    """Columns the mapper maintains itself: polymorphic discriminators and version ids."""
+    ids: set[int] = set()
+    for current in mapper.iterate_to_root():
+        for column in (current.polymorphic_on, current.version_id_col):
+            if isinstance(column, Column):
+                ids.add(id(canonical_column(column)))
+    return frozenset(ids)
 
 
 def _humanize(class_name: str) -> str:

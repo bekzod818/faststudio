@@ -37,6 +37,17 @@ listed under **Changed** or **Removed** with migration notes.
   attributes are rejected so a misspelled option never fails open; typos and
   Django/SQLAdmin option names get a suggestion. Joined-table inheritance is
   supported. Visible fields with sensitive-looking names log a warning.
+- Introspection of every visible column into a field description: type
+  (`string`, `text`, `integer`, `float`, `decimal`, `boolean`, `date`,
+  `datetime`, `enum`, `json`, `uuid`, `foreign_key`, `unsupported`),
+  label, nullable/required/readonly flags, JSON-safe default, max length,
+  enum choices, many-to-one relation target, timezone, precision/scale and
+  help text from the column comment, integer ranges, and a `create_only` flag
+  for natural primary keys. Writability fails closed: database- or
+  SQLAlchemy-maintained columns, value-converting `TypeDecorator`s and
+  unsupported types are read-only; relations only target primary keys;
+  sensitive and unsupported defaults are not published. A warning is logged
+  when `can_create` is enabled but a required column can never be supplied.
 
 ## [0.0.1] - 2026-11-23
 
