@@ -23,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Integer,
     Interval,
     LargeBinary,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     TypeDecorator,
     Unicode,
     UnicodeText,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -400,3 +402,81 @@ class Assignment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+
+
+# --- admin accounts for authentication tests
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(150), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Operator(Base):
+    """Custom column names and a UUID primary key."""
+
+    __tablename__ = "operators"
+
+    uid: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    login: Mapped[str] = mapped_column(String(150), unique=True)
+    secret: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class CompositeLogin(Base):
+    __tablename__ = "composite_logins"
+
+    tenant: Mapped[int] = mapped_column(primary_key=True)
+    seq: Mapped[int] = mapped_column(primary_key=True)
+    login: Mapped[str] = mapped_column(String(50))
+    pw: Mapped[str] = mapped_column(String(255))
+
+
+class DatedLogin(Base):
+    __tablename__ = "dated_logins"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    login: Mapped[str] = mapped_column(String(50))
+    pw: Mapped[str] = mapped_column(String(255))
+
+
+class LegacyAdmin(Base):
+    """Username not declared unique; nullable password (e.g. SSO-only accounts)."""
+
+    __tablename__ = "legacy_admins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(150))
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class IndexedAdmin(Base):
+    """Uniqueness declared through a unique index."""
+
+    __tablename__ = "indexed_admins"
+    __table_args__ = (Index("ix_indexed_admins_username", "username", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(150))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class TenantAdmin(Base):
+    """Usernames unique only per tenant: not unique on their own."""
+
+    __tablename__ = "tenant_admins"
+    __table_args__ = (UniqueConstraint("tenant", "username"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant: Mapped[int] = mapped_column(Integer)
+    username: Mapped[str] = mapped_column(String(150))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)

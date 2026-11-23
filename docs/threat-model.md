@@ -32,38 +32,54 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 
 ### T1. Authentication bypass
 
-| Control | Tests (planned path) |
+| Control | Tests |
 |---|---|
-| Every route except `POST /auth/login` depends on the session dependency; a test enumerates all mounted routes and asserts 401 without a cookie. | `tests/integration/security/test_auth_required.py` |
-| Session cookie signed with itsdangerous (HMAC-SHA), purpose-specific salt; tampered cookie ⇒ 401. | `test_session.py` |
-| Absolute expiry via signed timestamp (`session_max_age`); expired ⇒ 401. | `test_session.py` |
-| `auth_version` in cookie must match the user's current value (derived from the password hash); password change or deactivation invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `test_session.py`, `tests/unit/test_authenticated_user.py` |
-| `ModelUserBackend` admits only active **and** admin users. | `test_model_backend.py` |
-| Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path={base_url}`. | `test_session.py` |
+| Every route except `POST /auth/login` is on the session-protected router; a test enumerates all mounted API routes and asserts 401 without a session. | `tests/integration/security/test_auth.py::test_every_api_route_except_login_requires_a_session` |
+| Session cookie signed with itsdangerous (HMAC), purpose-specific salt; tampered, truncated, forged-payload or foreign-key cookie ⇒ 401 and the cookie is cleared. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
+| Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
+| `auth_version` in cookie must match the user's current value (`ModelUserBackend`: SHA-256 of password hash + active/admin flags); password change, deactivation or losing admin rights invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `tests/integration/security/test_auth.py`, `tests/unit/auth/test_model_backend.py`, `tests/unit/test_authenticated_user.py` |
+| `ModelUserBackend` admits only active **and** admin users; its column configuration is validated at startup. | `tests/unit/auth/test_model_backend.py` |
+| Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path` = browser-visible admin root (proxy prefix + `base_url`), `Max-Age` = `session_max_age`. | `tests/integration/security/test_auth.py` |
 
 ### T2. Credential attacks and user enumeration
 
 | Control | Tests |
 |---|---|
-| argon2id hashing (`argon2-cffi` defaults); no plaintext ever stored or logged. `LoginRequest` hides the password from `repr` and validation errors; passwords are capped at 1024 chars (argon2 cost) and usernames reject control/bidi characters (log injection). | `test_passwords.py`, `tests/unit/schemas/test_contract.py` |
-| Identical status, body and code for unknown user vs wrong password vs inactive/non-admin. | `test_login.py` |
-| Dummy argon2 verification for unknown users to equalize timing; the `AuthBackend` protocol documents this as a requirement for custom backends. | `test_login.py` (asserts verify called) |
-| Login rate limit (default 5 / 15 min per client IP + username) ⇒ 429 with `Retry-After`; pluggable `RateLimiter`. | `test_rate_limit.py` |
-| Constant-time comparisons (`hmac.compare_digest`) for all token comparisons. | code review + `test_csrf.py` |
+| argon2id hashing (`argon2-cffi` defaults); verification never raises on malformed hashes; no plaintext ever stored or logged (failed logins log only the client address). `LoginRequest` hides the password from `repr` and validation errors; passwords are capped at 1024 chars (argon2 cost) and usernames reject control/bidi characters (log injection). | `tests/unit/auth/test_passwords.py`, `tests/unit/schemas/test_contract.py` |
+| Identical status, body and code for unknown user vs wrong password vs inactive/non-admin. | `tests/integration/security/test_auth.py` |
+| Dummy argon2 verification for unknown or ambiguous usernames and for rows without a usable argon2 hash (NULL, legacy bcrypt, SSO-only); inactive/non-admin rows still verify the password; the dummy hash is computed at startup; the `AuthBackend` protocol documents this as a requirement for custom backends. | `tests/unit/auth/test_model_backend.py` (asserts the verifications run) |
+| Login rate limit (default 5 / 15 min per client IP + username normalized with NFKC/casefold/trim, counted before verifying, reset on success; rejected attempts do not extend the lockout) ⇒ 429 with `Retry-After`; pluggable `RateLimiter`. | `tests/unit/security/test_rate_limit.py`, `tests/integration/security/test_auth.py` |
+| Constant-time comparisons (`hmac.compare_digest`) for CSRF tokens, CSRF header vs cookie, and `auth_version`. | code review, `tests/unit/auth/test_tokens.py` |
 
-Residual risk: the in-memory limiter is per process; multi-worker deployments
-need a shared limiter. Rate limiting by IP behind a proxy requires the host to
-configure trusted proxy headers correctly.
+Residual risks (documented, accepted for v0.1):
+
+- The in-memory limiter is per process; multi-worker deployments need a
+  shared `RateLimiter`.
+- Limits are per client IP + username. An attacker with many addresses (e.g.
+  rotating IPv6) gets more guesses against one account, and database
+  collations that treat spellings as equal beyond NFKC/casefold/trim (e.g.
+  accent-insensitive) may give extra buckets. Use a shared limiter with a
+  per-account or per-network budget for internet-facing admins.
+- Anyone who knows an admin's username can keep that account locked out from
+  their IP (5 attempts per window). Behind a reverse proxy without trusted
+  proxy headers (uvicorn `--proxy-headers --forwarded-allow-ips`), all clients
+  share one IP, so this affects everyone.
+- The limiter keeps at most 10 000 keys (least recently used evicted), so
+  spraying that many keys can reset a lockout.
+- `ModelUserBackend` refuses logins when a username matches several rows (and
+  warns at startup if the column is not declared unique), and does not rehash
+  passwords with outdated argon2 parameters (it never writes to the host's
+  user table).
 
 ### T3. Cross-site request forgery
 
 | Control | Tests |
 |---|---|
-| All POST/PUT/PATCH/DELETE (including login and logout) require header `X-FastStudio-CSRF` equal to cookie `faststudio_csrftoken` (double submit), signature-verified. | `test_csrf.py` |
-| After login the token is bound to the session id (`HMAC(sid, nonce)`); a token from another session is rejected. | `test_csrf.py` |
-| `Origin` / `Sec-Fetch-Site` must indicate same origin when present. Enforced for **every** `/api/*` request, including GET, so a permissive host CORS policy cannot expose admin reads (ADR-0008). | `tests/integration/security/test_origin.py`, `test_csrf.py` |
-| `SameSite=Lax` session cookie as defense in depth. | `test_session.py` |
-| Token rotated on login and logout. | `test_csrf.py` |
+| All POST/PUT/PATCH/DELETE under `/api/` (including login, logout and unknown paths, checked before routing) require header `X-FastStudio-CSRF` equal to cookie `faststudio_csrftoken` (double submit) and an HMAC-valid token. | `tests/integration/security/test_auth.py`, `tests/integration/test_errors.py` |
+| After login the token is bound to the session id (`HMAC(key, sid|nonce)`); a token from another session, or an anonymous token while signed in (cookie tossing), is rejected (login itself still accepts an anonymous token). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
+| `Origin` / `Sec-Fetch-Site` must indicate same origin when present. Enforced for **every** `/api/*` request, including GET, so a permissive host CORS policy cannot expose admin reads (ADR-0008). | `tests/integration/security/test_origin.py`, `tests/integration/security/test_auth.py` |
+| `SameSite=Lax` session cookie as defense in depth. | `tests/integration/security/test_auth.py` |
+| Token rotated on login and logout, and reset to an anonymous token whenever an invalid session is cleared; a missing or invalid token cookie is replaced on the next response (never on cacheable `/assets/` responses). | `tests/integration/security/test_auth.py` |
 
 ### T4. Injection (SQL / query manipulation)
 
@@ -104,7 +120,7 @@ configure trusted proxy headers correctly.
 |---|---|
 | No secret ships with the package or repo; gitleaks runs in pre-commit. | pre-commit |
 | Missing, non-string, short (< 32 chars; < 43 if hand-written charset or word passphrase), placeholder, sequential/keyboard-run, low-diversity or whitespace-padded secret ⇒ `ConfigurationError` at startup; the value never appears in messages, exception chains or `repr`. False rejection of generated keys (token_urlsafe, token_hex, base64, Django-style) is negligible (< 1e-7 per key) and covered by a seeded regression test. | `tests/unit/security/test_secret.py`, `tests/unit/test_config.py` |
-| Purpose-specific key derivation (separate salts for session and CSRF). | `test_session.py` |
+| Purpose-specific key derivation: sessions use itsdangerous with salt `faststudio.session` and HMAC-SHA256; CSRF tokens use an HMAC key derived with label `faststudio.csrf`. | `tests/unit/auth/test_tokens.py::test_session_and_csrf_keys_are_separate`, `::test_session_signature_uses_sha256` |
 
 ### T8. Supply chain
 

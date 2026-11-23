@@ -72,6 +72,15 @@ listed under **Changed** or **Removed** with migration notes.
   permissive host CORS policy cannot expose admin data (ADR-0008).
 - Works behind path-prefix proxies (`--root-path`): the SPA shell, assets,
   API URLs and the trailing-slash redirect include the prefix.
+- Authentication: `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`;
+  every other API route requires a session. Public `ModelUserBackend`
+  (admins from your own user model, argon2id, timing-equalized failures),
+  `hash_password()`, `RateLimiter`, `RateLimitDecision` and
+  `InMemoryRateLimiter` (default 5 attempts / 15 min per IP + username).
+- Signed, HttpOnly, SameSite=Lax session cookies with absolute expiry and
+  revocation when a user's password or access changes.
+- CSRF protection for every unsafe API request: signed double-submit tokens
+  bound to the session, rotated on login and logout.
 - `Admin(title=...)` rejects control and invisible formatting characters.
 - Playwright E2E now runs the built SPA through the real admin mount and
   fails on any CSP violation.

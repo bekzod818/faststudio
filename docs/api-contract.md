@@ -48,6 +48,17 @@ characters are `\u`-escaped so no value can close the element. It is public
 (served before login), so it carries no version number. If the SPA is not
 built, a `503` placeholder page is served.
 
+## Authentication and CSRF
+
+- The SPA shell (and any admin response) sets `faststudio_csrftoken` when the
+  browser has no valid token; the SPA sends it back in `X-FastStudio-CSRF`.
+- `POST /auth/login` accepts an anonymous token; on success it sets
+  `faststudio_session` and a new token bound to the session.
+- Every other unsafe request needs the session-bound token. Missing or wrong
+  tokens get `403 csrf_failed` before routing (also for unknown paths).
+- `POST /auth/logout` clears the session and issues a new anonymous token.
+- Any `401 not_authenticated` caused by an invalid session also clears it.
+
 ## Endpoints
 
 | Method | Path | Session | CSRF | Success |

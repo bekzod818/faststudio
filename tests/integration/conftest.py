@@ -87,3 +87,13 @@ async def proxy_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 async def https_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with _client(app, base_url="https://testserver") as c:
         yield c
+
+
+async def csrf_headers(client: httpx.AsyncClient) -> dict[str, str]:
+    """Headers carrying a valid anonymous CSRF token (cookie + header), as the SPA sends."""
+    response = await client.get("/admin/")
+    header = next(
+        h for h in response.headers.get_list("set-cookie") if h.startswith("faststudio_csrftoken=")
+    )
+    token = header.split(";", 1)[0].split("=", 1)[1]
+    return {"cookie": f"faststudio_csrftoken={token}", "x-faststudio-csrf": token}

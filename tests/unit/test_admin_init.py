@@ -127,3 +127,41 @@ def test_invalid_base_url_propagates(
 ) -> None:
     with pytest.raises(ConfigurationError, match="base_url"):
         Admin(app, engine=engine, auth_backend=auth_backend, secret_key=secret_key, base_url="/")
+
+
+class _SyncLimiter:
+    def hit(self, key: str) -> None:
+        return None
+
+    def reset(self, key: str) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "limiter",
+    [object(), "limiter", _SyncLimiter(), _SyncLimiter],
+    ids=["object", "str", "sync", "class"],
+)
+def test_rejects_invalid_rate_limiter(
+    app: FastAPI, engine: AsyncEngine, auth_backend: StubAuthBackend, secret_key: str, limiter: Any
+) -> None:
+    with pytest.raises(ConfigurationError, match="rate_limiter"):
+        Admin(
+            app,
+            engine=engine,
+            auth_backend=auth_backend,
+            secret_key=secret_key,
+            rate_limiter=limiter,
+        )
+
+
+def test_accepts_custom_rate_limiter(
+    app: FastAPI, engine: AsyncEngine, auth_backend: StubAuthBackend, secret_key: str
+) -> None:
+    from faststudio import InMemoryRateLimiter  # noqa: PLC0415
+
+    limiter = InMemoryRateLimiter(max_attempts=2)
+    admin = Admin(
+        app, engine=engine, auth_backend=auth_backend, secret_key=secret_key, rate_limiter=limiter
+    )
+    assert admin._sub_app.state.faststudio.rate_limiter is limiter

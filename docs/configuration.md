@@ -17,7 +17,7 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `session_max_age` | `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
 | `secure_cookies` | `bool` | `True` | – | `Secure` cookie flag. Browsers accept secure cookies on `http://localhost`, so keep this on for local dev too. `False` logs a warning at startup. |
 | `max_page_size` | `int` | `100` | – | Hard cap for list requests and `ModelAdmin.page_size`; 1–1000. |
-| `rate_limiter` *(coming in M6, before v0.1.0)* | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. |
+| `rate_limiter` | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
 
 ## Mounting
@@ -37,6 +37,32 @@ read responses; FastStudio rejects every cross-origin browser request to its
 API (including GET) with `403`, so admin data stays same-origin regardless
 (ADR-0008). Unhandled admin errors return a generic 500 and are then re-raised
 to the host, so your error monitoring sees them.
+
+## Authentication
+
+`ModelUserBackend(model, *, username_field="username",
+password_field="password_hash", is_active_field="is_active",
+is_admin_field="is_admin")` reads admins from your own SQLAlchemy model.
+Column names are checked at startup. Only active admins can sign in; pass
+`is_admin_field=None` only if every row of that table is an administrator.
+Store passwords with `faststudio.hash_password()` (argon2id); rows without a
+usable argon2 hash (NULL, other algorithms) cannot sign in. Declare the
+username column unique: if several rows match a username, the login is
+refused (FastStudio logs a warning at startup when it is not unique).
+
+Sessions are signed cookies (`faststudio_session`, HttpOnly, `SameSite=Lax`,
+Secure unless `secure_cookies=False`) scoped to the admin path. Changing a
+user's password, deactivating them or removing admin rights signs them out
+everywhere on their next request. Rotating `FASTSTUDIO_SECRET_KEY` signs
+everyone out.
+
+Custom backends implement `faststudio.AuthBackend` (async `authenticate()` and
+`get_user()`, returning `faststudio.AuthenticatedUser`); FastStudio provides
+cookies, CSRF protection, expiry and rate limiting around them.
+
+For several workers, pass a shared `rate_limiter` implementing
+`faststudio.RateLimiter` (async `hit(key) -> RateLimitDecision` and
+`reset(key)`), e.g. backed by Redis.
 
 ## Generating a secret key
 

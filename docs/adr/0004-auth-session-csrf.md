@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
+- Implementation notes (M6): sessions are signed with HMAC-SHA256; see docs/threat-model.md T1-T3.
 
 ## Context
 

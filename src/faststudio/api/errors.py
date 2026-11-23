@@ -59,6 +59,7 @@ class ApiError(Exception):
         message: str | None = None,
         *,
         headers: dict[str, str] | None = None,
+        set_cookies: Sequence[str] = (),
     ) -> None:
         """Create an error; `message` defaults to a generic text for `code`."""
         super().__init__(code)
@@ -66,6 +67,7 @@ class ApiError(Exception):
         self.code = code
         self.message = message or _MESSAGES[code]
         self.headers = headers
+        self.set_cookies = tuple(set_cookies)
 
 
 def error_response(
@@ -117,7 +119,12 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
     # Starlette dispatches handlers by exception type, so the casts are safe.
     async def on_api_error(request: Request, exc: Exception) -> Response:
         error = cast("ApiError", exc)
-        return error_response(error.status_code, error.code, error.message, headers=error.headers)
+        response = error_response(
+            error.status_code, error.code, error.message, headers=error.headers
+        )
+        for cookie in error.set_cookies:
+            response.headers.append("set-cookie", cookie)
+        return response
 
     async def on_http_error(request: Request, exc: Exception) -> Response:
         http_error = cast("StarletteHTTPException", exc)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
+from faststudio.security.csrf import CsrfMiddleware
 from faststudio.security.headers import SecurityHeadersMiddleware
 from faststudio.security.origin import SameOriginGuard, is_cross_origin
 
@@ -47,3 +48,20 @@ async def test_non_http_scopes_pass_through(wrapper: type) -> None:
 )
 def test_is_cross_origin(scheme: str, headers: list[tuple[bytes, bytes]], cross: bool) -> None:
     assert is_cross_origin({"type": "http", "scheme": scheme, "headers": headers}) is cross
+
+
+async def test_csrf_middleware_ignores_non_http_scopes() -> None:
+    seen: list[str] = []
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        seen.append(scope["type"])
+
+    async def receive() -> Message:
+        return {"type": "lifespan.startup"}
+
+    async def send(message: Message) -> None:
+        return None
+
+    middleware = CsrfMiddleware(inner, context=None)  # type: ignore[arg-type]  # unused here
+    await middleware({"type": "lifespan"}, receive, send)
+    assert seen == ["lifespan"]

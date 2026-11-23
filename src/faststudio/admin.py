@@ -13,13 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from faststudio.api._app import AdminContext, create_admin_app, wrap_admin_app
+from faststudio.api._app import create_admin_app, wrap_admin_app
+from faststudio.api._context import AdminContext
 from faststudio.auth.backend import AuthBackend
+from faststudio.auth.csrf import CsrfTokens
+from faststudio.auth.session import SessionManager
 from faststudio.config import Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
 from faststudio.model_admin import ModelAdmin
 from faststudio.registry import Registry, resolve_model_admin
 from faststudio.security.headers import SecurityHeadersMiddleware
+from faststudio.security.rate_limit import InMemoryRateLimiter, RateLimiter
 
 _T = TypeVar("_T")
 _A = TypeVar("_A", bound=type[ModelAdmin])
@@ -49,6 +53,7 @@ class Admin:
         session_max_age: timedelta = timedelta(hours=8),
         secure_cookies: bool = True,
         max_page_size: int = 100,
+        rate_limiter: RateLimiter | None = None,
         show_powered_by: bool = True,
     ) -> None:
         """Configure FastStudio for ``app``.
@@ -68,6 +73,8 @@ class Admin:
             secure_cookies: Set the ``Secure`` cookie flag. Disable only for
                 plain-HTTP development on non-localhost hosts.
             max_page_size: Upper bound for list page sizes.
+            rate_limiter: Login throttling; defaults to `InMemoryRateLimiter()`
+                (5 attempts per 15 minutes per client IP and username, per process).
             show_powered_by: Show the "Powered by FastStudio" footer.
 
         Raises:
@@ -96,6 +103,12 @@ class Admin:
             session_maker=self._session_maker,
             auth_backend=self._auth_backend,
             static_dir=_STATIC_DIR,
+            sessions=SessionManager(
+                self._settings.secret_key,
+                max_age=int(self._settings.session_max_age.total_seconds()),
+            ),
+            csrf=CsrfTokens(self._settings.secret_key),
+            rate_limiter=_validate_rate_limiter(rate_limiter),
         )
         self._sub_app = create_admin_app(context)
         base_url = self._settings.base_url
@@ -106,7 +119,7 @@ class Admin:
                 include_in_schema=False,
             )
         )
-        app.mount(base_url, wrap_admin_app(self._sub_app), name="faststudio")
+        app.mount(base_url, wrap_admin_app(self._sub_app, context), name="faststudio")
 
     def register(self, model_admin: _A) -> _A:
         """Validate and register a :class:`ModelAdmin` subclass.
@@ -167,6 +180,20 @@ def _validate_auth_backend(backend: AuthBackend) -> AuthBackend:
     ):
         raise ConfigurationError(msg)
     return backend
+
+
+def _validate_rate_limiter(limiter: RateLimiter | None) -> RateLimiter:
+    if limiter is None:
+        return InMemoryRateLimiter()
+    candidate = cast("object", limiter)
+    if (
+        isinstance(candidate, type)
+        or not isinstance(candidate, RateLimiter)
+        or not all(inspect.iscoroutinefunction(getattr(limiter, m)) for m in ("hit", "reset"))
+    ):
+        msg = "rate_limiter must implement RateLimiter (async hit() and reset())."
+        raise ConfigurationError(msg)
+    return limiter
 
 
 def _resolve_session_maker(

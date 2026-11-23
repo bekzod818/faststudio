@@ -70,7 +70,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M3 | Introspection | done |
 | M4 | Contract schemas + TypeScript codegen | done |
 | M5 | Sub-app mount, SPA serving, security headers | done |
-| M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | planned |
+| M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | done |
 | M7 | Meta + read API | planned |
 | M8 | Write API | planned |
 | M9 | Frontend foundation (layout, login, dashboard) | planned |

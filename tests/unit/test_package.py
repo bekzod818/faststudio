@@ -19,6 +19,11 @@ def test_public_api_is_explicit() -> None:
         "AuthenticatedUser",
         "ConfigurationError",
         "FastStudioError",
+        "InMemoryRateLimiter",
         "ModelAdmin",
+        "ModelUserBackend",
+        "RateLimitDecision",
+        "RateLimiter",
         "__version__",
+        "hash_password",
     ]
