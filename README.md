@@ -88,7 +88,7 @@ table's `password_hash` column with `is_admin = True`. See
 | `title` | – | `"FastStudio"` | Shown in the header and browser tab. |
 | `session_max_age` | – | 8 hours | Absolute session lifetime. |
 | `secure_cookies` | – | `True` | Set `False` only for plain-HTTP development on non-localhost hosts. |
-| `max_page_size` | – | `100` | Upper bound for any list request. |
+| `max_page_size` | – | `100` | Upper bound for any list request and for `ModelAdmin.page_size`. |
 | `rate_limiter` | – | in-memory | Use a shared limiter when running several workers. |
 | `show_powered_by` | – | `True` | "Powered by FastStudio" footer. |
 

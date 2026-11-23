@@ -72,7 +72,7 @@ configure trusted proxy headers correctly.
 | No SQL text is built from input; all queries are SQLAlchemy Core/ORM expressions with bound parameters. | code review, bandit |
 | `ordering` fields must be in the sortable allowlist; `filter[...]` fields in `list_filter`; values in declared choices. Unknown ⇒ 400. | `test_list_injection.py` |
 | Search uses `ILIKE` with bound parameters on `search_fields` only; `%`/`_` in input are escaped. | `test_list_injection.py` |
-| Model identity and field names resolved via registry dicts, never `getattr` on user input. | `test_list_injection.py` |
+| Model identity and field names resolved via registry dicts, never `getattr` on user input. The allowlists are validated at `register()` (unknown names, non-text search fields and non-boolean/enum filters fail startup). | `tests/unit/test_model_admin_validation.py`, `test_list_injection.py` |
 | `page_size` capped at `max_page_size`; `page` bounded. | `test_pagination.py` |
 
 ### T5. Mass assignment and data exposure
@@ -80,7 +80,7 @@ configure trusted proxy headers correctly.
 | Control | Tests |
 |---|---|
 | Write bodies validated by generated Pydantic models with `extra="forbid"`; only writable fields exist on them. Readonly, excluded, PK and unknown fields ⇒ 422 and the row is unchanged. | `test_mass_assignment.py` |
-| `exclude`d fields never appear in metadata, list, retrieve or choices responses. | `test_exclude.py` |
+| `exclude`d fields never appear in metadata, list, retrieve or choices responses, and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `test_exclude.py` |
 | `can_create` / `can_edit` / `can_delete` enforced server-side (403), not only hidden in the UI. | `test_permissions.py` |
 | Integrity errors return 409 with a generic message; SQL/driver text is only logged. | `test_errors.py` |
 

@@ -16,7 +16,7 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `base_url` | `str` | `"/admin"` | – | Mount path such as `/admin` or `/back-office/studio`. Segments may use letters, digits, `.`, `_`, `~`, `-`; a trailing `/` is removed. `/`, empty or dot segments, queries, fragments and percent-encoding are rejected. |
 | `session_max_age` | `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
 | `secure_cookies` | `bool` | `True` | – | `Secure` cookie flag. Browsers accept secure cookies on `http://localhost`, so keep this on for local dev too. `False` logs a warning at startup. |
-| `max_page_size` | `int` | `100` | – | Hard cap for list requests; 1–1000. |
+| `max_page_size` | `int` | `100` | – | Hard cap for list requests and `ModelAdmin.page_size`; 1–1000. |
 | `rate_limiter` *(coming in M6, before v0.1.0)* | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
 
@@ -45,17 +45,42 @@ the key. Rotating the key signs everyone out.
 
 ## `ModelAdmin` options
 
+Declare with `class UserAdmin(ModelAdmin, model=User)` and register with
+`admin.register(UserAdmin)` or the `@admin.register` decorator. Field names are
+the model's **attribute** names (not database column names). All options are
+validated by `register()`; mistakes raise `ConfigurationError` naming the class
+and option.
+
+**Unknown public class attributes are rejected**, so a misspelled option such
+as `exclude_fields` can never silently leave a column exposed. Name your own
+class attributes with a leading underscore (`_cache = ...`); methods,
+properties and class/static methods are allowed. Misspellings (`list_filters`)
+and Django/SQLAdmin names (`list_per_page`, `column_details_exclude_list`,
+...) are reported with a suggestion; options FastStudio does not support
+(`fields`, `fieldsets`, `list_editable`, ...) say so.
+
+At registration FastStudio logs a warning for visible fields whose names look
+sensitive (`password`, `hash`, `secret`, `token`, `api_key`, `salt`, `otp`).
+Add them to `exclude`.
+
 | Option | Default | Notes |
 |---|---|---|
-| `identity` | table name | URL slug |
-| `name` / `name_plural` | from class name | display labels |
-| `icon` | `None` | [lucide](https://lucide.dev/icons) icon name |
-| `list_display` | PK + first 4 columns | columns shown in the list |
-| `search_fields` | `()` | string/text columns, case-insensitive contains |
+| `identity` | table name | URL slug: 1–64 of `a-z 0-9 _ -`, starting with a letter or digit; unique |
+| `name` / `name_plural` | humanized model class name / simple English plural | display labels, ≤ 100 chars, no control or invisible formatting characters |
+| `icon` | `None` | [lucide](https://lucide.dev/icons) icon name, e.g. `"users-round"` |
+| `list_display` | PK + next 4 visible columns | columns shown in the list |
+| `search_fields` | `()` | string/text columns only (not enums), case-insensitive contains |
 | `list_filter` | `()` | boolean or enum columns |
-| `ordering` | `()` | default sort, e.g. `["-created_at"]` |
-| `page_size` | `25` | clamped to `max_page_size` |
+| `ordering` | `()` | default sort, e.g. `["-created_at", "email"]` |
+| `page_size` | `25` (or `max_page_size` if smaller) | 1 … `Admin(max_page_size=...)`; an explicit larger value is an error |
 | `readonly_fields` | `()` | shown, never writable |
-| `exclude` | `()` | never shown, never writable |
-| `column_labels` | `{}` | per-field display labels |
-| `can_create` / `can_edit` / `can_delete` | `True` | per-model permissions |
+| `exclude` | `()` | never shown, searched, filtered, sorted or writable; cannot appear in any other option; the primary key cannot be excluded; every attribute mapped to an excluded column must be excluded too |
+| `column_labels` | `{}` | `{field: label}` display labels |
+| `can_create` / `can_edit` / `can_delete` | `True` | per-model permissions (`bool`) |
+
+List options must be lists or tuples: `search_fields = "email"` is an error
+(use `["email"]`). Composite primary keys are not supported yet.
+Joined-table inheritance models are supported. Attributes defined by SQL
+expressions or by columns of other tables are not fields. Columns whose type
+depends on the database dialect (`with_variant`, `TypeDecorator` overriding
+`load_dialect_impl`) cannot be used in `search_fields` or `list_filter`.

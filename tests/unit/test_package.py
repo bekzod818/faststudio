@@ -19,5 +19,6 @@ def test_public_api_is_explicit() -> None:
         "AuthenticatedUser",
         "ConfigurationError",
         "FastStudioError",
+        "ModelAdmin",
         "__version__",
     ]

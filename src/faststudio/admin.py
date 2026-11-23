@@ -12,8 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from faststudio.auth.backend import AuthBackend
 from faststudio.config import Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
+from faststudio.model_admin import ModelAdmin
+from faststudio.registry import Registry, resolve_model_admin
 
 _T = TypeVar("_T")
+_A = TypeVar("_A", bound=type[ModelAdmin])
 
 
 class Admin:
@@ -77,6 +80,25 @@ class Admin:
             max_page_size=max_page_size,
             show_powered_by=show_powered_by,
         )
+
+        self._registry = Registry()
+
+    def register(self, model_admin: _A) -> _A:
+        """Validate and register a :class:`ModelAdmin` subclass.
+
+        Usable as a class decorator. Returns the class unchanged.
+
+        Raises:
+            ConfigurationError: on unknown or misspelled options, unknown field
+                names, search/filter fields of unsupported types, excluded fields
+                used elsewhere, composite primary keys, or a duplicate identity
+                or model.
+
+        """
+        self._registry.add(
+            resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
+        )
+        return model_admin
 
     @property
     def base_url(self) -> str:

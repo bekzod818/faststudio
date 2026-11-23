@@ -26,6 +26,17 @@ listed under **Changed** or **Removed** with migration notes.
   surrounding whitespace. The secret never appears in error messages or `repr`.
 - Public `AuthBackend` protocol and `AuthenticatedUser` dataclass with a
   required, non-empty `auth_version` for session revocation.
+- `ModelAdmin` declarative options and `Admin.register()` (also usable as a
+  class decorator). Registration validates everything at startup: mapped
+  model, single-column primary key, unique identity and model, field names
+  (with the list of available fields in the error), text-only
+  `search_fields`, boolean/enum-only `list_filter`, `ordering` syntax,
+  `page_size` within `max_page_size`, and that `exclude`d fields are not
+  displayed, searched, filtered, sorted, made readonly or labelled (including
+  through another attribute mapped to the same column). Unknown public class
+  attributes are rejected so a misspelled option never fails open; typos and
+  Django/SQLAdmin option names get a suggestion. Joined-table inheritance is
+  supported. Visible fields with sensitive-looking names log a warning.
 
 ## [0.0.1] - 2026-11-23
 
