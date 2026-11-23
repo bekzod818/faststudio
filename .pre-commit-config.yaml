@@ -1,0 +1,67 @@
+# Fast hooks only. Full suites (pytest, vitest, playwright, pip-audit) run in CI.
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+        args: [--allow-multiple-documents] # pnpm-lock.yaml is multi-document
+      - id: check-json
+        exclude: ^frontend/tsconfig.*\.json$ # tsconfig allows comments
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy --strict
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: bandit
+        name: bandit
+        entry: uv run bandit -c pyproject.toml -q -r src
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: forbid-static-build
+        name: never commit built SPA (src/faststudio/static)
+        entry: built SPA files must not be committed (ADR-0002)
+        language: fail
+        files: ^src/faststudio/static/
+      - id: prettier
+        name: prettier
+        entry: pnpm -C frontend format:check
+        language: system
+        files: ^frontend/
+        types_or: [ts, tsx, javascript, json, css, markdown]
+        pass_filenames: false
+      - id: eslint
+        name: eslint
+        entry: pnpm -C frontend lint
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js)$
+        pass_filenames: false
+      - id: conventional-commit
+        name: conventional commit message
+        entry: python3 scripts/check_commit_msg.py
+        language: system
+        stages: [commit-msg]
