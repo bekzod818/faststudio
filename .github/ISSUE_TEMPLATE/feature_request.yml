@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an idea for FastStudio.
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Please check ROADMAP.md first; many features are already planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that FastStudio makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API / behaviour
+      description: How would you like it to look? A ModelAdmin snippet is ideal.
+      render: python
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
