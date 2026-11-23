@@ -60,6 +60,21 @@ listed under **Changed** or **Removed** with migration notes.
 - `scripts/export_contract.py` exports the contract to a committed,
   deterministic JSON Schema; `pnpm gen:contract` generates
   `frontend/src/api/contract.gen.ts` from it. CI and pre-commit fail on drift.
+- `Admin` mounts an isolated sub-application at `base_url`: the bundled SPA
+  with history fallback, runtime config injected into `index.html`
+  (`SpaConfig`, escaped), hashed assets, a JSON-only `/api` namespace, and
+  every error in the contract format (new code `method_not_allowed`; 422s
+  list `loc`/`msg`/`type` only; 500s are generic and logged).
+- Security headers on every admin response, including redirects and 500s:
+  strict CSP, `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
+  COOP/CORP, `Permissions-Policy`, HSTS over HTTPS and `Cache-Control`.
+- Same-origin guard on every `/api/*` request, including reads, so a
+  permissive host CORS policy cannot expose admin data (ADR-0008).
+- Works behind path-prefix proxies (`--root-path`): the SPA shell, assets,
+  API URLs and the trailing-slash redirect include the prefix.
+- `Admin(title=...)` rejects control and invisible formatting characters.
+- Playwright E2E now runs the built SPA through the real admin mount and
+  fails on any CSP violation.
 
 ## [0.0.1] - 2026-11-23
 

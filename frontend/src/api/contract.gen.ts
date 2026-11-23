@@ -16,6 +16,7 @@ export type ErrorCode =
   | "csrf_failed"
   | "forbidden"
   | "not_found"
+  | "method_not_allowed"
   | "conflict"
   | "validation_error"
   | "rate_limited"
@@ -54,6 +55,7 @@ export interface FastStudioContract {
   LoginRequest?: LoginRequest;
   MetaResponse?: MetaResponse;
   Row?: Row;
+  SpaConfig?: SpaConfig;
   UserResponse?: UserResponse;
 }
 /**
@@ -254,6 +256,20 @@ export interface PermissionsMeta {
 export interface UserMeta {
   id: string;
   username: string;
+}
+/**
+ * Runtime config injected into index.html as `<script type="application/json" id="fs-config">`.
+ *
+ * Served before login, so it holds only what the login page needs (no version).
+ *
+ * This interface was referenced by `FastStudioContract`'s JSON-Schema
+ * via the `definition` "SpaConfig".
+ */
+export interface SpaConfig {
+  api_url: string;
+  base_url: string;
+  schema_version: "1";
+  title: string;
 }
 /**
  * `POST /auth/login` and `GET /auth/me`.

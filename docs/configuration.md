@@ -20,6 +20,24 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `rate_limiter` *(coming in M6, before v0.1.0)* | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
 
+## Mounting
+
+`Admin(app, ...)` mounts an isolated sub-application at `base_url` (ADR-0006):
+it has its own error handling and security headers, and adds nothing to the
+host's OpenAPI schema. Host routes registered on `app` before the admin that
+start with `base_url` take precedence, so keep `base_url` exclusive to
+FastStudio. Behind a reverse proxy with a path prefix, set the prefix on the
+**server** (e.g. `uvicorn --root-path /prefix`), not with the deprecated
+`FastAPI(root_path=...)`; the SPA, its assets and API URLs are then rendered
+with the prefix. A mismatched setup leaves the admin unreachable.
+
+Host middleware still wraps the admin. In particular a permissive,
+credentialed **CORS** policy on the host would normally let other websites
+read responses; FastStudio rejects every cross-origin browser request to its
+API (including GET) with `403`, so admin data stays same-origin regardless
+(ADR-0008). Unhandled admin errors return a generic 500 and are then re-raised
+to the host, so your error monitoring sees them.
+
 ## Generating a secret key
 
 ```bash

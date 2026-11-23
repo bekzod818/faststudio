@@ -61,7 +61,7 @@ configure trusted proxy headers correctly.
 |---|---|
 | All POST/PUT/PATCH/DELETE (including login and logout) require header `X-FastStudio-CSRF` equal to cookie `faststudio_csrftoken` (double submit), signature-verified. | `test_csrf.py` |
 | After login the token is bound to the session id (`HMAC(sid, nonce)`); a token from another session is rejected. | `test_csrf.py` |
-| `Origin` / `Sec-Fetch-Site` must indicate same origin when present. | `test_csrf.py` |
+| `Origin` / `Sec-Fetch-Site` must indicate same origin when present. Enforced for **every** `/api/*` request, including GET, so a permissive host CORS policy cannot expose admin reads (ADR-0008). | `tests/integration/security/test_origin.py`, `test_csrf.py` |
 | `SameSite=Lax` session cookie as defense in depth. | `test_session.py` |
 | Token rotated on login and logout. | `test_csrf.py` |
 
@@ -91,9 +91,11 @@ configure trusted proxy headers correctly.
 | Control | Tests |
 |---|---|
 | React renders all data as text; ESLint forbids `dangerouslySetInnerHTML` and `innerHTML`. | ESLint in CI |
-| Runtime config is embedded as `<script type="application/json">` with `<`, `>`, `&` escaped; title containing `</script>` cannot break out. | `test_spa.py` |
-| Strict CSP: `default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`. No inline scripts. | `test_headers.py`, Playwright CSP-violation listener |
-| `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`. | `test_headers.py` |
+| Runtime config is embedded as `<script type="application/json">` with `<`, `>`, `&` and non-ASCII escaped; the `<title>` is HTML-escaped; a title containing `</script>` cannot break out. Titles reject control/format characters. The pre-login config carries no version. | `tests/integration/test_spa.py`, `tests/unit/test_config.py` |
+| Strict CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`. No inline scripts. Applied by an ASGI wrapper *outside* the admin app, so redirects, 404/405/422 and 500 responses are covered too. | `tests/integration/security/test_headers.py`, `frontend/e2e/smoke.spec.ts` (fails on any CSP violation of the built SPA) |
+| `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin`, restrictive `Permissions-Policy`, HSTS over HTTPS, `Cache-Control: no-store` except hashed assets. | `tests/integration/security/test_headers.py` |
+| Static files: only `assets/` (Starlette `StaticFiles`, no symlinks) and top-level SPA files from an exact-name allowlist built at startup (no filesystem access per request: no case-folding aliases like `INDEX.HTML`, no NUL/long-name errors, no dotfiles or symlinks). Unknown `/api/*` never falls back to HTML. Only real asset paths (prefix match from the mount root) are cached as immutable. | `tests/integration/test_spa.py`, `tests/integration/security/test_headers.py` |
+| Errors never leak internals: 500s return a generic body (details only in the `faststudio.api` log, path without query string); `HTTPException.detail` is never echoed; 422 details contain only `loc`/`msg`/`type` with `loc` parts capped at 64 chars and at most 50 issues (client-chosen key names can appear in `loc`, values never do). Admin 500s still propagate to host error handlers (ADR-0008). | `tests/integration/security/test_headers.py`, `tests/integration/test_errors.py` |
 | Login `next` redirect accepts only in-app relative paths (no open redirect). | Vitest |
 
 ### T7. Secret management

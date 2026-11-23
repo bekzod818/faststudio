@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// M0: smoke-test the built SPA via `vite preview`.
-// M12 switches the webServer to examples/basic so E2E runs against the real backend.
+// E2E runs the built SPA through the real FastStudio mount (scripts/e2e_server.py),
+// so the production CSP and security headers apply. M12 switches to examples/basic.
 const PORT = "4173";
 
 export default defineConfig({
@@ -11,13 +11,13 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: `http://127.0.0.1:${PORT}/`,
+    baseURL: `http://127.0.0.1:${PORT}/admin/`,
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `pnpm exec vite preview --outDir ../src/faststudio/static --port ${PORT} --strictPort --host 127.0.0.1`,
-    url: `http://127.0.0.1:${PORT}/`,
+    command: `uv run python ../scripts/e2e_server.py ${PORT}`,
+    url: `http://127.0.0.1:${PORT}/admin/`,
     reuseExistingServer: !process.env.CI,
   },
 });

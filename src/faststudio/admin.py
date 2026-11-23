@@ -4,19 +4,26 @@ from __future__ import annotations
 
 import inspect
 from datetime import timedelta
+from pathlib import Path
 from typing import TypeVar, cast
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
+from faststudio.api._app import AdminContext, create_admin_app, wrap_admin_app
 from faststudio.auth.backend import AuthBackend
 from faststudio.config import Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
 from faststudio.model_admin import ModelAdmin
 from faststudio.registry import Registry, resolve_model_admin
+from faststudio.security.headers import SecurityHeadersMiddleware
 
 _T = TypeVar("_T")
 _A = TypeVar("_A", bound=type[ModelAdmin])
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 class Admin:
@@ -24,8 +31,9 @@ class Admin:
 
     All options are validated eagerly; misconfiguration raises
     :class:`~faststudio.ConfigurationError` at startup rather than at request
-    time. (Mounting the UI and API under ``base_url`` arrives in a later
-    milestone.)
+    time. The admin is mounted on ``app`` at ``base_url`` as an isolated
+    sub-application (its own error handling and security headers; nothing is
+    added to the host's OpenAPI schema).
     """
 
     def __init__(
@@ -82,6 +90,23 @@ class Admin:
         )
 
         self._registry = Registry()
+        context = AdminContext(
+            settings=self._settings,
+            registry=self._registry,
+            session_maker=self._session_maker,
+            auth_backend=self._auth_backend,
+            static_dir=_STATIC_DIR,
+        )
+        self._sub_app = create_admin_app(context)
+        base_url = self._settings.base_url
+        app.router.routes.append(
+            Route(
+                base_url,
+                SecurityHeadersMiddleware(_TrailingSlashRedirect()),
+                include_in_schema=False,
+            )
+        )
+        app.mount(base_url, wrap_admin_app(self._sub_app), name="faststudio")
 
     def register(self, model_admin: _A) -> _A:
         """Validate and register a :class:`ModelAdmin` subclass.
@@ -109,6 +134,17 @@ class Admin:
     def title(self) -> str:
         """Title shown in the UI."""
         return self._settings.title
+
+
+class _TrailingSlashRedirect:
+    """Redirect `{base_url}` to `{base_url}/`, keeping the query string."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Per the ASGI spec `path` already includes any proxy `root_path`.
+        target = f"{scope['path']}/"
+        if scope.get("query_string"):
+            target += "?" + scope["query_string"].decode("latin-1")
+        await RedirectResponse(target, status_code=307)(scope, receive, send)
 
 
 def _require_instance(value: object, cls: type[_T], msg: str) -> _T:

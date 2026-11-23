@@ -47,7 +47,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | `query/` | safe search/filter/sort/paginate builders |
 | `api/` | sub-app factory, routers (`auth`, `meta`, `crud`), error handling |
 | `auth/` | `AuthBackend` protocol, `ModelUserBackend`, passwords, session, CSRF |
-| `security/` | headers/CSP, rate limiting, secret validation |
+| `security/` | security headers, same-origin API guard, secret validation, rate limiting |
 | `_spa.py` | index.html rendering, runtime config injection, history fallback |
 
 ## Extension points (designed now, public later)
@@ -69,7 +69,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M2 | `ModelAdmin` + registry validation | done |
 | M3 | Introspection | done |
 | M4 | Contract schemas + TypeScript codegen | done |
-| M5 | Sub-app mount, SPA serving, security headers | planned |
+| M5 | Sub-app mount, SPA serving, security headers | done |
 | M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | planned |
 | M7 | Meta + read API | planned |
 | M8 | Write API | planned |

@@ -35,6 +35,16 @@ async def engine() -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture(autouse=True)
+def _no_built_spa(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never depend on a locally built SPA; integration tests provide their own."""
+    monkeypatch.setattr(
+        "faststudio.admin._STATIC_DIR", tmp_path_factory.mktemp("no-spa") / "static"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests must never pick up a developer's real FASTSTUDIO_SECRET_KEY."""
     monkeypatch.delenv("FASTSTUDIO_SECRET_KEY", raising=False)

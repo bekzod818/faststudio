@@ -76,6 +76,7 @@
         "csrf_failed",
         "forbidden",
         "not_found",
+        "method_not_allowed",
         "conflict",
         "validation_error",
         "rate_limited",
@@ -550,6 +551,32 @@
       ],
       "type": "object"
     },
+    "SpaConfig": {
+      "additionalProperties": false,
+      "description": "Runtime config injected into index.html as `<script type=\"application/json\" id=\"fs-config\">`.\n\nServed before login, so it holds only what the login page needs (no version).",
+      "properties": {
+        "api_url": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "base_url",
+        "api_url",
+        "title"
+      ],
+      "type": "object"
+    },
     "UserMeta": {
       "additionalProperties": false,
       "description": "The signed-in admin.",
@@ -633,6 +660,9 @@
     },
     "Row": {
       "$ref": "#/$defs/Row"
+    },
+    "SpaConfig": {
+      "$ref": "#/$defs/SpaConfig"
     },
     "UserResponse": {
       "$ref": "#/$defs/UserResponse"

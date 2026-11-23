@@ -24,6 +24,30 @@ Field bounds (`min_value`/`max_value`) and integer defaults outside that range
 are published as `null` (the server still enforces bounds), and integer
 *values* outside it are sent as strings in `Row.data`.
 
+## Serving and routing
+
+| Path under `base_url` | Behaviour |
+|---|---|
+| (exactly `base_url`) | 307 redirect to `base_url/` (query string kept) |
+| `/api/...` | JSON API; unknown paths are JSON `404`, never the SPA. Cross-origin browser requests (any method) get `403 csrf_failed` (ADR-0008). |
+| `/assets/...` | hashed SPA assets (`Cache-Control: public, max-age=31536000, immutable`); missing files are JSON `404` |
+| `/<file>` | a top-level file of the built SPA (e.g. `favicon.svg`), matched exactly against an allowlist built at startup; never `index.html`, dotfiles or symlinks |
+| anything else (GET/HEAD) | the SPA shell (history fallback); other methods get `405` |
+
+The SPA shell is `index.html` with `<base href="{root}/">` and a JSON config
+block, where `{root}` is the browser-visible mount root (any proxy
+`root_path` + `base_url`). It is rendered per mount root and cached
+(ADR-0005, ADR-0008):
+
+```html
+<script type="application/json" id="fs-config">{"api_url":"/admin/api/v1","base_url":"/admin","schema_version":"1","title":"FastStudio"}</script>
+```
+
+The block is the contract model `SpaConfig`; `<`, `>`, `&` and all non-ASCII
+characters are `\u`-escaped so no value can close the element. It is public
+(served before login), so it carries no version number. If the SPA is not
+built, a `503` placeholder page is served.
+
 ## Endpoints
 
 | Method | Path | Session | CSRF | Success |
@@ -97,7 +121,9 @@ Every error response, including 404 and 500, has this body:
 ```
 
 `details` is a list of `{loc, msg, type}` for `validation_error` and `null`
-for every other code. It never contains the submitted values.
+for every other code. It never contains submitted *values*; `loc` may contain
+client-supplied field names (e.g. an unknown body key), truncated to 64
+characters, and at most 50 issues are returned.
 
 | Status | `code` | When |
 |---|---|---|
@@ -106,7 +132,8 @@ for every other code. It never contains the submitted values.
 | 401 | `invalid_credentials` | login failed (always "Invalid username or password.") |
 | 403 | `csrf_failed` | missing/invalid CSRF token or cross-origin request |
 | 403 | `forbidden` | action disabled by `can_create` / `can_edit` / `can_delete` |
-| 404 | `not_found` | unknown model identity, field or primary key |
+| 404 | `not_found` | unknown model identity, field or primary key; any unknown `/api/*` path (never the SPA) |
+| 405 | `method_not_allowed` | wrong method on an API route, or a non-GET request to a UI path |
 | 409 | `conflict` | database integrity error (no SQL in the message) |
 | 422 | `validation_error` | body failed validation, including unknown/readonly/excluded fields |
 | 429 | `rate_limited` | too many login attempts (`Retry-After` header set) |

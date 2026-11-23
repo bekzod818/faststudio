@@ -92,7 +92,7 @@ def test_secret_not_in_repr() -> None:
     assert settings.secret_key == key
 
 
-@pytest.mark.parametrize("title", ["", "   ", "x" * 101])
+@pytest.mark.parametrize("title", ["", "   ", "x" * 101, "Admin\x00", "Ad\u202emin", "tab\tbed"])
 def test_invalid_title(title: str) -> None:
     with pytest.raises(ConfigurationError, match="title"):
         _resolve(title=title)

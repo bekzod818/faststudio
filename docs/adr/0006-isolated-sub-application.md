@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
+- Refined by: ADR-0008 (host middleware, error propagation, proxy prefixes)
 
 ## Context
 

@@ -31,6 +31,7 @@ __all__ = [
     "PermissionsMeta",
     "RelationMeta",
     "Row",
+    "SpaConfig",
     "UserMeta",
     "UserResponse",
     "ValidationIssue",
@@ -53,6 +54,7 @@ ErrorCode = Literal[
     "csrf_failed",
     "forbidden",
     "not_found",
+    "method_not_allowed",
     "conflict",
     "validation_error",
     "rate_limited",
@@ -192,6 +194,18 @@ class ChoicesResponse(_Contract):
 
     items: list[ChoiceMeta]
     total: int
+
+
+class SpaConfig(_Contract):
+    """Runtime config injected into index.html as `<script type="application/json" id="fs-config">`.
+
+    Served before login, so it holds only what the login page needs (no version).
+    """
+
+    schema_version: Literal["1"]
+    base_url: str
+    api_url: str
+    title: str
 
 
 class LoginRequest(_Contract):

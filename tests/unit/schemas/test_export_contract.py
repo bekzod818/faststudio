@@ -42,6 +42,7 @@ def test_schema_exposes_every_top_level_shape(exporter: ModuleType) -> None:
         "LoginRequest",
         "MetaResponse",
         "Row",
+        "SpaConfig",
         "UserResponse",
     }
     for name in ("FieldMeta", "ModelMeta", "RelationMeta", "FilterMeta", "ErrorBody"):

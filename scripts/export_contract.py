@@ -36,6 +36,7 @@ RESPONSES: tuple[type[BaseModel], ...] = (
     contract.Row,
     contract.ChoicesResponse,
     contract.ErrorResponse,
+    contract.SpaConfig,
 )
 REQUESTS: tuple[type[BaseModel], ...] = (contract.LoginRequest,)
 # Literal unions emitted as named definitions so generated code can share them.

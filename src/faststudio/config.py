@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -95,6 +96,9 @@ def resolve_settings(
     clean_title = title.strip()
     if not clean_title or len(clean_title) > MAX_TITLE_LENGTH:
         msg = f"title must be 1-{MAX_TITLE_LENGTH} characters."
+        raise ConfigurationError(msg)
+    if any(unicodedata.category(ch) in {"Cc", "Cf"} for ch in clean_title):
+        msg = "title must not contain control or invisible formatting characters."
         raise ConfigurationError(msg)
     if session_max_age < MIN_SESSION_MAX_AGE:
         msg = f"session_max_age must be at least {MIN_SESSION_MAX_AGE.total_seconds():.0f} seconds."

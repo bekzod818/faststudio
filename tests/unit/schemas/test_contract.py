@@ -96,6 +96,7 @@ def test_models_are_frozen() -> None:
         "csrf_failed",
         "forbidden",
         "not_found",
+        "method_not_allowed",
         "conflict",
         "validation_error",
         "rate_limited",

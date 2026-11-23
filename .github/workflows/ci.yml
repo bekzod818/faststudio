@@ -177,6 +177,10 @@ jobs:
           node-version-file: frontend/.nvmrc
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - run: uv sync
       - run: pnpm -C frontend install --frozen-lockfile
       - run: pnpm -C frontend exec playwright install --with-deps chromium
       - run: pnpm -C frontend test:e2e
