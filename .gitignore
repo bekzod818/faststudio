@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Built SPA: produced by `pnpm -C frontend build`, never committed (ADR-0002)
+src/faststudio/static/
+
+# Frontend
+node_modules/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+*.tsbuildinfo
+
+# Local data / secrets
+*.sqlite3
+*.db
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
