@@ -13,4 +13,11 @@ def test_configuration_error_is_faststudio_error() -> None:
 
 
 def test_public_api_is_explicit() -> None:
-    assert sorted(faststudio.__all__) == ["ConfigurationError", "FastStudioError", "__version__"]
+    assert sorted(faststudio.__all__) == [
+        "Admin",
+        "AuthBackend",
+        "AuthenticatedUser",
+        "ConfigurationError",
+        "FastStudioError",
+        "__version__",
+    ]

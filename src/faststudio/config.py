@@ -1,0 +1,119 @@
+"""Resolved, validated FastStudio settings (private; not public API)."""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import timedelta
+
+from faststudio.exceptions import ConfigurationError
+from faststudio.security.secret import resolve_secret_key
+
+logger = logging.getLogger("faststudio")
+
+API_PREFIX = "/api/v1"
+MAX_TITLE_LENGTH = 100
+MIN_SESSION_MAX_AGE = timedelta(seconds=60)
+MAX_PAGE_SIZE_LIMIT = 1000
+_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+
+
+def normalize_base_url(raw: object) -> str:
+    """Validate a mount path and return it without a trailing slash.
+
+    Accepts ``/segment[/segment...]`` where segments use unreserved URL
+    characters only. Rejects the root path, empty or dot segments, queries,
+    fragments, percent-encoding and absolute URLs. The result is safe to use
+    as a cookie ``Path`` and inside ``<base href>``.
+    """
+    if not isinstance(raw, str):
+        msg = f"base_url must be a str, got {type(raw).__name__}."
+        raise ConfigurationError(msg)
+    path = raw[:-1] if raw.endswith("/") and len(raw) > 1 else raw
+    segments = path.split("/")
+    valid = (
+        path.startswith("/")
+        and len(segments) > 1
+        and all(_SEGMENT.fullmatch(s) and s not in {".", ".."} for s in segments[1:])
+    )
+    if not valid:
+        msg = (
+            f"Invalid base_url {raw!r}: expected a path like '/admin' made of letters, "
+            "digits, '.', '_', '~' and '-' (the root path '/' is not allowed)."
+        )
+        raise ConfigurationError(msg)
+    return path
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    """Validated configuration shared by all FastStudio components."""
+
+    secret_key: str = field(repr=False)
+    title: str
+    base_url: str
+    session_max_age: timedelta
+    secure_cookies: bool
+    max_page_size: int
+    show_powered_by: bool
+
+    @property
+    def api_url(self) -> str:
+        """Absolute path of the JSON API, e.g. ``/admin/api/v1``."""
+        return f"{self.base_url}{API_PREFIX}"
+
+
+def _require_type(name: str, value: object, expected: type) -> None:
+    # bool is a subclass of int; never accept True/False where a number is expected.
+    if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
+        msg = f"{name} must be {expected.__name__}, got {type(value).__name__}."
+        raise ConfigurationError(msg)
+
+
+def resolve_settings(
+    *,
+    secret_key: str | None,
+    title: str,
+    base_url: str,
+    session_max_age: timedelta,
+    secure_cookies: bool,
+    max_page_size: int,
+    show_powered_by: bool,
+) -> Settings:
+    """Validate raw options and return :class:`Settings`.
+
+    Raises:
+        ConfigurationError: on any invalid option, including wrong types.
+
+    """
+    _require_type("title", title, str)
+    _require_type("session_max_age", session_max_age, timedelta)
+    _require_type("secure_cookies", secure_cookies, bool)
+    _require_type("max_page_size", max_page_size, int)
+    _require_type("show_powered_by", show_powered_by, bool)
+    clean_title = title.strip()
+    if not clean_title or len(clean_title) > MAX_TITLE_LENGTH:
+        msg = f"title must be 1-{MAX_TITLE_LENGTH} characters."
+        raise ConfigurationError(msg)
+    if session_max_age < MIN_SESSION_MAX_AGE:
+        msg = f"session_max_age must be at least {MIN_SESSION_MAX_AGE.total_seconds():.0f} seconds."
+        raise ConfigurationError(msg)
+    if not 1 <= max_page_size <= MAX_PAGE_SIZE_LIMIT:
+        msg = f"max_page_size must be between 1 and {MAX_PAGE_SIZE_LIMIT}."
+        raise ConfigurationError(msg)
+    settings = Settings(
+        secret_key=resolve_secret_key(secret_key),
+        title=clean_title,
+        base_url=normalize_base_url(base_url),
+        session_max_age=session_max_age,
+        secure_cookies=secure_cookies,
+        max_page_size=max_page_size,
+        show_powered_by=show_powered_by,
+    )
+    if not secure_cookies:
+        logger.warning(
+            "FastStudio is running with secure_cookies=False: session cookies will be sent "
+            "over plain HTTP. Never use this in production."
+        )
+    return settings

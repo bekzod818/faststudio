@@ -16,6 +16,16 @@ listed under **Changed** or **Removed** with migration notes.
   Playwright E2E), release workflow with PyPI Trusted Publishing, CodeQL and
   Dependabot.
 - Architecture docs, threat model and ADRs 0001–0007.
+- `Admin` validates all options (values and types) at startup and raises
+  `ConfigurationError` on misconfiguration: exactly one of `engine` (must be an
+  `AsyncEngine`) or `session_maker`, an `AuthBackend` instance with async
+  methods, title, `base_url`, `session_max_age` and `max_page_size` bounds.
+- Secret key resolution from `secret_key=` or `FASTSTUDIO_SECRET_KEY`; startup
+  fails if it is missing, too short, a known placeholder, sequential or a
+  keyboard run, low diversity, hand-written and under 43 characters, or has
+  surrounding whitespace. The secret never appears in error messages or `repr`.
+- Public `AuthBackend` protocol and `AuthenticatedUser` dataclass with a
+  required, non-empty `auth_version` for session revocation.
 
 ## [0.0.1] - 2026-11-23
 

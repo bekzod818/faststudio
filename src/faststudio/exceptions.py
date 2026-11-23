@@ -6,4 +6,10 @@ class FastStudioError(Exception):
 
 
 class ConfigurationError(FastStudioError):
-    """Raised at startup when FastStudio is configured incorrectly."""
+    """Raised when FastStudio or a host-provided component is misconfigured.
+
+    Usually raised at startup by ``Admin(...)`` and ``register()``. It can also
+    be raised at request time when a host-provided component misbehaves, e.g.
+    a custom ``AuthBackend`` returning an ``AuthenticatedUser`` with an empty
+    ``auth_version``; the API layer turns that into a logged 500.
+    """

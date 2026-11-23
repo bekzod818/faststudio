@@ -37,7 +37,7 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 | Every route except `POST /auth/login` depends on the session dependency; a test enumerates all mounted routes and asserts 401 without a cookie. | `tests/integration/security/test_auth_required.py` |
 | Session cookie signed with itsdangerous (HMAC-SHA), purpose-specific salt; tampered cookie ⇒ 401. | `test_session.py` |
 | Absolute expiry via signed timestamp (`session_max_age`); expired ⇒ 401. | `test_session.py` |
-| `auth_version` in cookie must match the user's current value (derived from the password hash); password change or deactivation invalidates sessions. | `test_session.py` |
+| `auth_version` in cookie must match the user's current value (derived from the password hash); password change or deactivation invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `test_session.py`, `tests/unit/test_authenticated_user.py` |
 | `ModelUserBackend` admits only active **and** admin users. | `test_model_backend.py` |
 | Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path={base_url}`. | `test_session.py` |
 
@@ -47,7 +47,7 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 |---|---|
 | argon2id hashing (`argon2-cffi` defaults); no plaintext ever stored or logged. | `test_passwords.py` |
 | Identical status, body and code for unknown user vs wrong password vs inactive/non-admin. | `test_login.py` |
-| Dummy argon2 verification for unknown users to equalize timing. | `test_login.py` (asserts verify called) |
+| Dummy argon2 verification for unknown users to equalize timing; the `AuthBackend` protocol documents this as a requirement for custom backends. | `test_login.py` (asserts verify called) |
 | Login rate limit (default 5 / 15 min per client IP + username) ⇒ 429 with `Retry-After`; pluggable `RateLimiter`. | `test_rate_limit.py` |
 | Constant-time comparisons (`hmac.compare_digest`) for all token comparisons. | code review + `test_csrf.py` |
 
@@ -99,7 +99,7 @@ configure trusted proxy headers correctly.
 | Control | Tests |
 |---|---|
 | No secret ships with the package or repo; gitleaks runs in pre-commit. | pre-commit |
-| Missing, short (< 32 chars), low-diversity or known placeholder secret ⇒ `ConfigurationError` at startup. | `test_secret.py` |
+| Missing, non-string, short (< 32 chars; < 43 if hand-written charset or word passphrase), placeholder, sequential/keyboard-run, low-diversity or whitespace-padded secret ⇒ `ConfigurationError` at startup; the value never appears in messages, exception chains or `repr`. False rejection of generated keys (token_urlsafe, token_hex, base64, Django-style) is negligible (< 1e-7 per key) and covered by a seeded regression test. | `tests/unit/security/test_secret.py`, `tests/unit/test_config.py` |
 | Purpose-specific key derivation (separate salts for session and CSRF). | `test_session.py` |
 
 ### T8. Supply chain
@@ -114,3 +114,9 @@ environments.
   changing the user's password or deactivating them (ADR-0004).
 - No granular permissions: every admin can access every registered model.
 - No audit log.
+- Secret strength checks are heuristics: a hand-chosen passphrase of 43+
+  characters that avoids placeholder words and sequences can still pass. Documentation tells
+  users to generate keys with `secrets.token_urlsafe(48)`.
+- `AuthBackend` validation at startup checks shape (instance, async methods),
+  not behaviour; a custom backend that leaks timing or returns users it should
+  not is out of FastStudio's control.

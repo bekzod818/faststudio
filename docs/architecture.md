@@ -38,6 +38,8 @@ FastStudio is two halves joined by a versioned JSON contract:
 | Module | Responsibility |
 |---|---|
 | `admin.py` | `Admin`: configuration, mounting, registration entry point |
+| `config.py` | validated `Settings`, `base_url` normalization (private) |
+| `exceptions.py` | `FastStudioError` hierarchy (`ConfigurationError`, ...) |
 | `model_admin.py` | `ModelAdmin` declarative options |
 | `registry.py` | identity → registered admin, validation |
 | `introspection/` | SQLAlchemy column → `FieldMeta` (type mapping in `api-contract.md`) |
@@ -63,7 +65,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | # | Milestone | Status |
 |---|---|---|
 | M0 | Scaffold, tooling, CI | done |
-| M1 | Config, exceptions, `Admin` init, secret validation | planned |
+| M1 | Config, exceptions, `Admin` init, secret validation | done |
 | M2 | `ModelAdmin` + registry validation | planned |
 | M3 | Introspection | planned |
 | M4 | Contract schemas + TypeScript codegen | planned |
