@@ -636,6 +636,8 @@ def test_no_sensitive_warning_when_excluded(admin: Admin, caplog: pytest.LogCapt
         ("HTTPLog", "HTTP log"),
         ("UserAPIKey", "User API key"),
         ("Order2Item", "Order2 item"),
+        ("E2EUser", "E2E user"),
+        ("S3Bucket", "S3 bucket"),
     ],
 )
 def test_humanize(class_name: str, expected: str) -> None:

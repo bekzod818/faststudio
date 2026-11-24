@@ -557,8 +557,16 @@ def _managed_column_ids(mapper: Mapper[Any]) -> frozenset[int]:
     return frozenset(ids)
 
 
+# Acronyms may contain digits (``E2E``, ``S3``); ordinary words may end in digits (``Order2``).
+_CLASS_NAME_WORD = re.compile(
+    r"[A-Z][A-Z0-9]*(?=[A-Z][a-z]|[^A-Za-z0-9]|$)"  # acronym
+    r"|[A-Z]?[a-z]+[0-9]*"  # word
+    r"|[0-9]+"
+)
+
+
 def _humanize(class_name: str) -> str:
-    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", class_name).split()
+    words = _CLASS_NAME_WORD.findall(class_name) or [class_name]
     return " ".join([words[0], *(w if w.isupper() else w.lower() for w in words[1:])])
 
 
