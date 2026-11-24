@@ -1,7 +1,9 @@
+import { QueryClient } from "@tanstack/react-query";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiError } from "@/api/client";
+import { queryKeys } from "@/api/hooks";
 import { LoginPage } from "./LoginPage";
 import { fakeClient, renderRoutes } from "@/test/render";
 
@@ -69,5 +71,27 @@ describe("LoginPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
     expect(await screen.findByText("Invalid username or password.")).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toHaveValue("");
+  });
+
+  it("sends an already signed-in admin straight to next", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(queryKeys.me, { user: { id: "1", username: "admin" } });
+    const { router } = renderRoutes(routes, {
+      client: fakeClient(),
+      path: "/login?next=/models/users",
+      queryClient,
+    });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/models/users");
+    });
+  });
+
+  it("stays on the login page during sign-out even while the cache still has the user", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(queryKeys.me, { user: { id: "1", username: "admin" } });
+    const { router } = renderRoutes(routes, { client: fakeClient(), path: "/", queryClient });
+    await router.navigate("/login", { replace: true, state: { signedOut: true } });
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/login");
   });
 });

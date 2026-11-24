@@ -106,4 +106,28 @@ describe("api client", () => {
     });
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
+
+  it("encodes query params and skips undefined values", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response("{}", { status: 200 }));
+    const api = createApiClient({ apiUrl: "/admin/api/v1", fetch: fetchMock });
+    await api.get("/models/users/items", {
+      params: { page: 2, q: "a&b=c", "filter[is_active]": "true", ordering: undefined },
+    });
+    const [url] = call(fetchMock);
+    expect(url).toBe(
+      "/admin/api/v1/models/users/items?page=2&q=a%26b%3Dc&filter%5Bis_active%5D=true",
+    );
+  });
+
+  it("passes the abort signal and rethrows cancellations untouched", async () => {
+    const controller = new AbortController();
+    const abort = new DOMException("aborted", "AbortError");
+    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
+      expect(init?.signal).toBe(controller.signal);
+      controller.abort();
+      return Promise.reject(abort);
+    });
+    const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
+    await expect(api.get("/x", { signal: controller.signal })).rejects.toBe(abort);
+  });
 });

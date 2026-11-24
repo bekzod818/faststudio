@@ -20,7 +20,8 @@ export function Layout() {
 
   const leave = async () => {
     try {
-      await navigate("/login", { replace: true });
+      // Tell the login page this is a sign-out: the cache is cleared just after.
+      await navigate("/login", { replace: true, state: { signedOut: true } });
     } finally {
       forgetSession(); // drop the previous admin's data even if navigation is blocked
     }

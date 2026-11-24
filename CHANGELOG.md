@@ -107,6 +107,17 @@ listed under **Changed** or **Removed** with migration notes.
   The theme toggle cycles light, dark and system (system follows OS changes).
   Playwright now signs in end to end, covers session expiry, and fails on any
   `securitypolicyviolation` event, unexpected 401 or console error.
+- List view: a table per model built from `list_display` with type-aware
+  cells (booleans, enum labels, foreign-key labels, localised datetimes,
+  exact big integers, truncated text and JSON), sortable headers
+  (`aria-sort`), debounced search, boolean/choice filters (including
+  "Empty" for nullable fields) and pagination. View state lives in the URL
+  and is validated against the model metadata before any request, so
+  shared links, reload and the back button work and tampered links never
+  produce a `400`. Starting a search adds a history entry (Back undoes it);
+  refining it does not. Previous results stay visible while the next page
+  loads (with a notice if a refresh fails), and stale requests are cancelled.
+- A signed-in admin who opens the login page is sent straight to `next`.
 
 ### Fixed
 

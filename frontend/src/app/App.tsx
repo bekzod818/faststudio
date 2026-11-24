@@ -12,9 +12,9 @@ import { ThemeProvider } from "@/app/theme/ThemeProvider";
 import { Toaster } from "@/components/ui/toaster";
 import { ConfigProvider } from "@/lib/ConfigProvider";
 import type { AppConfig } from "@/lib/config";
+import { ModelListRoute } from "@/features/list/ListPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { ModelPage } from "@/pages/ModelPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 
 function createRuntime(config: AppConfig) {
@@ -34,7 +34,7 @@ function createRuntime(config: AppConfig) {
             element: <Layout />,
             children: [
               { index: true, element: <DashboardPage /> },
-              { path: "models/:identity", element: <ModelPage /> },
+              { path: "models/:identity", element: <ModelListRoute /> },
               { path: "*", element: <NotFoundPage /> },
             ],
           },

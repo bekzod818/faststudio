@@ -1,11 +1,12 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "@/api/client";
-import { useLogin } from "@/api/hooks";
+import { queryKeys, useLogin } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,12 @@ export function LoginPage() {
     defaultValues: { username: "", password: "" },
   });
   const { errors, isSubmitting } = form.formState;
+  // Already signed in (e.g. a bookmarked login link): go where `next` points.
+  // A sign-out lands here before the cache is cleared: never bounce it back.
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const signingOut = (location.state as { signedOut?: unknown } | null)?.signedOut === true;
+  const signedIn = !signingOut && queryClient.getQueryData(queryKeys.me) !== undefined;
 
   const onSubmit = form.handleSubmit(async (values) => {
     setFormError(null);
@@ -47,6 +54,10 @@ export function LoginPage() {
       setFormError(error instanceof ApiError ? error.message : "Sign-in failed.");
     }
   });
+
+  if (signedIn && !isSubmitting) {
+    return <Navigate to={safeNext(params.get("next"))} replace />;
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted p-4">

@@ -27,8 +27,17 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
 }
 
+/** Query parameters; `undefined` values are skipped. */
+export type QueryParams = Record<string, string | number | undefined>;
+
+export interface GetOptions {
+  params?: QueryParams;
+  /** Cancels the request (TanStack Query passes one to every queryFn). */
+  signal?: AbortSignal;
+}
+
 export interface ApiClient {
-  get<T>(path: string): Promise<T>;
+  get<T>(path: string, options?: GetOptions): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T = undefined>(path: string): Promise<T>;
@@ -47,6 +56,16 @@ function isErrorBody(
   );
 }
 
+function queryString(params: QueryParams | undefined): string {
+  if (params === undefined) return "";
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) search.append(key, String(value));
+  }
+  const text = search.toString();
+  return text === "" ? "" : `?${text}`;
+}
+
 /**
  * Create the JSON API client.
  *
@@ -56,21 +75,29 @@ function isErrorBody(
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
 
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    { params, signal }: GetOptions = {},
+  ): Promise<T> {
     const headers = new Headers({ accept: "application/json" });
     if (method !== "GET") {
       const token = readCookie(CSRF_COOKIE);
       if (token !== undefined) headers.set(CSRF_HEADER, token);
     }
     const init: RequestInit = { method, headers, credentials: "same-origin" };
+    if (signal !== undefined) init.signal = signal;
     if (body !== undefined) {
       headers.set("content-type", "application/json");
       init.body = JSON.stringify(body);
     }
     let response: Response;
     try {
-      response = await doFetch(`${options.apiUrl}${path}`, init);
-    } catch {
+      response = await doFetch(`${options.apiUrl}${path}${queryString(params)}`, init);
+    } catch (error) {
+      // Let TanStack Query recognise its own cancellations.
+      if (signal?.aborted) throw error;
       throw new ApiError(0, "network_error", "The server could not be reached.");
     }
     if (response.status === 204) return undefined as T;
@@ -90,7 +117,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   return {
-    get: (path) => request("GET", path),
+    get: (path, getOptions) => request("GET", path, undefined, getOptions),
     post: (path, body) => request("POST", path, body),
     patch: (path, body) => request("PATCH", path, body),
     delete: (path) => request("DELETE", path),

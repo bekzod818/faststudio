@@ -1,12 +1,30 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { LoginRequest, MetaResponse, UserResponse } from "./contract.gen";
+import type { QueryParams } from "./client";
+
+import type { ListResponse, LoginRequest, MetaResponse, UserResponse } from "./contract.gen";
 import { useApi } from "./context";
 
 export const queryKeys = {
   me: ["me"] as const,
   meta: ["meta"] as const,
+  list: (identity: string, params: QueryParams) => ["list", identity, params] as const,
 };
+
+/** Path of a model's collection; the identity is always URL-encoded. */
+export function itemsPath(identity: string): string {
+  return `/models/${encodeURIComponent(identity)}/items`;
+}
+
+/** One page of records. The previous page stays visible while the next loads. */
+export function useList(identity: string, params: QueryParams) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.list(identity, params),
+    queryFn: ({ signal }) => api.get<ListResponse>(itemsPath(identity), { params, signal }),
+    placeholderData: keepPreviousData,
+  });
+}
 
 /** The signed-in admin; fails with `not_authenticated` when there is no session. */
 export function useMe() {

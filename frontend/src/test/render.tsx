@@ -21,9 +21,12 @@ export function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
 
 export function renderRoutes(
   routes: RouteObject[],
-  { client, path = "/" }: { client: ApiClient; path?: string },
-): RenderResult & { router: ReturnType<typeof createMemoryRouter> } {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  {
+    client,
+    path = "/",
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  }: { client: ApiClient; path?: string; queryClient?: QueryClient },
+): RenderResult & { router: ReturnType<typeof createMemoryRouter>; queryClient: QueryClient } {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   const ui: ReactElement = (
     <ConfigProvider value={DEV_CONFIG}>
@@ -36,5 +39,5 @@ export function renderRoutes(
       </ThemeProvider>
     </ConfigProvider>
   );
-  return { ...render(ui), router };
+  return { ...render(ui), router, queryClient };
 }
