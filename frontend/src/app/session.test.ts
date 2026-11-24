@@ -47,6 +47,7 @@ describe("unauthorized handler", () => {
     handler();
     expect(navigate).toHaveBeenCalledWith("/login?next=%2Fmodels%2Fusers%3Fq%3Dx", {
       replace: true,
+      state: { skipGuard: true },
     });
     expect(queryClient.getQueryData(queryKeys.me)).toBeUndefined();
     expect(getToasts()).toHaveLength(1);

@@ -17,6 +17,8 @@ export interface Watch {
   problems: string[];
   /** 401s are expected only until we sign in (anonymous /auth/me). */
   signedIn: boolean;
+  /** Set by tests that end the session on purpose: any 401 is then expected. */
+  sessionEnded: boolean;
 }
 
 /**
@@ -25,7 +27,7 @@ export interface Watch {
  * eval/style attempts that a library catches and that never reach the console.
  */
 export async function watch(page: Page, { allowLogin401 = false } = {}): Promise<Watch> {
-  const state: Watch = { problems: [], signedIn: false };
+  const state: Watch = { problems: [], signedIn: false, sessionEnded: false };
   await page.addInitScript({ content: RECORD_CSP_VIOLATIONS });
   page.on("pageerror", (err) => state.problems.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
@@ -35,7 +37,7 @@ export async function watch(page: Page, { allowLogin401 = false } = {}): Promise
     }
   });
   page.on("response", (response) => {
-    if (response.status() !== 401) return;
+    if (response.status() !== 401 || state.sessionEnded) return;
     const path = new URL(response.url()).pathname;
     const anonymousMe = !state.signedIn && path === "/admin/api/v1/auth/me";
     const failedLogin = allowLogin401 && path === "/admin/api/v1/auth/login";
@@ -55,4 +57,9 @@ export async function signIn(page: Page, state: Watch, password = PASSWORD): Pro
   await page.getByLabel("Password").fill(password);
   if (password === PASSWORD) state.signedIn = true;
   await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+/** A toast message (Radix also renders a hidden copy for screen readers). */
+export function toastText(page: Page, text: string | RegExp) {
+  return page.getByRole("region", { name: /Notifications/ }).getByText(text);
 }

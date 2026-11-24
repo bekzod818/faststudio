@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { expectClean, signIn, watch } from "./helpers";
+import { expectClean, signIn, toastText, watch } from "./helpers";
 
 test("anonymous visitors land on the login page under the production CSP", async ({ page }) => {
   const state = await watch(page);
@@ -49,10 +49,14 @@ test("an expired session returns to login and back", async ({ page, context }) =
   await signIn(page, state);
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   await context.clearCookies({ name: "faststudio_session" });
-  state.signedIn = false; // the next 401s are the point of this test
-  await page.getByRole("link", { name: "E2E users" }).first().click();
-  await page.reload();
+  state.sessionEnded = true; // the next 401s are the point of this test
+  // Mid-use: the list request gets a 401 and the app returns to login.
+  await page
+    .getByRole("navigation", { name: "Models" })
+    .getByRole("link", { name: "E2E users" })
+    .click();
   await expect(page).toHaveURL(/\/admin\/login\?next=%2Fmodels%2Fusers$/);
+  await expect(toastText(page, "Your session has ended. Please sign in again.")).toBeVisible();
   await signIn(page, state);
   await expect(page).toHaveURL(/\/admin\/models\/users$/);
   await expectClean(page, state);

@@ -2,7 +2,7 @@
 
 Serves the built SPA from src/faststudio/static through the real admin
 mount, so E2E tests exercise the production CSP and security headers.
-An in-memory SQLite database is seeded with one administrator whose
+A temporary SQLite database is seeded with one administrator whose
 credentials come from FASTSTUDIO_E2E_USERNAME / FASTSTUDIO_E2E_PASSWORD
 (test-only defaults; this server never runs outside the E2E suite).
 
@@ -15,17 +15,17 @@ import enum
 import os
 import secrets
 import sys
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import uvicorn
 from fastapi import FastAPI
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from faststudio import Admin, ModelAdmin, ModelUserBackend, hash_password
 
@@ -52,6 +52,8 @@ class Category(_Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
+    # Deleting a category that still has products is refused (409).
+    products: Mapped[list[Product]] = relationship(back_populates="category")
 
 
 class Status(enum.Enum):
@@ -70,6 +72,26 @@ class Product(_Base):
     status: Mapped[Status | None] = mapped_column(Enum(Status), nullable=True)
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    category: Mapped[Category | None] = relationship(back_populates="products")
+
+
+class Task(_Base):
+    """Written to by the form E2E tests; products stay read-only for list tests."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(80), comment="What needs doing.")
+    done: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimate: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[Status | None] = mapped_column(Enum(Status), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 PRODUCT_COUNT = 30  # three pages of ten
@@ -107,6 +129,12 @@ def _seed_rows() -> list[_Base]:
     return [hardware, books, *products]
 
 
+class TaskAdmin(ModelAdmin, model=Task):
+    list_display = ("id", "title", "done", "priority", "category_id")
+    search_fields = ("title",)
+    readonly_fields = ("created_at",)
+
+
 class UserAdmin(ModelAdmin, model=E2EUser):
     list_display = ("id", "username", "is_active", "is_admin")
     exclude = ("password_hash",)
@@ -115,7 +143,12 @@ class UserAdmin(ModelAdmin, model=E2EUser):
 
 def build_app() -> FastAPI:
     """Create the E2E application with a throwaway secret and a seeded database."""
-    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    # A throwaway file, not a shared in-memory connection: parallel E2E tests
+    # write concurrently and need independent transactions.
+    workdir = tempfile.TemporaryDirectory(prefix="faststudio-e2e-")
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{workdir.name}/e2e.db", connect_args={"timeout": 30}
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -133,6 +166,7 @@ def build_app() -> FastAPI:
             session.add_all(_seed_rows())
         yield
         await engine.dispose()
+        workdir.cleanup()
 
     app = FastAPI(lifespan=lifespan)
     admin = Admin(
@@ -145,6 +179,7 @@ def build_app() -> FastAPI:
     admin.register(UserAdmin)
     admin.register(CategoryAdmin)
     admin.register(ProductAdmin)
+    admin.register(TaskAdmin)
     return app
 
 

@@ -59,6 +59,10 @@ built, a `503` placeholder page is served.
 - `POST /auth/logout` clears the session and issues a new anonymous token.
 - Any `401 not_authenticated` caused by an invalid session also clears it.
 
+Record URLs carry the primary key URL-encoded as one path segment. Keys that
+are exactly `.` or `..` are dot segments by the URL standard and cannot be
+addressed; avoid them as natural keys.
+
 ## Endpoints
 
 | Method | Path | Session | CSRF | Success |
@@ -140,6 +144,8 @@ inheritance respected).
     as UTC;
   - UUIDs: canonical `8-4-4-4-12` form;
   - JSON: finite numbers, integers within ±(2^53 − 1), no NUL in strings or keys.
+    Integers beyond ±(2^53 − 1) are *read* as strings (see Rows), so saving
+    such a JSON value from the UI stores them as strings.
 - **Foreign keys:** a non-null value must reference an existing row, else
   `422` with `type: "foreign_key"`.
 - **Delete:** refused with `409` while an ORM `relationship()` the delete

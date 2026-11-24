@@ -1,13 +1,16 @@
 import { LogOut } from "lucide-react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { NavLink, Outlet, useNavigate, useNavigation } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import { useForgetSession, useLogout, useMe, useMeta } from "@/api/hooks";
 import { modelIcon } from "@/app/icons";
 import { ThemeToggle } from "@/app/theme/ThemeToggle";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useConfig } from "@/lib/config-context";
 import { toast } from "@/lib/toast";
+import { SKIP_GUARD, hasUnsavedChanges } from "@/lib/unsaved";
 import { cn } from "@/lib/utils";
 
 export function Layout() {
@@ -17,17 +20,25 @@ export function Layout() {
   const logout = useLogout();
   const forgetSession = useForgetSession();
   const navigate = useNavigate();
+  const navigation = useNavigation();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
 
   const leave = async () => {
     try {
-      // Tell the login page this is a sign-out: the cache is cleared just after.
-      await navigate("/login", { replace: true, state: { signedOut: true } });
+      // signedOut: the login page must not bounce us back (cache cleared next).
+      // SKIP_GUARD: a confirmed sign-out always reaches the login page.
+      await navigate("/login", { replace: true, state: { ...SKIP_GUARD, signedOut: true } });
     } finally {
-      forgetSession(); // drop the previous admin's data even if navigation is blocked
+      forgetSession();
     }
   };
 
   const signOut = () => {
+    if (hasUnsavedChanges() && !confirmSignOut) {
+      setConfirmSignOut(true);
+      return;
+    }
+    setConfirmSignOut(false);
     logout.mutate(undefined, {
       onSuccess: () => void leave(),
       onError: (error) => {
@@ -74,9 +85,28 @@ export function Layout() {
             Sign out
           </Button>
         </header>
-        <main className="flex-1 p-6">
+        {navigation.state === "loading" && (
+          <div
+            role="progressbar"
+            aria-label="Loading page"
+            className="h-0.5 w-full animate-pulse bg-primary"
+          />
+        )}
+        <main className="flex-1 p-6" aria-busy={navigation.state === "loading"}>
           <Outlet />
         </main>
+        <ConfirmDialog
+          open={confirmSignOut}
+          title="Sign out?"
+          description="You have unsaved changes. They will be lost if you sign out."
+          confirmLabel="Sign out"
+          cancelLabel="Stay"
+          destructive
+          onConfirm={signOut}
+          onCancel={() => {
+            setConfirmSignOut(false);
+          }}
+        />
         {meta.data?.show_powered_by !== false && (
           <footer className="px-6 py-3 text-xs text-muted-foreground">Powered by FastStudio</footer>
         )}

@@ -118,6 +118,25 @@ listed under **Changed** or **Removed** with migration notes.
   refining it does not. Previous results stay visible while the next page
   loads (with a notice if a refresh fails), and stale requests are cancelled.
 - A signed-in admin who opens the login page is sent straight to `next`.
+- Create and edit forms generated from the model metadata: one widget per
+  field type (text, numbers, decimals, switches, tri-state booleans, enum
+  selects, date/datetime pickers, JSON and UUID inputs) and a searchable
+  picker for foreign keys backed by the choices endpoint. The browser
+  applies the same rules as the server (lengths in characters, integer
+  ranges with exact big integers, decimal precision/scale, timezone-aware
+  datetimes) and server validation errors appear next to their fields.
+  Edits send only changed fields; readonly and create-only fields are
+  shown but locked; models with editing disabled are read-only.
+- Delete with a confirmation dialog built on the native `<dialog>` element
+  (no injected styles, so it works under the strict CSP); refused deletes
+  (`409`) are explained. Leaving a form or signing out with unsaved changes
+  asks first; deleting the record and session-expiry redirects are never
+  blocked.
+- Toasts confirm creates, saves and deletes. Records link from the first
+  list column; an "Add" button appears when creating is allowed.
+- Model pages are loaded on demand, keeping the initial bundle small; a
+  page whose code cannot be loaded (e.g. a tab opened before an upgrade)
+  offers a reload, and a progress bar shows while pages load.
 
 ### Fixed
 

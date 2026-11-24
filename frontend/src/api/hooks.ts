@@ -2,14 +2,99 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 
 import type { QueryParams } from "./client";
 
-import type { ListResponse, LoginRequest, MetaResponse, UserResponse } from "./contract.gen";
+import type {
+  ChoicesResponse,
+  JsonValue,
+  ListResponse,
+  LoginRequest,
+  MetaResponse,
+  Row,
+  UserResponse,
+} from "./contract.gen";
 import { useApi } from "./context";
 
 export const queryKeys = {
   me: ["me"] as const,
   meta: ["meta"] as const,
   list: (identity: string, params: QueryParams) => ["list", identity, params] as const,
+  item: (identity: string, pk: string) => ["item", identity, pk] as const,
+  choices: (identity: string, field: string, q: string) => ["choices", identity, field, q] as const,
 };
+
+/** Path of one record; the primary key is always URL-encoded. */
+export function itemPath(identity: string, pk: string): string {
+  return `${itemsPath(identity)}/${encodeURIComponent(pk)}`;
+}
+
+/** One record with every visible field. */
+export function useItem(identity: string, pk: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.item(identity, pk),
+    queryFn: ({ signal }) => api.get<Row>(itemPath(identity, pk), { signal }),
+  });
+}
+
+/**
+ * After any write, lists and relation choices of every model may show stale
+ * labels (a renamed team appears in the users list), so all are refreshed.
+ */
+function invalidateAfterWrite(queryClient: ReturnType<typeof useQueryClient>): void {
+  void queryClient.invalidateQueries({ queryKey: ["list"] });
+  void queryClient.invalidateQueries({ queryKey: ["choices"] });
+}
+
+export function useCreateItem(identity: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, JsonValue>) => api.post<Row>(itemsPath(identity), body),
+    onSuccess: (row) => {
+      queryClient.setQueryData(queryKeys.item(identity, row.pk), row);
+      invalidateAfterWrite(queryClient);
+    },
+  });
+}
+
+export function useUpdateItem(identity: string, pk: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, JsonValue>) => api.patch<Row>(itemPath(identity, pk), body),
+    onSuccess: (row) => {
+      queryClient.setQueryData(queryKeys.item(identity, pk), row);
+      invalidateAfterWrite(queryClient);
+    },
+  });
+}
+
+export function useDeleteItem(identity: string, pk: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete(itemPath(identity, pk)),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: queryKeys.item(identity, pk) });
+      invalidateAfterWrite(queryClient);
+    },
+  });
+}
+
+/** Options for a foreign-key field (first page, 20 items, searchable). */
+export function useChoices(identity: string, field: string, q: string, enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.choices(identity, field, q),
+    queryFn: ({ signal }) =>
+      api.get<ChoicesResponse>(
+        `/models/${encodeURIComponent(identity)}/fields/${encodeURIComponent(field)}/choices`,
+        { params: { q: q === "" ? undefined : q }, signal },
+      ),
+    enabled,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
 
 /** Path of a model's collection; the identity is always URL-encoded. */
 export function itemsPath(identity: string): string {

@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import { useMe } from "@/api/hooks";
 import { loginPath } from "@/app/session";
+import { SKIP_GUARD } from "@/lib/unsaved";
 
 /** Render child routes for a signed-in admin; otherwise go to login with `next`. */
 export function RequireAuth() {
@@ -17,7 +18,9 @@ export function RequireAuth() {
   }
   if (me.isError) {
     if (me.error instanceof ApiError && me.error.code === "not_authenticated") {
-      return <Navigate to={loginPath(location.pathname, location.search)} replace />;
+      return (
+        <Navigate to={loginPath(location.pathname, location.search)} replace state={SKIP_GUARD} />
+      );
     }
     return (
       <p role="alert" className="p-8 text-destructive">

@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { queryKeys } from "@/api/hooks";
 import { toast } from "@/lib/toast";
+import { SKIP_GUARD } from "@/lib/unsaved";
 
 /**
  * Strip the router basename (the admin mount, e.g. `/admin`) from a browser
@@ -23,7 +24,7 @@ export function loginPath(pathname: string, search = ""): string {
 
 interface RouterLike {
   state: { location: { pathname: string; search: string } };
-  navigate: (to: string, options: { replace: boolean }) => Promise<void>;
+  navigate: (to: string, options: { replace: boolean; state: unknown }) => Promise<void>;
 }
 
 /**
@@ -46,6 +47,7 @@ export function createUnauthorizedHandler(options: {
     const path = appPath(pathname, options.basename);
     if (path === "/login") return;
     toast.info("Your session has ended. Please sign in again.");
-    void router.navigate(loginPath(path, search), { replace: true });
+    // Never blocked by an unsaved form: the session is gone, saving cannot work.
+    void router.navigate(loginPath(path, search), { replace: true, state: SKIP_GUARD });
   };
 }

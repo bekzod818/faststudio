@@ -1,11 +1,11 @@
 import { tableFeatures, useTable, type ColumnDef } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Plus } from "lucide-react";
 import { useMemo } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import type { FieldMeta, ModelMeta, Row } from "@/api/contract.gen";
-import { useList, useMeta } from "@/api/hooks";
+import { useList } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -18,7 +18,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { NotFoundPage } from "@/pages/NotFoundPage";
+import { ModelGate } from "@/features/model/ModelGate";
+import { inSentence, routes } from "@/features/model/routes";
 
 import { CellValue } from "./cells";
 import { EmptyState } from "./EmptyState";
@@ -41,21 +42,10 @@ import { SearchBox } from "./SearchBox";
 const features = tableFeatures({});
 const NO_ROWS: Row[] = [];
 
-/** "Users" -> "users" inside a sentence, but keep acronyms ("E2E users"). */
-function inSentence(name: string): string {
-  return /^[A-Z][a-z]/u.test(name) ? name.charAt(0).toLowerCase() + name.slice(1) : name;
-}
-
 /** Route element for `/models/:identity`. */
 export function ModelListRoute() {
-  const { identity } = useParams();
-  const meta = useMeta();
-  if (meta.isPending) return <p role="status">Loading…</p>;
-  if (meta.isError) return <p role="alert">Could not load the admin. Try again later.</p>;
-  const model = meta.data.models.find((m) => m.identity === identity);
-  if (model === undefined) return <NotFoundPage />;
   // Keyed: switching models resets local state such as the search box.
-  return <ListPage key={model.identity} model={model} />;
+  return <ModelGate>{(model) => <ListPage key={model.identity} model={model} />}</ModelGate>;
 }
 
 export function ListPage({ model }: { model: ModelMeta }) {
@@ -80,12 +70,23 @@ export function ListPage({ model }: { model: ModelMeta }) {
 
   const columns = useMemo<ColumnDef<typeof features, Row>[]>(
     () =>
-      fields.map((field) => ({
+      fields.map((field, index) => ({
         id: field.name,
         header: field.label,
-        cell: ({ row }) => <CellValue field={field} row={row.original} />,
+        // The first column opens the record.
+        cell: ({ row }) =>
+          index === 0 ? (
+            <Link
+              to={routes.record(model.identity, row.original.pk)}
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              <CellValue field={field} row={row.original} />
+            </Link>
+          ) : (
+            <CellValue field={field} row={row.original} />
+          ),
       })),
-    [fields],
+    [fields, model.identity],
   );
 
   const table = useTable({
@@ -102,11 +103,21 @@ export function ListPage({ model }: { model: ModelMeta }) {
   return (
     <section className="flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold">{model.name_plural}</h1>
-        {list.data !== undefined && (
-          <p className="text-sm text-muted-foreground">
-            {list.data.total} {list.data.total === 1 ? "record" : "records"}
-          </p>
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-semibold">{model.name_plural}</h1>
+          {list.data !== undefined && (
+            <p className="text-sm text-muted-foreground">
+              {list.data.total} {list.data.total === 1 ? "record" : "records"}
+            </p>
+          )}
+        </div>
+        {model.permissions.create && (
+          <Button asChild>
+            <Link to={routes.create(model.identity)}>
+              <Plus aria-hidden className="size-4" />
+              Add {inSentence(model.name)}
+            </Link>
+          </Button>
         )}
       </header>
 

@@ -5,6 +5,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { createApiClient } from "@/api/client";
 import { ApiProvider } from "@/api/provider";
 import { RequireAuth } from "@/app/auth/RequireAuth";
+import { PageLoading, RouteError } from "@/app/RouteError";
 import { Layout } from "@/app/Layout";
 import { shouldRetry } from "@/app/query";
 import { createUnauthorizedHandler } from "@/app/session";
@@ -12,7 +13,6 @@ import { ThemeProvider } from "@/app/theme/ThemeProvider";
 import { Toaster } from "@/components/ui/toaster";
 import { ConfigProvider } from "@/lib/ConfigProvider";
 import type { AppConfig } from "@/lib/config";
-import { ModelListRoute } from "@/features/list/ListPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
@@ -29,12 +29,36 @@ function createRuntime(config: AppConfig) {
       { path: "/login", element: <LoginPage /> },
       {
         element: <RequireAuth />,
+        // Shown on first load while a lazily loaded page's chunk arrives.
+        hydrateFallbackElement: <PageLoading />,
         children: [
           {
             element: <Layout />,
             children: [
               { index: true, element: <DashboardPage /> },
-              { path: "models/:identity", element: <ModelListRoute /> },
+              // Model pages (table, forms) load on demand: same-origin chunks
+              // from assets/, allowed by the CSP.
+              {
+                path: "models/:identity",
+                errorElement: <RouteError />,
+                lazy: async () => ({
+                  Component: (await import("@/features/list/ListPage")).ModelListRoute,
+                }),
+              },
+              {
+                path: "models/:identity/new",
+                errorElement: <RouteError />,
+                lazy: async () => ({
+                  Component: (await import("@/features/record/RecordPages")).CreateRoute,
+                }),
+              },
+              {
+                path: "models/:identity/items/:pk",
+                errorElement: <RouteError />,
+                lazy: async () => ({
+                  Component: (await import("@/features/record/RecordPages")).RecordRoute,
+                }),
+              },
               { path: "*", element: <NotFoundPage /> },
             ],
           },
