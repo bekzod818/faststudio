@@ -209,13 +209,19 @@ def test_create_admin_cli(
 
 
 def test_create_admin_cli_reports_database_errors_without_details(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from examples.basic import create_admin  # noqa: PLC0415
 
-    monkeypatch.setenv(
-        "FASTSTUDIO_EXAMPLE_DATABASE_URL", "sqlite+aiosqlite:////nonexistent/dir/x.db"
-    )
+    # A corrupt file, not a missing directory: when aiosqlite fails to *connect*
+    # it queues an unawaited stop on its worker thread, which can outlive
+    # asyncio.run's loop and raise "Event loop is closed" (aiosqlite 0.22.1).
+    # Here the connection opens and the first query fails, so dispose() closes it.
+    corrupt = tmp_path / "corrupt.db"
+    corrupt.write_bytes(b"this is not an SQLite database file" * 8)
+    monkeypatch.setenv("FASTSTUDIO_EXAMPLE_DATABASE_URL", f"sqlite+aiosqlite:///{corrupt}")
     _answers(monkeypatch, PASSWORD, PASSWORD)
     assert create_admin.main([USERNAME]) == 1
-    assert capsys.readouterr().err.strip() == "Could not save the admin (OperationalError)."
+    err = capsys.readouterr().err
+    assert err.strip() == "Could not save the admin (DatabaseError)."
+    assert "not a database" not in err  # the driver's message stays hidden
