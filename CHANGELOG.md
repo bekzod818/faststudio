@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 While in `0.x`, minor releases may contain breaking changes; they are always
 listed under **Changed** or **Removed** with migration notes.
 
+## [Unreleased]
+
 ## [0.1.0] - 2026-11-24
 
 ### Added
@@ -170,4 +172,5 @@ listed under **Changed** or **Removed** with migration notes.
   (`E2EUser` -> "E2E users", previously "E2 E users").
 
 
+[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.0
