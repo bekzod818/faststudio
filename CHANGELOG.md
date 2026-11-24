@@ -9,6 +9,8 @@ listed under **Changed** or **Removed** with migration notes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
 ### Added
 
 - `Admin(max_list_offset=...)` and the matching `max_list_offset` field in the
@@ -208,5 +210,6 @@ listed under **Changed** or **Removed** with migration notes.
   (`E2EUser` -> "E2E users", previously "E2 E users").
 
 
-[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.0

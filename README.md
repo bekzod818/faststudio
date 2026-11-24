@@ -20,7 +20,7 @@ filtering and editing your data. No Node.js required: the UI ships pre-built
 inside the Python wheel.
 
 <p align="center">
-  <img alt="The products list in FastStudio: search, filters, sortable columns and pagination" src="https://raw.githubusercontent.com/bekzod818/faststudio/main/docs/assets/screenshot-list.png" width="860">
+  <img alt="The products list in FastStudio: search, filters, sortable columns and pagination" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.1/docs/assets/screenshot-list.png" width="860">
 </p>
 
 ## Features
@@ -133,8 +133,8 @@ step, and [`examples/basic`](https://github.com/bekzod818/faststudio/blob/main/e
 app covering every field type:
 
 <p align="center">
-  <img alt="Editing a product: typed inputs, a related-record picker and a JSON field" src="https://raw.githubusercontent.com/bekzod818/faststudio/main/docs/assets/screenshot-form.png" width="420">
-  <img alt="The products list in dark mode with an active filter" src="https://raw.githubusercontent.com/bekzod818/faststudio/main/docs/assets/screenshot-list-dark.png" width="420">
+  <img alt="Editing a product: typed inputs, a related-record picker and a JSON field" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.1/docs/assets/screenshot-form.png" width="420">
+  <img alt="The products list in dark mode with an active filter" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.1/docs/assets/screenshot-list-dark.png" width="420">
 </p>
 
 ## Configuration
