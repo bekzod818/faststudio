@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 While in `0.x`, minor releases may contain breaking changes; they are always
 listed under **Changed** or **Removed** with migration notes.
 
-## [Unreleased]
+## [0.1.0] - 2026-11-24
 
 ### Added
 
@@ -15,7 +15,7 @@ listed under **Changed** or **Removed** with migration notes.
   CI (lint, mypy, tests on Python 3.11–3.13, security scans, wheel smoke test,
   Playwright E2E), release workflow with PyPI Trusted Publishing, CodeQL and
   Dependabot.
-- Architecture docs, threat model and ADRs 0001–0007.
+- Architecture docs, threat model and ADRs 0001–0008.
 - `Admin` validates all options (values and types) at startup and raises
   `ConfigurationError` on misconfiguration: exactly one of `engine` (must be an
   `AsyncEngine`) or `session_maker`, an `AuthBackend` instance with async
@@ -143,16 +143,31 @@ listed under **Changed** or **Removed** with migration notes.
   runs against it, and the wheel smoke test runs it on the installed wheel
   (SPA shell, every referenced asset, sign-in, list, create, delete).
 
+### Security
+
+- Login verifies passwords in worker threads (at most 4 at a time per event
+  loop), so login floods no longer block the event loop shared with the host
+  application.
+- Each client address gets at most 30 login attempts per 15 minutes across
+  all usernames (on top of the per-username limit), stopping password
+  spraying from one address.
+- A session or CSRF cookie sent more than once (planted by a sibling
+  subdomain) is refused by the server and the UI.
+- Requires `starlette>=0.49.1` (Range-header DoS, CVE-2025-62727),
+  `fastapi>=0.120.1` and `pydantic>=2.10`; CI now also tests the minimum
+  supported versions.
+- Logged request paths are escaped (no terminal control sequences in logs).
+- Release workflow re-runs every check on the tagged commit, uses no
+  dependency caches and does not persist checkout credentials; the build
+  backend is pinned.
+
 ### Fixed
 
+- List cells show offset-less values of timezone-aware datetime columns
+  (e.g. from SQLite) as UTC, consistent with the edit form; they were shown
+  as local time.
 - Model display names keep acronyms that contain digits together
   (`E2EUser` -> "E2E users", previously "E2 E users").
 
-## [0.0.1] - 2026-11-23
 
-### Added
-
-- Name reservation placeholder release on PyPI.
-
-[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/bekzod818/faststudio/releases/tag/v0.0.1
+[0.1.0]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.0
