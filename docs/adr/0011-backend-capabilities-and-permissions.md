@@ -1,0 +1,111 @@
+# ADR-0011: Backend capabilities, authorization and contrib.auth
+
+- Status: Proposed
+- Date: 2026-11-24
+- Amends: ADR-0004 (decision 1), ADR-0009 (made public), threat model T2 and new T9.
+  Plan: docs/plans/v0.2.md §2, §4
+
+## Context
+
+v0.1 treats every authenticated admin as all-powerful. v0.2 adds optional
+Django-style users, groups and permissions, while `ModelUserBackend` users
+keep v0.1 behaviour and core never imports `contrib`. ADR-0009 deferred
+public naming, capability detection, refusal codes, a shared guard helper
+and the definition of "admin".
+
+## Decision
+
+1. **Capabilities are namespaced.** A backend may define
+   `faststudio_capabilities`, returning a frozen `BackendCapabilities` with
+   optional `account_guard`, `permissions`, `user_admin`,
+   `session_revocation` and `register_admins`.
+   - Unknown or unrelated attributes on a backend are never inspected.
+   - Startup validates each present capability.
+   - Capability methods receive an `AsyncSession` and never a `Request`,
+     because the CLI has no request.
+   - A backend whose `guards`, `before_write` and `check_model` (the 0.1.1
+     private protocol) are all callable, but which has no
+     `faststudio_capabilities`, gets a `ConfigurationError`, so it cannot
+     fail open. A lone unrelated attribute never triggers this.
+2. **Vocabulary.** The actions are `view`, `create`, `edit` and `delete`.
+   - Codenames are `<identity>.<action>`, plus
+     `ModelAdmin.extra_permissions` keys (`[a-z][a-z0-9_]{0,40}`, not one of
+     the actions, codename at most 100 characters).
+   - `edit` implies `view`.
+3. **Resolution.** `PermissionBackend.resolve(session, user)` returns
+   `ALL | frozenset[str]`, once per request, cached on `request.state`.
+   - Without the capability: `ALL`, with 0 queries.
+   - In contrib: superuser gives `ALL` with 0 queries; otherwise exactly
+     1 query (direct ∪ group permissions).
+4. **Hooks.** Async classmethods on `ModelAdmin`:
+   - `has_view_permission(request, obj=None)`
+   - `has_create_permission(request)`
+   - `has_edit_permission(request, obj=None)`
+   - `has_delete_permission(request, obj=None)`
+
+   Each defaults to the static flag AND the permission. `has_perm(request,
+   codename)` is public. Object-level hooks run on retrieve, edit and delete
+   only: **they do not filter lists or choices** (a list-query hook is
+   v0.3). An object-level refusal answers 404 on retrieve, and 403 on edit
+   and delete (documented).
+5. **Enforcement** on every route (`403 forbidden`), checked by a test that
+   enumerates the mounted routes:
+   - `/meta` lists only models the user can view, `permissions` gains
+     `view`, and `relation.target_identity` is null for targets the user
+     cannot view.
+   - Choices need create or edit on the source and view on the target.
+   - Labels of targets the user cannot view are omitted.
+6. **Escalation rules**, enforced by core before the account guard, on
+   **create, update and delete**. The guard capability declares the
+   superuser-like flag and the permission-bearing M2M fields, including any
+   writable reverse sides. Checking a target account holding `ALL` resolves
+   the target's permissions; this adds queries on guarded writes only.
+   - Only a user holding `ALL` may set or change the superuser-like flag
+     (including on create), edit or delete an account holding `ALL`, or set
+     another user's password. Nobody may set their **own** password through
+     the set-password endpoint; that goes through `POST /auth/password`.
+   - M2M grants may only add codenames the editor holds; a group counts as
+     all of its codenames.
+7. **Guard (ADR-0009, now public).**
+   - "Admin" is defined by flags only; group-granted permissions do not
+     count.
+   - `FlagAccountGuard(model, pk_field, flags)` is the shared public helper.
+   - There are no new refusal codes; permission denials are always
+     `403 forbidden`, never `WriteRefused`.
+8. **`faststudio.contrib.auth`:**
+   - `AuthModels(Base, table_prefix="faststudio_")` declares
+     `FastStudioUser`, `FastStudioGroup`, `FastStudioPermission` and three
+     association tables. Calling it twice on the same `Base` raises
+     `ConfigurationError`.
+   - `DatabaseAuthBackend` reuses core hashing, dummy verification and
+     `auth_version` (`password_hash | is_active | is_superuser |
+     session_token`).
+   - New users get an unusable hash.
+   - Password validators live in core (`faststudio.auth.validators`) and are
+     re-exported by contrib.
+9. **Contract versioning.** New keys and enum values are additive and keep
+   `schema_version "1"`. Clients must ignore unknown keys and treat unknown
+   `FieldType` values as `unsupported`. Removing, renaming or changing a
+   meaning requires `"2"`.
+
+## Alternatives considered
+
+- **Duck-typed capability methods** (ADR-0009's private form): risk of
+  accidental matches and failing open.
+- **Permissions in core with core-owned tables:** contradicts ADR-0004 for
+  `ModelUserBackend` users.
+- **Django action names** (`add`, `change`): inconsistent with the
+  contract.
+
+## Consequences
+
+- `ModelUserBackend` users see no behaviour change and no new HTTP write
+  path. The HTTP password endpoints are opt-in for that backend
+  (`password_endpoints=False` by default), because every one of its admins
+  holds `ALL`. `/meta` gains only the additive keys `permissions.view`,
+  `capabilities` and `account.set_password` (false unless opted in).
+- With the `user_admin` and `session_revocation` capabilities, FastStudio
+  may write to the host's user table, but only through capabilities the
+  backend explicitly provides. Threat model T2 is amended accordingly.
+- Permission changes take effect on the next request; group changes don't
+  revoke sessions.
