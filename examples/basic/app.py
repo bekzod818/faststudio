@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import ClassVar
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -47,6 +48,7 @@ class ProductAdmin(ModelAdmin, model=Product):
     list_filter = ("in_stock", "status")
     ordering = ("id",)
     page_size = 10
+    column_labels: ClassVar[dict[str, str]] = {"sku": "SKU"}
 
 
 class TaskAdmin(ModelAdmin, model=Task):

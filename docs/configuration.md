@@ -17,7 +17,7 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `session_max_age` | `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
 | `secure_cookies` | `bool` | `True` | – | `Secure` cookie flag. Browsers accept secure cookies on `http://localhost`, so keep this on for local dev too. `False` logs a warning at startup. |
 | `max_page_size` | `int` | `100` | – | Hard cap for list requests and `ModelAdmin.page_size`; 1–1000. |
-| `rate_limiter` | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. |
+| `rate_limiter` | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. Independently, each client IP gets at most 30 attempts / 15 min across all usernames (per process). Client IPs must be real: behind a reverse proxy enable trusted proxy headers (`uvicorn --proxy-headers --forwarded-allow-ips=...`). |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
 
 ## Mounting
@@ -153,7 +153,7 @@ read-only (see `docs/api-contract.md`).
 |---|---|---|
 | `identity` | table name | URL slug: 1–64 of `a-z 0-9 _ -`, starting with a letter or digit; unique |
 | `name` / `name_plural` | humanized model class name / simple English plural | display labels, ≤ 100 chars, no control or invisible formatting characters |
-| `icon` | `None` | [lucide](https://lucide.dev/icons) icon name, e.g. `"users-round"` |
+| `icon` | `None` | sidebar icon, one of: `box`, `building-2`, `calendar-days`, `credit-card`, `database`, `file`, `file-text`, `folder`, `globe`, `image`, `key`, `mail`, `map-pin`, `message-square`, `package`, `settings`, `shopping-cart`, `tag`, `user`, `users`. Other names show the default `database` icon |
 | `list_display` | PK + next 4 visible columns | columns shown in the list |
 | `search_fields` | `()` | string/text columns only (not enums), case-insensitive contains |
 | `list_filter` | `()` | boolean or enum columns |

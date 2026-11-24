@@ -9,6 +9,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+#: Login attempts allowed per client address across *all* usernames, per window,
+#: on top of the per (client, username) limit of the configured rate limiter.
+#: Stops one address from spraying a password over many usernames.
+CLIENT_MAX_ATTEMPTS = 30
+CLIENT_WINDOW_SECONDS = 900
+
 
 @dataclass(frozen=True, slots=True)
 class RateLimitDecision:

@@ -159,14 +159,15 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
             # Database errors embed the SQL and its parameters (row values):
             # log only the error types.
             logger.error(
-                "Database error in %s %s: %s (%s)",
+                "Database error in %s %r: %s (%s)",
                 request.method,
                 request.url.path,
                 type(exc).__name__,
                 type(exc.orig).__name__,
             )
         else:
-            logger.error("Unhandled error in %s %s", request.method, request.url.path, exc_info=exc)
+            # %r: a decoded path may carry control characters (log injection).
+            logger.error("Unhandled error in %s %r", request.method, request.url.path, exc_info=exc)
         return error_response(500, "internal_error")
 
     app.add_exception_handler(ApiError, on_api_error)

@@ -4,6 +4,7 @@
 
 import type { FieldMeta, JsonValue } from "@/api/contract.gen";
 import { searchLength as characterCount } from "@/features/list/query";
+import { parseWireDateTime } from "@/lib/datetime";
 
 export type FormValue = string | boolean;
 export type FormValues = Record<string, FormValue>;
@@ -19,7 +20,6 @@ const DECIMAL = /^[-+]?([0-9]*)(?:\.([0-9]*))?$/u;
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const LOCAL_DATETIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(:\d{2})?$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/u;
 
 const REQUIRED = "This field is required.";
 
@@ -197,7 +197,7 @@ export function toFormValue(field: FieldMeta, value: unknown): FormValue {
   if (field.type === "datetime" && typeof value === "string") {
     if (field.timezone === true) {
       // Naive values from timezone-aware columns are UTC (e.g. SQLite).
-      const date = new Date(OFFSET.test(value) ? value : `${value}Z`);
+      const date = parseWireDateTime(value, true);
       return Number.isNaN(date.getTime()) ? value : localInput(date);
     }
     return value.slice(0, 19);

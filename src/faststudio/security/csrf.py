@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from faststudio._spa import ADMIN_ROOT_KEY
 from faststudio.api._paths import LOGIN_PATH
 from faststudio.api.errors import error_response
-from faststudio.auth.cookies import csrf_cookie
+from faststudio.auth.cookies import csrf_cookie, single_cookie
 from faststudio.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from faststudio.auth.session import SESSION_COOKIE
 
@@ -49,9 +49,9 @@ class CsrfMiddleware:
             await self.app(scope, receive, send)
             return
         connection = HTTPConnection(scope)
-        session = self.context.sessions.load(connection.cookies.get(SESSION_COOKIE))
+        session = self.context.sessions.load(single_cookie(scope, SESSION_COOKIE))
         session_id = session.session_id if session else None
-        cookie_token = connection.cookies.get(CSRF_COOKIE)
+        cookie_token = single_cookie(scope, CSRF_COOKIE)
         cookie_ok = cookie_token is not None and self.context.csrf.verify(
             cookie_token, session_id=session_id
         )

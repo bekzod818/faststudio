@@ -4,12 +4,17 @@ FastStudio follows small, focused releases. Dates are not promised; order may
 change based on feedback. Items marked *(ADR)* need an architecture decision
 record before work starts.
 
-## v0.1.0 — MVP (in progress)
+## v0.1.0 — MVP (released)
 
 Admin mounting, `ModelAdmin` options, SQLAlchemy introspection, versioned
 metadata contract, CRUD API with search/filter/sort/pagination, built-in
 session authentication with CSRF, React SPA (login, dashboard, list, forms,
 dark mode), `examples/basic`. See the milestones in `docs/architecture.md`.
+
+## v0.1.x
+
+- Configurable per-client login budget (shared backend for multi-worker
+  deployments) *(ADR)*
 
 ## v0.2 — Relationships and actions
 

@@ -142,3 +142,22 @@ async def test_database_errors_are_logged_without_sql_or_values(
     assert "SECRET-PARAM" not in logged
     assert "SELECT" not in logged
     assert "OperationalError" in logged
+
+
+async def test_logged_paths_cannot_inject_control_sequences(
+    make_admin: AdminFactory, client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A request path with an ANSI escape must not reach the log as raw bytes."""
+    admin = make_admin()
+
+    async def boom(name: str) -> None:
+        raise RuntimeError(name)
+
+    admin._sub_app.add_api_route("/api/v1/_boom/{name}", boom)
+    with caplog.at_level("ERROR", logger="faststudio"):
+        response = await client.get("/admin/api/v1/_boom/%1B%5B31mred")
+    assert response.status_code == 500
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages
+    assert not any("\x1b" in message for message in messages)
+    assert any("\\x1b" in message for message in messages)

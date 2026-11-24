@@ -2,6 +2,7 @@ import { Check, X } from "lucide-react";
 
 import type { FieldMeta, Row } from "@/api/contract.gen";
 import { Badge } from "@/components/ui/badge";
+import { parseWireDateTime } from "@/lib/datetime";
 
 const JSON_PREVIEW = 80;
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
@@ -26,8 +27,10 @@ function asText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function DateTimeValue({ value }: { value: string }) {
-  const parsed = new Date(value);
+function DateTimeValue({ value, aware }: { value: string; aware: boolean }) {
+  // Offset-less values of timezone-aware columns are UTC (e.g. from SQLite),
+  // as in the form; naive columns show their stored wall-clock time.
+  const parsed = parseWireDateTime(value, aware);
   if (Number.isNaN(parsed.getTime())) return <>{value}</>;
   return (
     <time dateTime={value} title={value}>
@@ -69,7 +72,11 @@ export function CellValue({ field, row }: { field: FieldMeta; row: Row }) {
         </>
       );
     case "datetime":
-      return typeof value === "string" ? <DateTimeValue value={value} /> : <>{asText(value)}</>;
+      return typeof value === "string" ? (
+        <DateTimeValue value={value} aware={field.timezone === true} />
+      ) : (
+        <>{asText(value)}</>
+      );
     case "json": {
       const text = asText(value);
       return (

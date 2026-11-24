@@ -1,7 +1,4 @@
-<p align="center">
-  <!-- Logo placeholder: replace with docs/assets/logo.svg once designed -->
-  <strong>FastStudio</strong>
-</p>
+<p align="center"><strong>FastStudio</strong></p>
 
 <p align="center"><em>A modern, beautiful admin studio for FastAPI.</em></p>
 
@@ -10,12 +7,11 @@
   <a href="https://codecov.io/gh/bekzod818/faststudio"><img alt="Coverage" src="https://codecov.io/gh/bekzod818/faststudio/branch/main/graph/badge.svg"></a>
   <a href="https://pypi.org/project/faststudio/"><img alt="PyPI" src="https://img.shields.io/pypi/v/faststudio"></a>
   <a href="https://pypi.org/project/faststudio/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/faststudio"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="https://github.com/bekzod818/faststudio/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://github.com/astral-sh/ruff"><img alt="Code style: ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json"></a>
 </p>
 
-> **Status: alpha.** FastStudio is under active development. The public API may
-> change in any `0.x` release until `1.0`.
+> **Status: alpha.** The public API may change in any `0.x` release until `1.0`.
 
 FastStudio adds a polished, Django-Admin-style admin panel to any FastAPI
 application backed by SQLAlchemy 2.0 (async). Register your models with a few
@@ -23,7 +19,9 @@ lines of declarative Python and get a fast React UI for browsing, searching,
 filtering and editing your data. No Node.js required: the UI ships pre-built
 inside the Python wheel.
 
-<!-- Screenshot placeholder: docs/assets/screenshot-list.png -->
+<p align="center">
+  <img alt="The products list in FastStudio: search, filters, sortable columns and pagination" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.0/docs/assets/screenshot-list.png" width="860">
+</p>
 
 ## Features
 
@@ -43,15 +41,34 @@ inside the Python wheel.
 ## Quickstart
 
 ```bash
-pip install faststudio
+pip install faststudio aiosqlite uvicorn   # aiosqlite: or asyncpg / aiomysql
 ```
+
+Save as `main.py`:
 
 ```python
 from fastapi import FastAPI
+from sqlalchemy import String
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from faststudio import Admin, ModelAdmin, ModelUserBackend
-from app.models import User  # your SQLAlchemy 2.0 declarative model
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):  # your own model: FastStudio signs admins in from it
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(150), unique=True)
+    email: Mapped[str] = mapped_column(String(254))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    is_admin: Mapped[bool] = mapped_column(default=False)
+
 
 engine = create_async_engine("sqlite+aiosqlite:///app.db")
 app = FastAPI()
@@ -61,23 +78,64 @@ admin = Admin(app, engine=engine, auth_backend=ModelUserBackend(User))
 
 @admin.register
 class UserAdmin(ModelAdmin, model=User):
-    list_display = ["id", "email", "is_active", "created_at"]
-    search_fields = ["email"]
-    list_filter = ["is_active"]
+    list_display = ["id", "username", "email", "is_active", "is_admin"]
+    search_fields = ["username", "email"]
+    list_filter = ["is_active", "is_admin"]
+    exclude = ["password_hash"]  # never show or accept credentials
+    can_create = False  # accounts are created in code (see create_admin.py)
 ```
+
+Save as `create_admin.py` (creates the table and your first admin; run it once
+per account, since usernames are unique):
+
+```python
+import asyncio
+import getpass
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from faststudio import hash_password
+from main import Base, User, engine
+
+
+async def create_admin() -> None:
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with async_sessionmaker(engine)() as session:
+            session.add(
+                User(
+                    username=input("Username: "),
+                    email=input("Email: "),
+                    password_hash=hash_password(getpass.getpass("Password: ")),
+                    is_admin=True,
+                )
+            )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(create_admin())
+```
+
+Then:
 
 ```bash
 export FASTSTUDIO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python create_admin.py
 uvicorn main:app
 # open http://127.0.0.1:8000/admin
 ```
 
-Create an admin user by storing `faststudio.hash_password("...")` in your user
-table's `password_hash` column with `is_admin = True`. See
-[docs/getting-started.md](docs/getting-started.md).
+The [getting-started guide](https://github.com/bekzod818/faststudio/blob/main/docs/getting-started.md) explains each
+step, and [`examples/basic`](https://github.com/bekzod818/faststudio/blob/main/examples/basic/README.md) is a complete
+app covering every field type:
 
-> The snippet shows the target v0.1.0 API. Until v0.1.0 is released, follow
-> `examples/basic/` on the `main` branch.
+<p align="center">
+  <img alt="Editing a product: typed inputs, a related-record picker and a JSON field" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.0/docs/assets/screenshot-form.png" width="420">
+  <img alt="The products list in dark mode with an active filter" src="https://raw.githubusercontent.com/bekzod818/faststudio/v0.1.0/docs/assets/screenshot-list-dark.png" width="420">
+</p>
 
 ## Configuration
 
@@ -87,21 +145,25 @@ table's `password_hash` column with `is_admin = True`. See
 | `base_url` | – | `/admin` | Mount path. The UI works under any path. |
 | `title` | – | `"FastStudio"` | Shown in the header and browser tab. |
 | `session_max_age` | – | 8 hours | Absolute session lifetime. |
-| `secure_cookies` | – | `True` | Set `False` only for plain-HTTP development on non-localhost hosts. |
+| `secure_cookies` | – | `True` | Chrome and Firefox accept secure cookies on `http://localhost` and `127.0.0.1`; elsewhere serve over HTTPS. |
 | `max_page_size` | – | `100` | Upper bound for any list request and for `ModelAdmin.page_size`. |
 | `rate_limiter` | – | in-memory | Use a shared limiter when running several workers. |
 | `show_powered_by` | – | `True` | "Powered by FastStudio" footer. |
 
-Full reference: [docs/configuration.md](docs/configuration.md).
+Full reference: [docs/configuration.md](https://github.com/bekzod818/faststudio/blob/main/docs/configuration.md).
 
 ## Security
 
 FastStudio treats the admin as a high-value target. Every API route except
 login requires a session; state-changing requests require a CSRF token; search,
 filter and sort parameters are validated against the fields you declared;
-writes respect `readonly_fields` and `exclude`. Read the
-[threat model](docs/threat-model.md) and report vulnerabilities privately as
-described in [SECURITY.md](SECURITY.md).
+writes respect `readonly_fields` and `exclude`; logins are throttled per
+account and per client. Run behind a proxy with trusted proxy headers
+(`uvicorn --proxy-headers --forwarded-allow-ips=...`) so client addresses are
+real, and mount the admin on its own subdomain if the host serves untrusted
+content. Read the
+[threat model](https://github.com/bekzod818/faststudio/blob/main/docs/threat-model.md) and report vulnerabilities privately as
+described in [SECURITY.md](https://github.com/bekzod818/faststudio/blob/main/SECURITY.md).
 
 ## How it compares
 
@@ -123,15 +185,15 @@ need a proven tool today, both projects above are great choices.
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). Highlights after v0.1.0: relationship editing,
+See [ROADMAP.md](https://github.com/bekzod818/faststudio/blob/main/ROADMAP.md). Highlights after v0.1.0: relationship editing,
 custom actions, file uploads, role-based permissions, audit log, i18n
 (English, Uzbek, Russian).
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and
-the [architecture overview](docs/architecture.md).
+Contributions are welcome. Start with [CONTRIBUTING.md](https://github.com/bekzod818/faststudio/blob/main/CONTRIBUTING.md) and
+the [architecture overview](https://github.com/bekzod818/faststudio/blob/main/docs/architecture.md).
 
 ## License
 
-[MIT](LICENSE) © 2026 Bekzod
+[MIT](https://github.com/bekzod818/faststudio/blob/main/LICENSE) © 2026 Bekzod
