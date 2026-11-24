@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useConfig } from "@/lib/config-context";
 import { cn } from "@/lib/utils";
 import { ModelGate } from "@/features/model/ModelGate";
 import { inSentence, routes } from "@/features/model/routes";
@@ -29,6 +30,7 @@ import {
   effectiveOrdering,
   filterValue,
   filterValues,
+  lastReachablePage,
   nextOrdering,
   parseListQuery,
   toApiParams,
@@ -50,10 +52,18 @@ export function ModelListRoute() {
 
 export function ListPage({ model }: { model: ModelMeta }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const query = useMemo(() => parseListQuery(searchParams, model), [searchParams, model]);
+  const { maxListOffset } = useConfig();
+  const query = useMemo(
+    () => parseListQuery(searchParams, model, maxListOffset),
+    [searchParams, model, maxListOffset],
+  );
   const params = useMemo(() => toApiParams(query), [query]);
   const list = useList(model.identity, params);
   const plural = inSentence(model.name_plural);
+  // The server serves pages while (page - 1) * page_size < max_list_offset.
+  const pageSize = list.data?.page_size ?? model.page_size;
+  const lastPage = lastReachablePage(maxListOffset, pageSize);
+  const reachableRows = lastPage * pageSize;
 
   const update = (changes: Partial<ListQuery>, options: { replace?: boolean } = {}) => {
     // Any change other than the page itself starts again from page 1.
@@ -170,6 +180,25 @@ export function ListPage({ model }: { model: ModelMeta }) {
         <p role="status" className="text-muted-foreground">
           Loading {plural}…
         </p>
+      ) : list.isError &&
+        list.data === undefined &&
+        query.page > 1 &&
+        list.error instanceof ApiError &&
+        list.error.code === "invalid_query" ? (
+        // The URL's other parameters are validated against /meta, so a refused
+        // later page is the offset cap (a stale tab or a hand-edited link).
+        <div role="alert" className="flex flex-col items-start gap-2">
+          <p>This page is too far into the list to load. Search or filter to narrow the results.</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              update({ page: 1 });
+            }}
+          >
+            Go to the first page
+          </Button>
+        </div>
       ) : list.isError && list.data === undefined ? (
         <div role="alert" className="flex flex-col items-start gap-2">
           <p>Could not load {plural}.</p>
@@ -284,16 +313,25 @@ export function ListPage({ model }: { model: ModelMeta }) {
               }}
             />
           ) : (
-            <Pagination
-              page={query.page}
-              pageSize={list.data.page_size}
-              total={list.data.total}
-              shownFrom={(list.data.page - 1) * list.data.page_size + 1}
-              shown={list.data.items.length}
-              onPage={(page) => {
-                update({ page });
-              }}
-            />
+            <>
+              <Pagination
+                page={query.page}
+                pageSize={list.data.page_size}
+                total={list.data.total}
+                shownFrom={(list.data.page - 1) * list.data.page_size + 1}
+                shown={list.data.items.length}
+                lastPage={lastPage}
+                onPage={(page) => {
+                  update({ page });
+                }}
+              />
+              {list.data.total > reachableRows && (
+                <p className="text-sm text-muted-foreground">
+                  Only the first {reachableRows} {plural} can be paged through. Search or filter to
+                  find the rest.
+                </p>
+              )}
+            </>
           )}
         </>
       )}

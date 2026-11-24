@@ -184,8 +184,9 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
 - Host-side logging of SQLAlchemy errors (e.g. `echo=True` or host exception
   handlers after ADR-0008 propagation) may include parameters; create the
   engine with `hide_parameters=True` in production.
-- Read-API cost for authenticated admins: deep pages use `OFFSET` (up to
-  page 100 000 × `max_page_size`), every list runs a `COUNT(*)`, contains
+- Read-API cost for authenticated admins: deep pages use `OFFSET`, capped
+  below `max_list_offset` rows (default 10 000; configurable up to
+  10 000 000), every list runs a `COUNT(*)`, contains
   search (`%q%`) always scans, and sorting on unindexed `list_display`
   columns is slow on large tables; text and JSON columns in `list_display` are
   returned whole. Index sortable/searchable columns and keep `list_display`

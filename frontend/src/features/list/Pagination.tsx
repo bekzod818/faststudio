@@ -3,8 +3,6 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-r
 
 import { Button } from "@/components/ui/button";
 
-import { MAX_PAGE } from "./query";
-
 /**
  * `page` is the requested page (from the URL), so quick repeated clicks move
  * on even while the previous page is still displayed; `shownFrom`/`shown`
@@ -16,6 +14,7 @@ export function Pagination({
   total,
   shownFrom,
   shown,
+  lastPage,
   onPage,
 }: {
   page: number;
@@ -23,10 +22,11 @@ export function Pagination({
   total: number;
   shownFrom: number;
   shown: number;
+  /** Last page the server serves (offset cap); see `lastReachablePage`. */
+  lastPage: number;
   onPage: (page: number) => void;
 }) {
-  // Pages past MAX_PAGE are not addressable (the server rejects them).
-  const pages = Math.min(MAX_PAGE, Math.max(1, Math.ceil(total / pageSize)));
+  const pages = Math.min(lastPage, Math.max(1, Math.ceil(total / pageSize)));
   return (
     <nav
       aria-label="Pagination"

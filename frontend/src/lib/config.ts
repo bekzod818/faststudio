@@ -11,6 +11,7 @@ const SpaConfigSchema = z.object({
   base_url: appPath,
   api_url: appPath,
   title: z.string().min(1),
+  max_list_offset: z.number().int().positive(),
 });
 
 export interface AppConfig {
@@ -20,6 +21,8 @@ export interface AppConfig {
   /** JSON API base path, e.g. `/admin/api/v1`. */
   apiUrl: string;
   title: string;
+  /** Lists never skip this many rows: see `lastReachablePage`. */
+  maxListOffset: number;
 }
 
 /** Used by `pnpm dev` (Vite serves index.html without the server-rendered block). */
@@ -28,6 +31,7 @@ export const DEV_CONFIG: AppConfig = {
   baseUrl: "/admin",
   apiUrl: "/admin/api/v1",
   title: "FastStudio (dev)",
+  maxListOffset: 10_000,
 };
 
 /**
@@ -55,5 +59,6 @@ export function readConfig(doc: Document = document): AppConfig {
     baseUrl: parsed.data.base_url,
     apiUrl: parsed.data.api_url,
     title: parsed.data.title,
+    maxListOffset: parsed.data.max_list_offset,
   };
 }

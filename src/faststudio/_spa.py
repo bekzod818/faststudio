@@ -69,7 +69,7 @@ def validate_template(template: str) -> str:
     return template
 
 
-def render_index(template: str, *, admin_root: str, title: str) -> str:
+def render_index(template: str, *, admin_root: str, title: str, max_list_offset: int) -> str:
     """Insert `<base href>`, the JSON config block and the page title.
 
     `admin_root` is the mount path as the browser sees it, including any proxy
@@ -80,6 +80,7 @@ def render_index(template: str, *, admin_root: str, title: str) -> str:
         base_url=admin_root,
         api_url=f"{admin_root}{API_PREFIX}",
         title=title,
+        max_list_offset=max_list_offset,
     )
     head = (
         f'<base href="{html.escape(admin_root + "/", quote=True)}">\n'
@@ -144,7 +145,12 @@ class SpaSite:
             raise FastStudioError(msg)
         cached = self._rendered.get(admin_root)
         if cached is None:
-            cached = render_index(self.template, admin_root=admin_root, title=self.settings.title)
+            cached = render_index(
+                self.template,
+                admin_root=admin_root,
+                title=self.settings.title,
+                max_list_offset=self.settings.max_list_offset,
+            )
             if len(self._rendered) < _MAX_CACHED_ROOTS:
                 self._rendered[admin_root] = cached
         return cached

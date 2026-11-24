@@ -23,6 +23,7 @@ def _settings() -> Settings:
         session_max_age=timedelta(hours=1),
         secure_cookies=True,
         max_page_size=100,
+        max_list_offset=10_000,
         show_powered_by=True,
     )
 
@@ -42,7 +43,9 @@ def test_route_path(tmp_path: Path, scope: dict[str, str], expected: str) -> Non
 
 
 def test_render_index_escapes_admin_root() -> None:
-    html = render_index("<!-- faststudio:head --><title>x</title>", admin_root='/a"b', title="T")
+    html = render_index(
+        "<!-- faststudio:head --><title>x</title>", admin_root='/a"b', title="T", max_list_offset=50
+    )
     assert '<base href="/a&quot;b/">' in html
 
 

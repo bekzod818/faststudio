@@ -285,6 +285,7 @@ export interface UserMeta {
 export interface SpaConfig {
   api_url: string;
   base_url: string;
+  max_list_offset: number;
   schema_version: "1";
   title: string;
 }

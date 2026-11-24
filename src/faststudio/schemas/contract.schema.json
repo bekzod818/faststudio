@@ -591,6 +591,11 @@
         "base_url": {
           "type": "string"
         },
+        "max_list_offset": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "schema_version": {
           "const": "1",
           "type": "string"
@@ -603,7 +608,8 @@
         "schema_version",
         "base_url",
         "api_url",
-        "title"
+        "title",
+        "max_list_offset"
       ],
       "type": "object"
     },

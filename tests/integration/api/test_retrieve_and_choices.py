@@ -133,3 +133,11 @@ async def test_choices_reject_filter_parameters(api: httpx.AsyncClient) -> None:
 async def test_choices_pagination(api: httpx.AsyncClient) -> None:
     response = await api.get(f"{BASE}/users/fields/team_id/choices", params={"page": "2"})
     assert response.json() == {"items": [], "total": 3}
+
+
+async def test_choices_pages_stop_at_the_default_offset_cap(api: httpx.AsyncClient) -> None:
+    url = "/admin/api/v1/models/users/fields/team_id/choices"
+    assert (await api.get(url, params={"page": "500"})).status_code == 200  # offset 9 980
+    refused = await api.get(url, params={"page": "501"})  # offset 10 000
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "invalid_query"

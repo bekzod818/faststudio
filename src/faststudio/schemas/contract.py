@@ -222,6 +222,9 @@ class SpaConfig(_Contract):
     base_url: str
     api_url: str
     title: str
+    #: Lists never skip this many rows: the last reachable page is
+    #: ceil(max_list_offset / page_size).
+    max_list_offset: int = Field(ge=1, le=10_000_000)
 
 
 class LoginRequest(_Contract):

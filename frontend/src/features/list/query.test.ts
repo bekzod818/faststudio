@@ -2,21 +2,40 @@ import type { ModelMeta } from "@/api/contract.gen";
 import { testModel } from "@/test/fixtures";
 
 import {
-  MAX_PAGE,
   MAX_SEARCH_LENGTH,
   effectiveOrdering,
   filterValue,
+  lastReachablePage,
   nextOrdering,
   parseListQuery,
   toApiParams,
   toSearchParams,
 } from "./query";
 
-const model: ModelMeta = testModel();
+const model: ModelMeta = testModel(); // page_size 2
+const CAP = 10_000;
 
-function parse(search: string) {
-  return parseListQuery(new URLSearchParams(search), model);
+function parse(search: string, cap = CAP) {
+  return parseListQuery(new URLSearchParams(search), model, cap);
 }
+
+// A page is reachable iff its OFFSET, (page - 1) * pageSize, is < maxListOffset.
+// Same vectors as the server (tests/unit/query/test_params.py).
+describe("lastReachablePage", () => {
+  it.each([
+    [10_000, 25, 400],
+    [10_000, 30, 334],
+    [10_000, 20, 500],
+    [10_000, 100, 100],
+    [100, 25, 4],
+    [1, 25, 1],
+    [10_000_000, 1, 10_000_000],
+  ])("cap %i, page size %i -> page %i", (cap, pageSize, last) => {
+    expect(lastReachablePage(cap, pageSize)).toBe(last);
+    expect((last - 1) * pageSize).toBeLessThan(cap);
+    expect(last * pageSize).toBeGreaterThanOrEqual(cap);
+  });
+});
 
 describe("parseListQuery", () => {
   it("defaults to page 1 with nothing applied", () => {
@@ -34,8 +53,15 @@ describe("parseListQuery", () => {
     });
   });
 
-  it.each(["0", "-1", "1.5", "abc", "1e3", String(MAX_PAGE + 1), ""])("drops page=%s", (page) => {
+  it.each(["0", "-1", "1.5", "abc", "1e3", "9999999999", ""])("drops page=%s", (page) => {
     expect(parse(`page=${page}`).page).toBe(1);
+  });
+
+  it("clamps a page past the offset cap to the last reachable page", () => {
+    // page_size 2, cap 9: offsets 0..8 are reachable, so pages 1..5.
+    expect(parse("page=5", 9).page).toBe(5);
+    expect(parse("page=6", 9).page).toBe(5);
+    expect(parse("page=999999", 9).page).toBe(5);
   });
 
   it("counts search length in characters, not UTF-16 units", () => {
@@ -47,11 +73,11 @@ describe("parseListQuery", () => {
     const tricky = testModel({
       list_filter: [{ field: "constructor", kind: "boolean", choices: [] }],
     });
-    const query = parseListQuery(new URLSearchParams(""), tricky);
+    const query = parseListQuery(new URLSearchParams(""), tricky, CAP);
     expect(filterValue(query, "constructor")).toBe("");
-    expect(parseListQuery(new URLSearchParams("filter[toString]=true"), tricky).filters).toEqual(
-      {},
-    );
+    expect(
+      parseListQuery(new URLSearchParams("filter[toString]=true"), tricky, CAP).filters,
+    ).toEqual({});
   });
 
   it("drops a search that is too long or has control characters", () => {
@@ -62,19 +88,15 @@ describe("parseListQuery", () => {
 
   it("ignores search when the model has no search fields", () => {
     const plain = { ...model, search_fields: [] };
-    expect(parseListQuery(new URLSearchParams("q=x"), plain).q).toBe("");
+    expect(parseListQuery(new URLSearchParams("q=x"), plain, CAP).q).toBe("");
   });
 
   it("keeps only sortable, unique fields, at most five", () => {
     expect(parse("ordering=secret,-email,email,,id").ordering).toEqual(["-email", "id"]);
     const many = { ...model, sortable_fields: ["a", "b", "c", "d", "e", "f"] };
-    expect(parseListQuery(new URLSearchParams("ordering=a,b,c,d,e,f"), many).ordering).toEqual([
-      "a",
-      "b",
-      "c",
-      "d",
-      "e",
-    ]);
+    expect(parseListQuery(new URLSearchParams("ordering=a,b,c,d,e,f"), many, CAP).ordering).toEqual(
+      ["a", "b", "c", "d", "e"],
+    );
   });
 
   it("keeps only declared filters with allowed values", () => {
@@ -93,7 +115,7 @@ describe("parseListQuery", () => {
 describe("toSearchParams / toApiParams", () => {
   it("round-trips and omits defaults", () => {
     const query = parse("page=2&q=ann&ordering=-email&filter[status]=DONE");
-    expect(parseListQuery(toSearchParams(query), model)).toEqual(query);
+    expect(parseListQuery(toSearchParams(query), model, CAP)).toEqual(query);
     expect(toSearchParams({ page: 1, q: "", ordering: [], filters: {} }).toString()).toBe("");
   });
 

@@ -17,6 +17,9 @@ API_PREFIX = "/api/v1"
 MAX_TITLE_LENGTH = 100
 MIN_SESSION_MAX_AGE = timedelta(seconds=60)
 MAX_PAGE_SIZE_LIMIT = 1000
+#: Default and largest allowed `max_list_offset` (rows an OFFSET may skip).
+DEFAULT_MAX_LIST_OFFSET = 10_000
+MAX_LIST_OFFSET_LIMIT = 10_000_000
 _SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 
 
@@ -57,6 +60,8 @@ class Settings:
     session_max_age: timedelta
     secure_cookies: bool
     max_page_size: int
+    #: Lists never skip this many rows or more (OFFSET); see query/_params.py.
+    max_list_offset: int
     show_powered_by: bool
 
     @property
@@ -80,6 +85,7 @@ def resolve_settings(
     session_max_age: timedelta,
     secure_cookies: bool,
     max_page_size: int,
+    max_list_offset: int,
     show_powered_by: bool,
 ) -> Settings:
     """Validate raw options and return :class:`Settings`.
@@ -92,6 +98,7 @@ def resolve_settings(
     _require_type("session_max_age", session_max_age, timedelta)
     _require_type("secure_cookies", secure_cookies, bool)
     _require_type("max_page_size", max_page_size, int)
+    _require_type("max_list_offset", max_list_offset, int)
     _require_type("show_powered_by", show_powered_by, bool)
     clean_title = title.strip()
     if not clean_title or len(clean_title) > MAX_TITLE_LENGTH:
@@ -106,6 +113,9 @@ def resolve_settings(
     if not 1 <= max_page_size <= MAX_PAGE_SIZE_LIMIT:
         msg = f"max_page_size must be between 1 and {MAX_PAGE_SIZE_LIMIT}."
         raise ConfigurationError(msg)
+    if not 1 <= max_list_offset <= MAX_LIST_OFFSET_LIMIT:
+        msg = f"max_list_offset must be between 1 and {MAX_LIST_OFFSET_LIMIT}."
+        raise ConfigurationError(msg)
     settings = Settings(
         secret_key=resolve_secret_key(secret_key),
         title=clean_title,
@@ -113,6 +123,7 @@ def resolve_settings(
         session_max_age=session_max_age,
         secure_cookies=secure_cookies,
         max_page_size=max_page_size,
+        max_list_offset=max_list_offset,
         show_powered_by=show_powered_by,
     )
     if not secure_cookies:

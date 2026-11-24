@@ -12,6 +12,7 @@ const CONFIG = {
   baseUrl: "/admin",
   apiUrl: "/admin/api/v1",
   title: "Test Admin",
+  maxListOffset: 10_000,
 } as const;
 
 const ME = { user: { id: "1", username: "admin" } };

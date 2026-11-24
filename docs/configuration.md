@@ -17,6 +17,7 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `session_max_age` | `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
 | `secure_cookies` | `bool` | `True` | – | `Secure` cookie flag. Browsers accept secure cookies on `http://localhost`, so keep this on for local dev too. `False` logs a warning at startup. |
 | `max_page_size` | `int` | `100` | – | Hard cap for list requests and `ModelAdmin.page_size`; 1–1000. |
+| `max_list_offset` | `int` | `10_000` | – | Lists and relation pickers never skip this many rows or more; see [Deep pagination](#deep-pagination). 1–10 000 000. |
 | `rate_limiter` | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. Independently, each client IP gets at most 30 attempts / 15 min across all usernames (per process). Client IPs must be real: behind a reverse proxy enable trusted proxy headers (`uvicorn --proxy-headers --forwarded-allow-ips=...`). |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
 
@@ -96,6 +97,26 @@ attribute, or when two writable attributes map to the same column.
 
 In production create the engine with `hide_parameters=True` so that any
 SQLAlchemy error logged by your application never contains row values.
+
+## Deep pagination
+
+Lists page with SQL `OFFSET`, and the database reads and discards every
+skipped row, so page 40 000 of a large table costs far more than page 1.
+FastStudio therefore stops at `max_list_offset` (default 10 000) rows:
+
+- A page is reachable while its offset, `(page - 1) * page_size`, is **less
+  than** `max_list_offset`. The last reachable page is
+  `ceil(max_list_offset / page_size)`: with the default cap that is page 400
+  at 25 rows per page, page 334 at 30, and page 100 at 100.
+- The relation picker (choices endpoint, 20 rows per page) follows the same
+  rule: page 500 is its last page by default.
+- A request past the last reachable page gets `400 invalid_query`. The UI
+  stops its pagination there and tells the admin to narrow the results.
+
+To reach older rows, search, filter or sort the list (for example by newest
+first) instead of paging. Raise `max_list_offset` only if your database
+handles the deeper scans (an index on the sort column helps), up to
+10 000 000. Response shapes do not change.
 
 ## Generating a secret key
 

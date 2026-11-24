@@ -11,6 +11,8 @@ listed under **Changed** or **Removed** with migration notes.
 
 ### Added
 
+- `Admin(max_list_offset=...)` and the matching `max_list_offset` field in the
+  SPA's runtime config.
 - Error codes `self_lockout` and `last_admin` in the API contract.
 - `ModelMeta.account` (additive, `schema_version` stays `"1"`): on the model
   that holds the admins' accounts it lists the fields an admin cannot change
@@ -19,6 +21,12 @@ listed under **Changed** or **Removed** with migration notes.
 
 ### Changed
 
+- Lists and relation pickers stop at `max_list_offset` rows (default
+  10 000): a page is reachable while `(page - 1) * page_size` is below it,
+  and pages past that now return `400 invalid_query`. Before, pages up to
+  100 000 were accepted (an `OFFSET` of up to 10 million rows). Response
+  shapes are unchanged. **Migration:** pass
+  `Admin(max_list_offset=...)` (up to 10 000 000) to restore deeper paging.
 - With `ModelUserBackend`, `Admin.register()` now raises `ConfigurationError`
   for a model that maps the user model's table without being the user model
   or a subclass of it (an inheritance base class, a sibling subclass sharing

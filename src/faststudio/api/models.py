@@ -50,8 +50,12 @@ async def meta(request: Request, user: CurrentUser) -> MetaResponse:
 async def list_items(request: Request, registered: ModelDep, session: DbSession) -> ListResponse:
     """Return a page of records with search, filters and sorting from the allowlists."""
     context = get_context(request)
+    settings = context.settings
     params = parse_list_params(
-        request.query_params.multi_items(), registered, context.settings.max_page_size
+        request.query_params.multi_items(),
+        registered,
+        settings.max_page_size,
+        max_list_offset=settings.max_list_offset,
     )
     page_query, count_query = list_statements(registered, params)
     rows = (await session.execute(page_query)).scalars().all()
@@ -85,7 +89,10 @@ async def choices(
     target = registry.target_of(spec.relation.target) if spec and spec.relation else None
     if target is None:
         raise ApiError(404, "not_found")
-    page, q = parse_choices_params(request.query_params.multi_items())
+    page, q = parse_choices_params(
+        request.query_params.multi_items(),
+        max_list_offset=get_context(request).settings.max_list_offset,
+    )
     page_query, count_query = choices_statements(target, q, page)
     total = (await session.execute(count_query)).scalar_one()
     result = await session.execute(page_query)

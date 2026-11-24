@@ -147,6 +147,7 @@ app covering every field type:
 | `session_max_age` | – | 8 hours | Absolute session lifetime. |
 | `secure_cookies` | – | `True` | Chrome and Firefox accept secure cookies on `http://localhost` and `127.0.0.1`; elsewhere serve over HTTPS. |
 | `max_page_size` | – | `100` | Upper bound for any list request and for `ModelAdmin.page_size`. |
+| `max_list_offset` | – | `10_000` | Lists stop paging after this many rows (deep `OFFSET`s are slow); search, filter or sort to reach older rows. |
 | `rate_limiter` | – | in-memory | Use a shared limiter when running several workers. |
 | `show_powered_by` | – | `True` | "Powered by FastStudio" footer. |
 
