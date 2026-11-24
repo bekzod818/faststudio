@@ -24,5 +24,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // A non-UTC zone (UTC+5, no DST), so timezone bugs cannot hide on UTC CI runners.
+    env: { TZ: "Asia/Tashkent" },
   },
 });

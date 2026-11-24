@@ -77,7 +77,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M10 | List view | done |
 | M11 | Forms, delete, toasts | done |
 | M12 | Example app, Playwright E2E, wheel smoke | done |
-| M13 | Docs, security sign-off, v0.1.0 release | planned |
+| M13 | Docs, security sign-off, v0.1.0 release | done |
 
 Each milestone: tests first → implementation → ruff/mypy/pytest → security
 and code review → docs/CHANGELOG → commit.

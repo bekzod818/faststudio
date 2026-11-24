@@ -57,6 +57,25 @@ describe("CellValue", () => {
     expect(element).toHaveAttribute("dateTime", "2026-11-24T10:30:00+00:00");
   });
 
+  it("reads offset-less values of timezone-aware columns as UTC (like the form)", () => {
+    cell(testField({ name: "at", type: "datetime", timezone: true }), "2026-01-31T00:00:00");
+    const element = screen.getByTitle("2026-01-31T00:00:00");
+    const expected = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date("2026-01-31T00:00:00Z"));
+    expect(element).toHaveTextContent(expected);
+  });
+
+  it("shows naive columns as stored wall-clock time", () => {
+    cell(testField({ name: "at", type: "datetime", timezone: false }), "2026-01-31T09:30:00");
+    const expected = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(2026, 0, 31, 9, 30));
+    expect(screen.getByTitle("2026-01-31T09:30:00")).toHaveTextContent(expected);
+  });
+
   it("shows an unparsable datetime as text", () => {
     cell(testField({ name: "at", type: "datetime" }), "not a date");
     expect(screen.getByText("not a date")).toBeInTheDocument();
