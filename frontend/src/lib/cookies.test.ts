@@ -16,4 +16,9 @@ describe("readCookie", () => {
   it("treats a malformed value as absent instead of throwing", () => {
     expect(readCookie("faststudio_csrftoken", "faststudio_csrftoken=%E0")).toBeUndefined();
   });
+
+  it("refuses a cookie that appears twice (planted by a sibling domain)", () => {
+    expect(readCookie("t", "t=planted; t=real")).toBeUndefined();
+    expect(readCookie("t", "t=real; t=planted")).toBeUndefined();
+  });
 });

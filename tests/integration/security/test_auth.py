@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from faststudio import Admin, InMemoryRateLimiter, ModelUserBackend, hash_password
 from faststudio.api._paths import LOGIN_PATH
+from faststudio.security.rate_limit import CLIENT_MAX_ATTEMPTS
 from tests.factories.models import AdminUser, Base
 
 CSRF_COOKIE = "faststudio_csrftoken"
@@ -241,7 +242,73 @@ async def test_rate_limit_is_per_username(
     assert (await _login(https_client)).status_code == 200
 
 
+async def test_one_client_cannot_spray_many_usernames(
+    make_auth_admin: AuthAdminFactory, app: FastAPI
+) -> None:
+    """Rotating usernames from one address is capped too (password spraying)."""
+    make_auth_admin()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app, client=("203.0.113.7", 1234)),
+        base_url="https://testserver",
+    ) as attacker:
+        for i in range(CLIENT_MAX_ATTEMPTS):
+            assert (await _login(attacker, f"user{i}", "guess")).status_code == 401
+        assert (await _login(attacker, "someone-else", "guess")).status_code == 429
+        assert (await _login(attacker)).status_code == 429  # even the right password
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app, client=("198.51.100.9", 1234)),
+        base_url="https://testserver",
+    ) as other:
+        assert (await _login(other)).status_code == 200  # other clients are unaffected
+
+
 # --------------------------------------------------------------------------- sessions
+
+
+@pytest.mark.parametrize("valid_first", [True, False])
+async def test_repeated_session_cookie_is_rejected(
+    make_auth_admin: AuthAdminFactory, https_client: httpx.AsyncClient, valid_first: bool
+) -> None:
+    """A cookie planted by a sibling domain must not decide which session is used."""
+    make_auth_admin()
+    assert (await _login(https_client)).status_code == 200
+    session = https_client.cookies[SESSION_COOKIE]
+    planted = "planted.by.sibling"
+    pair = [session, planted] if valid_first else [planted, session]
+    cookie = "; ".join(f"{SESSION_COOKIE}={value}" for value in pair)
+    https_client.cookies.clear()
+    response = await https_client.get(ME, headers={"cookie": cookie})
+    assert response.status_code == 401
+
+
+async def test_repeated_cookie_is_logged_without_values(
+    make_auth_admin: AuthAdminFactory,
+    https_client: httpx.AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    make_auth_admin()
+    cookie = f"{SESSION_COOKIE}=first-SECRET; {SESSION_COOKIE}=second-SECRET"
+    with caplog.at_level("WARNING", logger="faststudio.auth"):
+        await https_client.get(ME, headers={"cookie": cookie})
+    assert f"Refused request cookie {SESSION_COOKIE} sent 2 times" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+@pytest.mark.parametrize("valid_first", [True, False])
+async def test_repeated_csrf_cookie_is_rejected(
+    make_auth_admin: AuthAdminFactory, https_client: httpx.AsyncClient, valid_first: bool
+) -> None:
+    make_auth_admin()
+    token = await _csrf(https_client)
+    pair = [token, "planted"] if valid_first else ["planted", token]
+    cookie = "; ".join(f"{CSRF_COOKIE}={value}" for value in pair)
+    https_client.cookies.clear()
+    response = await https_client.post(
+        LOGIN,
+        json={"username": "admin", "password": "pw-admin"},
+        headers={"cookie": cookie, CSRF_HEADER: token},
+    )
+    assert response.status_code == 403
 
 
 @pytest.mark.usefixtures("admin")

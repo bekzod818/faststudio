@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import anyio
+from anyio.lowlevel import RunVar
 from argon2 import PasswordHasher, extract_parameters
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 _HASHER = PasswordHasher()  # argon2id with argon2-cffi's current recommended parameters
+
+#: Concurrent argon2 verifications per event loop. Each one costs tens of
+#: milliseconds of CPU and ~64 MiB of memory; more are queued, not refused.
+MAX_CONCURRENT_VERIFICATIONS = 4
+_LIMITER: RunVar[anyio.CapacityLimiter] = RunVar("faststudio_password_limiter")
 
 
 def hash_password(password: str) -> str:
@@ -58,3 +65,24 @@ def dummy_verify(password: str) -> bool:
     """Spend the same time as a real verification (unknown usernames); always False."""
     verify_password(_dummy_hash(), password + "\x00not-the-dummy")
     return False
+
+
+def _limiter() -> anyio.CapacityLimiter:
+    try:
+        return _LIMITER.get()
+    except LookupError:
+        limiter = anyio.CapacityLimiter(MAX_CONCURRENT_VERIFICATIONS)
+        _LIMITER.set(limiter)
+        return limiter
+
+
+async def verify_password_async(stored_hash: str, password: str) -> bool:
+    """`verify_password` in a worker thread, so login never blocks the event loop."""
+    return await anyio.to_thread.run_sync(
+        verify_password, stored_hash, password, limiter=_limiter()
+    )
+
+
+async def dummy_verify_async(password: str) -> bool:
+    """`dummy_verify` in a worker thread; always False."""
+    return await anyio.to_thread.run_sync(dummy_verify, password, limiter=_limiter())

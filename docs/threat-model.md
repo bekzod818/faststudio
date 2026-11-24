@@ -49,21 +49,25 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 | Identical status, body and code for unknown user vs wrong password vs inactive/non-admin. | `tests/integration/security/test_auth.py` |
 | Dummy argon2 verification for unknown or ambiguous usernames and for rows without a usable argon2 hash (NULL, legacy bcrypt, SSO-only); inactive/non-admin rows still verify the password; the dummy hash is computed at startup; the `AuthBackend` protocol documents this as a requirement for custom backends. | `tests/unit/auth/test_model_backend.py` (asserts the verifications run) |
 | Login rate limit (default 5 / 15 min per client IP + username normalized with NFKC/casefold/trim, counted before verifying, reset on success; rejected attempts do not extend the lockout) ⇒ 429 with `Retry-After`; pluggable `RateLimiter`. | `tests/unit/security/test_rate_limit.py`, `tests/integration/security/test_auth.py` |
+| Per-client budget across all usernames: at most 30 login attempts per client IP per 15 min (in-process, never reset by a success), so one address cannot spray a password over many usernames. | `tests/integration/security/test_auth.py::test_one_client_cannot_spray_many_usernames` |
+| argon2 runs in worker threads (at most 4 concurrent verifications per event loop, the rest queue), so login floods cannot block the event loop the admin shares with the host app. Custom `AuthBackend`s must not hash on the event loop either. | `tests/unit/auth/test_passwords.py::test_async_verification_runs_off_the_event_loop` |
 | Constant-time comparisons (`hmac.compare_digest`) for CSRF tokens, CSRF header vs cookie, and `auth_version`. | code review, `tests/unit/auth/test_tokens.py` |
 
 Residual risks (documented, accepted for v0.1):
 
 - The in-memory limiter is per process; multi-worker deployments need a
   shared `RateLimiter`.
-- Limits are per client IP + username. An attacker with many addresses (e.g.
-  rotating IPv6) gets more guesses against one account, and database
+- Limits are per client IP + username and per client IP. An attacker with
+  many addresses (e.g. rotating IPv6) gets more guesses against one account, and database
   collations that treat spellings as equal beyond NFKC/casefold/trim (e.g.
   accent-insensitive) may give extra buckets. Use a shared limiter with a
   per-account or per-network budget for internet-facing admins.
 - Anyone who knows an admin's username can keep that account locked out from
-  their IP (5 attempts per window). Behind a reverse proxy without trusted
+  their IP (5 attempts per window). **Behind a reverse proxy without trusted
   proxy headers (uvicorn `--proxy-headers --forwarded-allow-ips`), all clients
-  share one IP, so this affects everyone.
+  share one IP**: any 30 attempts (successful or not) then lock out every
+  admin for 15 minutes. Configure proxy headers.
+- The per-client budget is per process, like the in-memory limiter.
 - The limiter keeps at most 10 000 keys (least recently used evicted), so
   spraying that many keys can reset a lockout.
 - `ModelUserBackend` refuses logins when a username matches several rows (and
@@ -79,6 +83,7 @@ Residual risks (documented, accepted for v0.1):
 | After login the token is bound to the session id (`HMAC(key, sid|nonce)`); a token from another session, or an anonymous token while signed in (cookie tossing), is rejected (login itself still accepts an anonymous token). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
 | `Origin` / `Sec-Fetch-Site` must indicate same origin when present. Enforced for **every** `/api/*` request, including GET, so a permissive host CORS policy cannot expose admin reads (ADR-0008). | `tests/integration/security/test_origin.py`, `tests/integration/security/test_auth.py` |
 | `SameSite=Lax` session cookie as defense in depth. | `tests/integration/security/test_auth.py` |
+| A session or CSRF cookie that appears more than once in a request (planted by a sibling subdomain with `Domain=`) is treated as absent by both the server and the SPA, so a planted value never decides the session or the token (fails closed). | `tests/integration/security/test_auth.py::test_repeated_session_cookie_is_rejected`, `::test_repeated_csrf_cookie_is_rejected`, `frontend/src/lib/cookies.test.ts` |
 | Token rotated on login and logout, and reset to an anonymous token whenever an invalid session is cleared; a missing or invalid token cookie is replaced on the next response (never on cacheable `/assets/` responses). | `tests/integration/security/test_auth.py` |
 
 ### T4. Injection (SQL / query manipulation)
@@ -128,10 +133,26 @@ Residual risks (documented, accepted for v0.1):
 ### T8. Supply chain
 
 Dependabot, pip-audit, pnpm audit, CodeQL, SHA-pinned GitHub Actions, PyPI
-Trusted Publishing (OIDC, no long-lived tokens), protected release
-environments.
+Trusted Publishing (OIDC, no long-lived tokens). The release workflow re-runs
+the full gate (lint, types, tests, bandit, both audits) on the tagged commit,
+uses no dependency caches, does not persist checkout credentials and pins the
+build backend; publishing to PyPI needs the `pypi` environment (required
+reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
+`starlette>=0.49.1` excludes the Range-header DoS (CVE-2025-62727).
 
 ## Known limitations (v0.1.0)
+
+- A repeated session or CSRF cookie is refused (T3). Besides a sibling
+  subdomain planting one, this happens when an old cookie for a previous
+  mount path is still in the browser: after changing `base_url` or a proxy
+  prefix, admins may need to clear the site's cookies. FastStudio logs a
+  warning naming the cookie.
+- **Same-origin exposure.** The session cookie is scoped to `base_url`, but
+  a cookie path is not a security boundary: script running anywhere on the
+  host's origin (an XSS in the host app) can read admin data with a
+  same-origin `fetch`. Writes stay protected (the session-bound CSRF token is
+  not readable from there). If the host serves untrusted or user-generated
+  content, mount the admin on its own subdomain.
 
 - Stateless sessions cannot be revoked server-side before expiry, except by
   changing the user's password or deactivating them (ADR-0004).

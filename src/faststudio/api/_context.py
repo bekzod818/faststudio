@@ -27,3 +27,5 @@ class AdminContext:
     sessions: SessionManager
     csrf: CsrfTokens
     rate_limiter: RateLimiter
+    #: Per-client budget across all usernames (in-process; see api/auth.py).
+    client_rate_limiter: RateLimiter

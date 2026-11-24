@@ -23,7 +23,12 @@ from faststudio.exceptions import ConfigurationError
 from faststudio.model_admin import ModelAdmin
 from faststudio.registry import Registry, resolve_model_admin
 from faststudio.security.headers import SecurityHeadersMiddleware
-from faststudio.security.rate_limit import InMemoryRateLimiter, RateLimiter
+from faststudio.security.rate_limit import (
+    CLIENT_MAX_ATTEMPTS,
+    CLIENT_WINDOW_SECONDS,
+    InMemoryRateLimiter,
+    RateLimiter,
+)
 
 _T = TypeVar("_T")
 _A = TypeVar("_A", bound=type[ModelAdmin])
@@ -109,6 +114,9 @@ class Admin:
             ),
             csrf=CsrfTokens(self._settings.secret_key),
             rate_limiter=_validate_rate_limiter(rate_limiter),
+            client_rate_limiter=InMemoryRateLimiter(
+                max_attempts=CLIENT_MAX_ATTEMPTS, window_seconds=CLIENT_WINDOW_SECONDS
+            ),
         )
         self._sub_app = create_admin_app(context)
         base_url = self._settings.base_url

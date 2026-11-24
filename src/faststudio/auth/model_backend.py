@@ -16,10 +16,10 @@ from starlette.requests import Request
 
 from faststudio.auth.backend import AuthenticatedUser
 from faststudio.auth.passwords import (
-    dummy_verify,
+    dummy_verify_async,
     is_password_hash,
     prepare_dummy_hash,
-    verify_password,
+    verify_password_async,
 )
 from faststudio.exceptions import ConfigurationError
 from faststudio.introspection._columns import base_type, is_text, mapped_columns
@@ -187,10 +187,10 @@ class ModelUserBackend:
         # Unknown or ambiguous username, or no usable hash (NULL, legacy bcrypt,
         # SSO-only): spend the same time as a real check and refuse.
         if not isinstance(stored, str) or not is_password_hash(stored):
-            dummy_verify(password)
+            await dummy_verify_async(password)
             return None
         row = rows[0]
-        if not verify_password(stored, password) or not self._allowed(row):
+        if not await verify_password_async(stored, password) or not self._allowed(row):
             return None
         return self._user(row)
 

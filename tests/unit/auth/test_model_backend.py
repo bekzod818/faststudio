@@ -105,7 +105,7 @@ async def test_unknown_or_unusable_hash_still_runs_a_verification(
         calls.append(password)
         return False
 
-    monkeypatch.setattr("faststudio.auth.model_backend.dummy_verify", spy)
+    monkeypatch.setattr("faststudio.auth.passwords.dummy_verify", spy)
     backend = ModelUserBackend(AdminUser)
     assert await backend.authenticate(_request(maker), username, "pw") is None
     assert calls == ["pw"]
@@ -120,7 +120,7 @@ async def test_inactive_and_non_admin_rows_still_verify_password(
         calls.append(password)
         return True
 
-    monkeypatch.setattr("faststudio.auth.model_backend.verify_password", spy)
+    monkeypatch.setattr("faststudio.auth.passwords.verify_password", spy)
     backend = ModelUserBackend(AdminUser)
     assert await backend.authenticate(_request(maker), "inactive", "pw") is None
     assert await backend.authenticate(_request(maker), "staff", "pw") is None
@@ -227,7 +227,7 @@ async def test_null_password_column_runs_dummy_verification(
         calls.append(password)
         return False
 
-    monkeypatch.setattr("faststudio.auth.model_backend.dummy_verify", spy)
+    monkeypatch.setattr("faststudio.auth.passwords.dummy_verify", spy)
     async with maker() as session:
         session.add(LegacyAdmin(username="sso-only", password_hash=None, is_admin=True))
         await session.commit()

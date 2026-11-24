@@ -15,7 +15,12 @@ from faststudio.api._context import AdminContext
 from faststudio.api._paths import API_PREFIX
 from faststudio.api.errors import ApiError
 from faststudio.auth.backend import AuthenticatedUser
-from faststudio.auth.cookies import csrf_cookie, expired_session_cookie, session_cookie
+from faststudio.auth.cookies import (
+    csrf_cookie,
+    expired_session_cookie,
+    session_cookie,
+    single_cookie,
+)
 from faststudio.auth.session import SESSION_COOKIE
 from faststudio.schemas.contract import LoginRequest, UserMeta, UserResponse
 
@@ -36,7 +41,7 @@ def _cookie_path(request: Request) -> str:
 async def current_user(request: Request) -> AuthenticatedUser:
     """Require a valid session whose user may still sign in (401 otherwise)."""
     context = get_context(request)
-    raw = request.cookies.get(SESSION_COOKIE)
+    raw = single_cookie(request.scope, SESSION_COOKIE)
     session = context.sessions.load(raw)
     user = await context.auth_backend.get_user(request, session.user_id) if session else None
     if (
@@ -84,7 +89,9 @@ async def login(body: LoginRequest, request: Request) -> Response:
     context = get_context(request)
     client = request.client.host if request.client else "unknown"
     key = f"{client}|{rate_limit_username(body.username)}"
-    decision = await context.rate_limiter.hit(key)
+    decision = await context.client_rate_limiter.hit(client)
+    if decision.allowed:
+        decision = await context.rate_limiter.hit(key)
     if not decision.allowed:
         logger.warning("Login rate limit reached for client %s", client)
         raise ApiError(429, "rate_limited", headers={"Retry-After": str(decision.retry_after)})
