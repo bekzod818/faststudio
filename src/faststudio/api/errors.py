@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy.exc import StatementError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from faststudio.schemas.contract import ErrorBody, ErrorCode, ErrorResponse, ValidationIssue
@@ -28,6 +29,7 @@ _MESSAGES: dict[ErrorCode, str] = {
     "method_not_allowed": "Method not allowed.",
     "conflict": "Conflict.",
     "validation_error": "Invalid input.",
+    "payload_too_large": "Request body too large.",
     "rate_limited": "Too many requests.",
     "internal_error": "Internal server error.",
 }
@@ -38,6 +40,7 @@ _STATUS_CODES: dict[int, ErrorCode] = {
     404: "not_found",
     405: "method_not_allowed",
     409: "conflict",
+    413: "payload_too_large",
     422: "validation_error",
     429: "rate_limited",
 }
@@ -60,6 +63,7 @@ class ApiError(Exception):
         *,
         headers: dict[str, str] | None = None,
         set_cookies: Sequence[str] = (),
+        details: list[ValidationIssue] | None = None,
     ) -> None:
         """Create an error; `message` defaults to a generic text for `code`."""
         super().__init__(code)
@@ -68,6 +72,7 @@ class ApiError(Exception):
         self.message = message or _MESSAGES[code]
         self.headers = headers
         self.set_cookies = tuple(set_cookies)
+        self.details = details
 
 
 def error_response(
@@ -120,7 +125,11 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
     async def on_api_error(request: Request, exc: Exception) -> Response:
         error = cast("ApiError", exc)
         response = error_response(
-            error.status_code, error.code, error.message, headers=error.headers
+            error.status_code,
+            error.code,
+            error.message,
+            details=error.details,
+            headers=error.headers,
         )
         for cookie in error.set_cookies:
             response.headers.append("set-cookie", cookie)
@@ -145,8 +154,19 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
 
     async def on_unhandled(request: Request, exc: Exception) -> Response:
         # Starlette re-raises after this response is sent, so host error handlers
-        # and monitoring still see admin failures (documented in ADR-0006).
-        logger.error("Unhandled error in %s %s", request.method, request.url.path, exc_info=exc)
+        # and monitoring still see admin failures (documented in ADR-0008).
+        if isinstance(exc, StatementError):
+            # Database errors embed the SQL and its parameters (row values):
+            # log only the error types.
+            logger.error(
+                "Database error in %s %s: %s (%s)",
+                request.method,
+                request.url.path,
+                type(exc).__name__,
+                type(exc.orig).__name__,
+            )
+        else:
+            logger.error("Unhandled error in %s %s", request.method, request.url.path, exc_info=exc)
         return error_response(500, "internal_error")
 
     app.add_exception_handler(ApiError, on_api_error)

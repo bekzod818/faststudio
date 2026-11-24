@@ -37,6 +37,9 @@ a type that renders but cannot be edited safely (or vice versa).
   extend `json_default` if the wire format of defaults differs.
 
 ## 3. Contract + validation
+- `src/faststudio/schemas/_dynamic.py`: add the write validator (to `_SIMPLE`
+  or `_BUILDERS`), as strict as the database. `test_every_writable_field_type_has_a_validator`
+  fails until you do.
 - The contract's field type in `src/faststudio/schemas/contract.py` must reuse
   `introspection._types.FieldType` (single source of truth); never redeclare it.
 - `src/faststudio/schemas/_dynamic.py`: map to the Pydantic input type

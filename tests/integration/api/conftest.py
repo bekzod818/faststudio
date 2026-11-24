@@ -7,10 +7,12 @@ from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -19,12 +21,20 @@ from tests.factories.models import (
     AdminUser,
     Assignment,
     Base,
+    Child,
+    Country,
     Employee,
     Engineer,
     Gauge,
     Manager,
     Mentorship,
+    Note,
+    Owner,
+    Parent,
+    Pet,
+    Post,
     Role,
+    Tag,
     Team,
     User,
 )
@@ -38,6 +48,15 @@ TABLES = (
     "engineers",
     "assignments",
     "mentorships",
+    "notes",
+    "countries",
+    "parents",
+    "children",
+    "owners",
+    "pets",
+    "tags",
+    "posts",
+    "post_tags",
 )
 USER_COUNT = 30
 
@@ -45,6 +64,11 @@ USER_COUNT = 30
 @pytest.fixture
 async def db() -> AsyncIterator[AsyncEngine]:
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection: Any, _record: Any) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     async with engine.begin() as conn:
         await conn.run_sync(
             Base.metadata.create_all, tables=[Base.metadata.tables[t] for t in TABLES]
@@ -56,6 +80,7 @@ async def db() -> AsyncIterator[AsyncEngine]:
         session.add_all(
             [Team(id=1, name="Core"), Team(id=2, name="Growth"), Team(id=3, name="Ops")]
         )
+        await session.flush()  # referenced rows first (foreign keys are enforced)
         roles = [Role.ADMIN, Role.EDITOR, Role.VIEWER]
         for i in range(1, USER_COUNT + 1):
             session.add(
@@ -90,15 +115,27 @@ async def db() -> AsyncIterator[AsyncEngine]:
                 team_id=1,
             )
         )
+        await session.flush()
+        session.add_all([Employee(id=1), Engineer(id=2, language="python"), Manager(id=3)])
+        await session.flush()
         session.add_all(
             [
-                Employee(id=1),
-                Engineer(id=2, language="python"),
-                Manager(id=3),
                 Assignment(id=1, employee_id=2),
                 Assignment(id=2, employee_id=3),
                 Mentorship(id=1, engineer_id=2),
+                Note(id=1, title="first", secret="NOTE-SECRET", team_id=1),
+                Country(code="UZ", name="Uzbekistan"),
+                Parent(id=1, name="with child"),
+                Parent(id=2, name="childless"),
             ]
+        )
+        session.add_all([Owner(id=1, name="alice"), Tag(id=1, label="news")])
+        await session.flush()
+        session.add(Child(id=1, parent_id=1))
+        session.add_all([Pet(id=1, owner_id=1), Pet(id=2, owner_id=None)])
+        tag = await session.get(Tag, 1)
+        session.add_all(
+            [Post(id=1, title="tagged", tags=[tag]), Post(id=2, title="plain", tags=[])]
         )
         await session.commit()
     yield engine
@@ -135,6 +172,35 @@ class ManagerAdmin(ModelAdmin, model=Manager):
 
     identity = "managers"
     list_display = ("id", "kind")
+    can_create = False
+    can_edit = False
+
+
+class NoteAdmin(ModelAdmin, model=Note):
+    list_display = ("id", "title", "priority", "team_id")
+    exclude = ("secret",)
+    readonly_fields = ("created_at",)
+
+
+class CountryAdmin(ModelAdmin, model=Country):
+    list_display = ("code", "name")
+    can_delete = False
+
+
+class ParentAdmin(ModelAdmin, model=Parent):
+    list_display = ("id", "name")
+
+
+class ChildAdmin(ModelAdmin, model=Child):
+    list_display = ("id", "parent_id")
+
+
+class PetAdmin(ModelAdmin, model=Pet):
+    list_display = ("id", "owner_id")
+
+
+class PostAdmin(ModelAdmin, model=Post):
+    list_display = ("id", "title")
 
 
 class AssignmentAdmin(ModelAdmin, model=Assignment):
@@ -159,7 +225,19 @@ def admin(
     )
     instance.register(TeamAdmin)
     instance.register(UserAdmin)
-    for admin_class in (GaugeAdmin, EngineerAdmin, ManagerAdmin, AssignmentAdmin, MentorshipAdmin):
+    for admin_class in (
+        GaugeAdmin,
+        EngineerAdmin,
+        ManagerAdmin,
+        AssignmentAdmin,
+        MentorshipAdmin,
+        NoteAdmin,
+        CountryAdmin,
+        ParentAdmin,
+        ChildAdmin,
+        PetAdmin,
+        PostAdmin,
+    ):
         instance.register(admin_class)
     return instance
 

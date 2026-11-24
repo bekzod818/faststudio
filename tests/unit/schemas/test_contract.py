@@ -99,6 +99,7 @@ def test_models_are_frozen() -> None:
         "method_not_allowed",
         "conflict",
         "validation_error",
+        "payload_too_large",
         "rate_limited",
         "internal_error",
     ],

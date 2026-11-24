@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Request
 
 from faststudio.api._deps import DbSession, ModelDep
 from faststudio.api._paths import API_PREFIX
-from faststudio.api._serialize import encode_pk, format_label, parse_pk, relation_labels, to_row
+from faststudio.api._records import detail_row, load_or_404
+from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError
 from faststudio.query._list import choices_statements, list_statements
@@ -67,14 +68,8 @@ async def list_items(request: Request, registered: ModelDep, session: DbSession)
 @router.get("/models/{identity}/items/{pk}", response_model=Row)
 async def retrieve_item(request: Request, registered: ModelDep, pk: str, session: DbSession) -> Row:
     """Return one record with all visible fields."""
-    key = parse_pk(registered, pk)
-    obj = await session.get(registered.model, key) if key is not None else None
-    if obj is None:
-        raise ApiError(404, "not_found")
-    fields = list(registered.fields)
-    registry = get_context(request).registry
-    (labels,) = await relation_labels(session, registry, registered, [obj], fields)
-    return to_row(registered, obj, fields, labels)
+    obj = await load_or_404(session, registered, pk)
+    return await detail_row(session, get_context(request).registry, registered, obj)
 
 
 @router.get("/models/{identity}/fields/{field}/choices", response_model=ChoicesResponse)

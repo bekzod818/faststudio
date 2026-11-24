@@ -95,12 +95,12 @@ Residual risks (documented, accepted for v0.1):
 
 | Control | Tests |
 |---|---|
-| Write bodies validated by generated Pydantic models with `extra="forbid"`; only writable fields exist on them. Readonly, excluded and unknown fields ⇒ 422 and the row is unchanged. Primary keys are never writable on update; only natural keys (`create_only`) are accepted on create. | `test_mass_assignment.py` |
+| Write bodies validated by generated Pydantic models (`extra="forbid"`, inputs hidden in errors); only writable fields exist on them. Readonly, excluded, managed and unknown fields ⇒ 422 and the row is unchanged. Primary keys are never writable on update; only natural keys (`create_only`) are accepted on create. Values are validated at least as strictly as the database (lengths, NUL, ranges, precision, enums, timezones, referenced rows); bodies are capped at 1 MiB. | `tests/integration/api/test_write.py`, `tests/unit/schemas/test_dynamic.py` |
 | Writability is derived at `register()` and fails closed: database/SQLAlchemy-maintained columns (autoincrement, identity, computed, sequence, trigger defaults, `onupdate`, discriminator, version id), unsupported or value-converting types, and FKs whose own type is unsupported are `readonly`. Relations only point at primary keys. | `tests/unit/introspection/test_fields.py` |
 | Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
 | `exclude`d fields never appear in metadata (checked on the whole serialized payload), list, retrieve or choices responses (relation labels use visible fields only, never `__str__`; lists load only displayed columns; label and choices queries go through the mapped entity so inheritance joins and discriminators apply), and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `tests/unit/schemas/test_contract.py`, `tests/integration/api/` |
-| `can_create` / `can_edit` / `can_delete` enforced server-side (403), not only hidden in the UI. | `test_permissions.py` |
-| Integrity errors return 409 with a generic message; SQL/driver text is only logged. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `test_errors.py` |
+| `can_create` / `can_edit` / `can_delete` enforced server-side (403, before reading the body), not only hidden in the UI. | `tests/integration/api/test_write.py` |
+| Integrity errors return 409, data errors 422, other database errors 500, all with generic messages; FastStudio logs only the exception types (never SQL or parameters), also for unhandled database errors on reads. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `tests/integration/api/test_write.py` |
 
 ### T6. Cross-site scripting
 
@@ -134,6 +134,20 @@ environments.
   changing the user's password or deactivating them (ADR-0004).
 - No granular permissions: every admin can access every registered model.
 - No audit log.
+- The foreign-key existence check on writes queries the referenced table even
+  when its model is not registered, so an admin can learn whether a given key
+  exists there (the database constraint would reveal the same via 409).
+- Deletes are refused while an ORM relationship the delete would touch has
+  related rows (one-to-many, many-to-many, or many-to-one with a `delete`
+  cascade); hosts that rely on ORM cascades must remove related rows first
+  (or use database-level `ON DELETE` rules). Rows inserted concurrently
+  between that check and the delete can still be nulled or deleted by the
+  ORM (a database foreign key alone does not stop the ORM's own `UPDATE ...
+  SET fk = NULL`); only `passive_deletes=True` together with a database
+  foreign key or `ON DELETE` rule leaves it to the database.
+- Host-side logging of SQLAlchemy errors (e.g. `echo=True` or host exception
+  handlers after ADR-0008 propagation) may include parameters; create the
+  engine with `hide_parameters=True` in production.
 - Read-API cost for authenticated admins: deep pages use `OFFSET` (up to
   page 100 000 × `max_page_size`), every list runs a `COUNT(*)`, contains
   search (`%q%`) always scans, and sorting on unindexed `list_display`

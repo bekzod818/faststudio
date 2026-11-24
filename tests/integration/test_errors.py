@@ -119,3 +119,26 @@ async def test_unsafe_api_requests_without_csrf_are_rejected_before_routing(
     response = await client.request(method, "/admin/api/v1/nope")
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "csrf_failed"
+
+
+async def test_database_errors_are_logged_without_sql_or_values(
+    make_admin: AdminFactory, client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+    admin = make_admin()
+
+    async def broken() -> None:
+        raise OperationalError(
+            "SELECT * FROM users WHERE token = ?", ("SECRET-PARAM",), Exception("locked")
+        )
+
+    admin._sub_app.add_api_route("/api/v1/_db", broken)
+    with caplog.at_level("ERROR", logger="faststudio"):
+        response = await client.get("/admin/api/v1/_db")
+    assert response.status_code == 500
+    assert "SECRET-PARAM" not in response.text
+    logged = "\n".join(caplog.text.splitlines())
+    assert "SECRET-PARAM" not in logged
+    assert "SELECT" not in logged
+    assert "OperationalError" in logged

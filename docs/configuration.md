@@ -64,6 +64,39 @@ For several workers, pass a shared `rate_limiter` implementing
 `faststudio.RateLimiter` (async `hit(key) -> RateLimitDecision` and
 `reset(key)`), e.g. backed by Redis.
 
+## Writes and database constraints
+
+Create, edit and delete go through the generated write schemas and a single
+transaction per request; integrity errors return `409`. On **SQLite**,
+foreign keys are not enforced unless you enable them, e.g.:
+
+```python
+from sqlalchemy import event
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _fk_on(dbapi_connection, _record):
+    dbapi_connection.execute("PRAGMA foreign_keys=ON")
+```
+
+FastStudio still checks that a submitted foreign-key value exists, but
+deleting a row referenced by a table without an ORM `relationship()` only
+fails if the database enforces the constraint.
+
+Deleting is refused (`409`) while an ORM `relationship()` the delete would
+touch still has related rows (one-to-many, many-to-many, or many-to-one with a
+`delete` cascade), so ORM cascades cannot change rows of other models. A row
+added concurrently between that check and the delete is not covered: the
+ORM would still null or delete it. To leave that decision to the database,
+declare the relationship with `passive_deletes=True` and enforce the foreign
+key (or an `ON DELETE` rule) in the database.
+
+Registration fails when a readonly column is still writable through another
+attribute, or when two writable attributes map to the same column.
+
+In production create the engine with `hide_parameters=True` so that any
+SQLAlchemy error logged by your application never contains row values.
+
 ## Generating a secret key
 
 ```bash

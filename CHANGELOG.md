@@ -87,6 +87,13 @@ listed under **Changed** or **Removed** with migration notes.
   `GET /models/{identity}/items/{pk}` and foreign-key
   `GET /models/{identity}/fields/{field}/choices`. Rows carry relation labels
   from visible fields; large integers are sent as strings.
+- Write API (session + CSRF required): `POST`, `PATCH` and `DELETE` on
+  `/models/{identity}/items`. Bodies are validated by write schemas generated
+  at registration (unknown, readonly, excluded, managed and primary-key
+  fields rejected with 422), values at least as strictly as the database,
+  foreign keys checked, `can_*` flags enforced server-side, integrity errors
+  returned as 409, bodies capped at 1 MiB (new error code
+  `payload_too_large`).
 - `Admin(title=...)` rejects control and invisible formatting characters.
 - Playwright E2E now runs the built SPA through the real admin mount and
   fails on any CSP violation.

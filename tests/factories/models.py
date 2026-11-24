@@ -13,6 +13,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Column,
     Computed,
     Date,
     DateTime,
@@ -32,6 +33,7 @@ from sqlalchemy import (
     Sequence,
     SmallInteger,
     String,
+    Table,
     Text,
     Time,
     TypeDecorator,
@@ -43,7 +45,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Dialect
-from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, column_property, mapped_column, relationship
 from sqlalchemy.types import TypeEngine
 
 
@@ -509,3 +511,112 @@ class Mentorship(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     engineer_id: Mapped[int | None] = mapped_column(ForeignKey("engineers.id"))
+
+
+class Note(Base):
+    """Write-API fixture: required, optional, readonly, excluded and FK fields."""
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(20))
+    body: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[int] = mapped_column(SmallInteger, default=0)
+    status: Mapped[Role | None] = mapped_column(Enum(Role))
+    due: Mapped[datetime | None] = mapped_column(DateTime)
+    stamped: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime)
+    secret: Mapped[str] = mapped_column(String(50), default="s3cret-default")
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"))
+
+
+# --- ORM relationships: deletes must not run cascades behind the admin's back
+class Parent(Base):
+    __tablename__ = "parents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    children: Mapped[list[Child]] = relationship(back_populates="parent")
+
+
+class Child(Base):
+    __tablename__ = "children"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("parents.id"))
+    parent: Mapped[Parent | None] = relationship(back_populates="children")
+
+
+class Doc(Base):
+    """A readonly column reachable through a second attribute."""
+
+    __tablename__ = "docs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+setattr(Doc, "created_alias", column_property(Doc.__table__.c.created_at))  # noqa: B010
+
+
+class Awkward(Base):
+    """Attribute names that collide with pydantic internals."""
+
+    __tablename__ = "awkward"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_config: Mapped[str | None] = mapped_column("cfg", String(20))
+    json: Mapped[str | None] = mapped_column("js", String(20))
+    _hidden: Mapped[str | None] = mapped_column("hidden", String(20))
+
+
+class Owner(Base):
+    __tablename__ = "owners"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+
+
+class Pet(Base):
+    """Many-to-one with a delete cascade: deleting a pet would delete its owner."""
+
+    __tablename__ = "pets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("owners.id"))
+    owner: Mapped[Owner | None] = relationship(cascade="all")
+
+
+post_tags = Table(
+    "post_tags",
+    Base.metadata,
+    Column("post_id", ForeignKey("posts.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str] = mapped_column(String(50))
+
+
+class Post(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(50))
+    tags: Mapped[list[Tag]] = relationship(secondary=post_tags)
+
+
+class Twin(Base):
+    """Two writable attributes on one column: conflicting values in one body."""
+
+    __tablename__ = "twins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str | None] = mapped_column(String(20))
+
+
+setattr(Twin, "label_alias", column_property(Twin.__table__.c.label))  # noqa: B010

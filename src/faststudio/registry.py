@@ -36,6 +36,7 @@ from faststudio.introspection._fields import (
 )
 from faststudio.introspection._types import FieldType
 from faststudio.model_admin import OPTION_NAMES, ModelAdmin
+from faststudio.schemas._dynamic import WriteSchema, build_write_schemas
 
 logger = logging.getLogger("faststudio.registry")
 
@@ -101,6 +102,9 @@ class RegisteredModel:
     can_create: bool
     can_edit: bool
     can_delete: bool
+    #: Generated write schemas (`schemas/_dynamic.py`); only their fields are writable.
+    create_schema: type[WriteSchema]
+    update_schema: type[WriteSchema]
 
 
 class Registry:
@@ -199,6 +203,7 @@ class _Validator:
                 )
         self._warn_sensitive(visible)
         readonly_fields = frozenset(self._fields("readonly_fields", visible_only=True))
+        self._check_readonly_aliases(readonly_fields, visible)
         column_labels = self._column_labels()
         field_specs = {
             key: self._field_spec(key, column, column_labels.get(key), key in readonly_fields)
@@ -210,6 +215,7 @@ class _Validator:
 
         name = self._name()
         ordering = self._ordering()
+        create_schema, update_schema = build_write_schemas(self.label, field_specs)
         return RegisteredModel(
             admin_class=self.cls,
             model=self.mapper.class_,
@@ -232,6 +238,8 @@ class _Validator:
             can_create=can_create,
             can_edit=self._flag("can_edit"),
             can_delete=self._flag("can_delete"),
+            create_schema=create_schema,
+            update_schema=update_schema,
         )
 
     # ------------------------------------------------------------------ model
@@ -310,6 +318,28 @@ class _Validator:
                 self.label,
                 ", ".join(repr(k) for k in blocked),
             )
+
+    def _check_readonly_aliases(
+        self, readonly_fields: frozenset[str], visible: Mapping[str, Column[Any]]
+    ) -> None:
+        """Reject attributes that would keep a readonly column writable."""
+        readonly_columns = {id(visible[name]): name for name in readonly_fields}
+        writable_columns: dict[int, str] = {}
+        for key, column in visible.items():
+            original = readonly_columns.get(id(column))
+            if original is not None and key not in readonly_fields:
+                raise self.fail(
+                    f"readonly_fields: attribute {key!r} maps to the same column as readonly "
+                    f"field {original!r}; add it to readonly_fields (or exclude it)."
+                )
+            if key in readonly_fields:
+                continue
+            other = writable_columns.setdefault(id(column), key)
+            if other != key:
+                raise self.fail(
+                    f"attributes {other!r} and {key!r} map to the same column; make one of "
+                    "them readonly or exclude it so a request cannot send both."
+                )
 
     def _warn_sensitive(self, visible: Mapping[str, Column[Any]]) -> None:
         exposed = [key for key in visible if looks_sensitive(key)]

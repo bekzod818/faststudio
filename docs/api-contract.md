@@ -111,6 +111,46 @@ when it has none (and is ignored if the label is the primary key). Only rows
 of the registered target class are offered (joined and single-table
 inheritance respected).
 
+### Writes
+
+`POST /models/{identity}/items` (201), `PATCH /models/{identity}/items/{pk}`
+(200) and `DELETE /models/{identity}/items/{pk}` (204) respond with the full
+`Row` (all visible fields) after the database round trip.
+
+- **Permissions:** `can_create` / `can_edit` / `can_delete` false ⇒ `403
+  forbidden`, checked before the body is read.
+- **Body:** `Content-Type: application/json` (anything else ⇒ `422` with
+  `type: "content_type"`), a JSON object, at most 1 MiB
+  (`413 payload_too_large`, also enforced while streaming).
+- **Fields:** only fields the generated write schema allows. Create accepts
+  writable fields plus `create_only` natural keys; update accepts writable
+  fields only (never primary keys). Readonly, excluded, unknown fields ⇒
+  `422 validation_error` with `type: "extra_forbidden"`; nothing is written.
+  Omitted fields are left untouched (create uses column defaults).
+- **Values** (strict, at least as strict as the database):
+  - `null` only for nullable fields;
+  - strings within the column length and at most 65 535 characters, no NUL;
+  - integers as JSON integers or ASCII digit strings, within the column range;
+  - floats: finite JSON numbers (no strings or booleans);
+  - decimals within precision/scale (strings or numbers);
+  - booleans: `true`/`false` only;
+  - enums: member names;
+  - dates and datetimes: ISO 8601 strings only (no timestamps). A naive column
+    rejects timezone-aware values; a timezone-aware column treats naive values
+    as UTC;
+  - UUIDs: canonical `8-4-4-4-12` form;
+  - JSON: finite numbers, integers within ±(2^53 − 1), no NUL in strings or keys.
+- **Foreign keys:** a non-null value must reference an existing row, else
+  `422` with `type: "foreign_key"`.
+- **Delete:** refused with `409` while an ORM `relationship()` the delete
+  would touch still has related rows: one-to-many, many-to-many, or
+  many-to-one with a `delete` cascade. This keeps ORM cascades from changing
+  rows of other models; database foreign-key rules also give `409`.
+- **Database errors:** integrity errors ⇒ `409 conflict`; data errors (value
+  rejected by the database) ⇒ `422` with `type: "database"`; anything else
+  ⇒ `500`. The transaction is rolled back; no SQL or values are returned or
+  logged by FastStudio.
+
 ## Shapes
 
 ```jsonc
@@ -171,6 +211,7 @@ characters, and at most 50 issues are returned.
 | 404 | `not_found` | unknown model identity, field or primary key; any unknown `/api/*` path (never the SPA) |
 | 405 | `method_not_allowed` | wrong method on an API route, or a non-GET request to a UI path |
 | 409 | `conflict` | database integrity error (no SQL in the message) |
+| 413 | `payload_too_large` | request body over 1 MiB |
 | 422 | `validation_error` | body failed validation, including unknown/readonly/excluded fields |
 | 429 | `rate_limited` | too many login attempts (`Retry-After` header set) |
 | 500 | `internal_error` | unexpected error (details logged server-side only) |
