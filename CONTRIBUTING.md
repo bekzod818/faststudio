@@ -22,6 +22,7 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 | Task | Command |
 |---|---|
 | Python tests + coverage | `uv run pytest --cov` |
+| PostgreSQL tests (throwaway database; skipped without the variable) | `FASTSTUDIO_TEST_POSTGRES_URL=postgresql+asyncpg://user@localhost/faststudio_test uv run pytest -m postgres` |
 | Lint / format | `uv run ruff check . && uv run ruff format .` |
 | Type check | `uv run mypy` |
 | Frontend lint / test | `pnpm -C frontend lint && pnpm -C frontend test` |

@@ -74,8 +74,8 @@ needs the same protection for `is_superuser`.
    - **The result** on every database: exactly one of two concurrent removals
      of the last admins succeeds, and the other gets `409 last_admin` or
      `409 conflict`. SQLite is covered by the test suite, PostgreSQL (READ
-     COMMITTED and REPEATABLE READ) by the PostgreSQL CI job; MySQL is not
-     tested in 0.1.1.
+     COMMITTED, REPEATABLE READ and SERIALIZABLE) by the PostgreSQL CI job;
+     MySQL is not tested in 0.1.1.
 4. **Concurrency losers are conflicts, not errors.** These failures during any
    write become `409 conflict`:
    - lock and snapshot failures: SQLite `SQLITE_BUSY` / `SQLITE_LOCKED`,
