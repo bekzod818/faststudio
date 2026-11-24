@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from tests._leaks import aiosqlite_workers, assert_no_leaked_workers, check_identifiable
 from tests._stubs import StubAuthBackend
 
 
@@ -48,3 +49,17 @@ def _no_built_spa(
 def _no_secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests must never pick up a developer's real FASTSTUDIO_SECRET_KEY."""
     monkeypatch.delenv("FASTSTUDIO_SECRET_KEY", raising=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _leak_guard_can_see_aiosqlite() -> None:
+    """The leak guard below must not pass silently if it cannot see the threads."""
+    check_identifiable()
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_db_connections() -> Iterator[None]:
+    """Fail the test that leaves an aiosqlite connection open (see tests/_leaks.py)."""
+    before = aiosqlite_workers()
+    yield
+    assert_no_leaked_workers(before)

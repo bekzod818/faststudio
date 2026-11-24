@@ -112,7 +112,8 @@ jobs:
         run: |
           uv venv /tmp/lowest --python 3.11
           uv pip install --python /tmp/lowest/bin/python --resolution lowest-direct -e .
-          uv pip install --python /tmp/lowest/bin/python pytest pytest-asyncio httpx aiosqlite uvicorn
+          # aiosqlite range: keep in sync with the dev group (tests/_leaks.py relies on it).
+          uv pip install --python /tmp/lowest/bin/python pytest pytest-asyncio httpx "aiosqlite>=0.22.1,<0.23" uvicorn
       - run: /tmp/lowest/bin/python -m pytest -q -p no:cacheprovider
 
   security:
