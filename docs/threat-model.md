@@ -36,7 +36,7 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 |---|---|
 | Every route except `POST /auth/login` is on the session-protected router; a test enumerates all mounted API routes and asserts 401 without a session. | `tests/integration/security/test_auth.py::test_every_api_route_except_login_requires_a_session` |
 | Session cookie signed with itsdangerous (HMAC), purpose-specific salt; tampered, truncated, forged-payload or foreign-key cookie ⇒ 401 and the cookie is cleared. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
-| Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
+| Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. Logout clears the browser's cookie but cannot revoke a copy of it before expiry (see Known limitations). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` (incl. `test_logout_does_not_revoke_a_copied_cookie`) |
 | `auth_version` in cookie must match the user's current value (`ModelUserBackend`: SHA-256 of password hash + active/admin flags); password change, deactivation or losing admin rights invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `tests/integration/security/test_auth.py`, `tests/unit/auth/test_model_backend.py`, `tests/unit/test_authenticated_user.py` |
 | `ModelUserBackend` admits only active **and** admin users; its column configuration is validated at startup. | `tests/unit/auth/test_model_backend.py` |
 | Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path` = browser-visible admin root (proxy prefix + `base_url`), `Max-Age` = `session_max_age`. | `tests/integration/security/test_auth.py` |
@@ -155,8 +155,19 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
   not readable from there). If the host serves untrusted or user-generated
   content, mount the admin on its own subdomain.
 
-- Stateless sessions cannot be revoked server-side before expiry, except by
-  changing the user's password or deactivating them (ADR-0004).
+- **Logout only clears the browser's cookie.** Sessions are stateless signed
+  cookies (ADR-0004): the server keeps no session list, so signing out cannot
+  invalidate a copy of the cookie. A copied or stolen session cookie stays
+  valid until `session_max_age` after sign-in (default 8 hours; absolute, not
+  renewed by activity) unless the user's password or active/admin flags
+  change, which changes `auth_version` and revokes every session of that user
+  (`ModelUserBackend`; a custom backend revokes sessions when its own
+  `auth_version` changes). Mitigations today: `HttpOnly` and `Secure`
+  cookies, a short `session_max_age`, changing the password after a suspected
+  leak, and rotating `FASTSTUDIO_SECRET_KEY`, which signs everyone out at
+  once.
+  Planned: an idle timeout and "sign out everywhere" in v0.2, and a
+  server-side session store with per-session revocation in v0.3.
 - No granular permissions: every admin can access every registered model.
 - The account-safety guard (ADR-0009) only covers writes through the admin
   API with `ModelUserBackend`. Custom `AuthBackend`s are unprotected until
