@@ -132,6 +132,17 @@ class PermissionsMeta(_Contract):
     delete: bool
 
 
+class AccountMeta(_Contract):
+    """The model holds the admins' accounts (ADR-0009).
+
+    On the record of the signed-in admin (`pk == MetaResponse.user.id`), the
+    `protected_fields` cannot be changed and the record cannot be deleted; the
+    server refuses with `self_lockout`.
+    """
+
+    protected_fields: list[str]
+
+
 class ModelMeta(_Contract):
     """Everything the SPA needs to render one registered model."""
 
@@ -149,6 +160,8 @@ class ModelMeta(_Contract):
     page_size: int
     permissions: PermissionsMeta
     fields: list[FieldMeta]
+    #: Set on the model that stores the admins' accounts, else null.
+    account: AccountMeta | None
 
 
 class UserMeta(_Contract):

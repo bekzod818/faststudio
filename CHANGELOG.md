@@ -12,6 +12,10 @@ listed under **Changed** or **Removed** with migration notes.
 ### Added
 
 - Error codes `self_lockout` and `last_admin` in the API contract.
+- `ModelMeta.account` (additive, `schema_version` stays `"1"`): on the model
+  that holds the admins' accounts it lists the fields an admin cannot change
+  on their own record. The UI shows them read-only there and hides the delete
+  button; the server enforces the rule regardless.
 
 ### Changed
 

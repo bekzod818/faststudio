@@ -10,6 +10,7 @@ from faststudio.api._records import detail_row, load_or_404
 from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError
+from faststudio.auth._guard import AccountGuard
 from faststudio.query._list import choices_statements, list_statements
 from faststudio.query._params import parse_choices_params, parse_list_params
 from faststudio.schemas._meta import build_models_meta
@@ -33,13 +34,15 @@ async def meta(request: Request, user: CurrentUser) -> MetaResponse:
     from faststudio import __version__  # noqa: PLC0415
 
     context = get_context(request)
+    backend = context.auth_backend
+    guard = backend if isinstance(backend, AccountGuard) else None
     return MetaResponse(
         schema_version=SCHEMA_VERSION,
         version=__version__,
         title=context.settings.title,
         show_powered_by=context.settings.show_powered_by,
         user=UserMeta(id=user.id, username=user.username),
-        models=build_models_meta(context.registry),
+        models=build_models_meta(context.registry, guard=guard),
     )
 
 

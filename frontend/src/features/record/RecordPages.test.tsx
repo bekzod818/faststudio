@@ -34,7 +34,11 @@ const routes = [
   { path: "/models/:identity/items/:pk", element: <RecordRoute /> },
 ];
 
-function setup(path: string, options: { meta?: ModelMeta; client?: Partial<ApiClient> } = {}) {
+function setup(
+  path: string,
+  options: { meta?: ModelMeta; client?: Partial<ApiClient>; row?: Row } = {},
+) {
+  const row = options.row ?? ROW;
   const meta: MetaResponse = {
     schema_version: "1",
     version: "0",
@@ -45,7 +49,7 @@ function setup(path: string, options: { meta?: ModelMeta; client?: Partial<ApiCl
   };
   const get = vi.fn((url: string) => {
     if (url === "/meta") return Promise.resolve(meta);
-    if (url === "/models/users/items/7") return Promise.resolve(ROW);
+    if (url === `/models/users/items/${row.pk}`) return Promise.resolve(row);
     if (url === "/models/users/items")
       return Promise.resolve({ items: [ROW], total: 1, page: 1, page_size: 2 });
     return Promise.reject(new ApiError(404, "not_found", "Not found."));
@@ -278,6 +282,86 @@ describe("list integration", () => {
     expect(screen.getByRole("link", { name: "Add user" })).toHaveAttribute(
       "href",
       "/models/users/new",
+    );
+  });
+});
+
+describe("own account (ADR-0009)", () => {
+  // The signed-in admin is user "1" (see setup's /meta).
+  const OWN: Row = { ...ROW, pk: "1", data: { ...ROW.data, id: 1 } };
+  const accounts = () => model({ account: { protected_fields: ["is_active"] } });
+
+  it("locks the protected fields and hides delete on the admin's own record", async () => {
+    const patch = vi.fn().mockResolvedValue(OWN);
+    setup("/models/users/items/1", { meta: accounts(), row: OWN, client: { patch } });
+    expect(await screen.findByRole("heading", { name: "User 1" })).toBeVisible();
+    expect(screen.getByLabelText("Is active")).toBeDisabled();
+    expect(screen.getByText(/This is your account/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    const email = screen.getByLabelText(/Email/);
+    await userEvent.clear(email);
+    await userEvent.type(email, "me@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(patch).toHaveBeenCalledWith("/models/users/items/1", { email: "me@example.com" });
+    });
+  });
+
+  it("only explains the hidden delete when no field is protected or editing is off", async () => {
+    const cases = [
+      model({ account: { protected_fields: [] } }),
+      model({
+        account: { protected_fields: ["is_active"] },
+        permissions: { create: true, edit: false, delete: true },
+      }),
+    ];
+    for (const meta of cases) {
+      const { unmount } = setup("/models/users/items/1", { meta, row: OWN });
+      expect(
+        await screen.findByText("This is your account: you cannot delete it here."),
+      ).toBeVisible();
+      expect(screen.queryByText(/sign-in status/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+      unmount();
+    }
+  });
+
+  it("shows no hint when the record cannot be edited or deleted anyway", async () => {
+    const meta = model({
+      account: { protected_fields: ["is_active"] },
+      permissions: { create: true, edit: false, delete: false },
+    });
+    setup("/models/users/items/1", { meta, row: OWN });
+    expect(await screen.findByRole("heading", { name: "User 1" })).toBeVisible();
+    expect(screen.queryByText(/This is your account/)).toBeNull();
+  });
+
+  it("keeps other accounts fully editable", async () => {
+    setup("/models/users/items/7", { meta: accounts() });
+    expect(await screen.findByRole("heading", { name: "User 7" })).toBeVisible();
+    expect(screen.getByLabelText("Is active")).toBeEnabled();
+    expect(screen.queryByText(/This is your account/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
+  });
+
+  it("does nothing special on models that do not hold accounts", async () => {
+    setup("/models/users/items/1", { row: OWN });
+    expect(await screen.findByRole("heading", { name: "User 1" })).toBeVisible();
+    expect(screen.getByLabelText("Is active")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeVisible();
+  });
+
+  it("shows the server's refusal when the UI was out of date", async () => {
+    const patch = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiError(409, "self_lockout", "You cannot change your own active or admin status."),
+      );
+    setup("/models/users/items/1", { row: OWN, client: { patch } });
+    await userEvent.click(await screen.findByLabelText("Is active"));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You cannot change your own active or admin status.",
     );
   });
 });

@@ -190,7 +190,11 @@ inheritance respected).
     "ordering": ["-created_at"], "sortable_fields": ["id", "email", "created_at"],
     "page_size": 25,
     "permissions": { "create": true, "edit": true, "delete": false },
-    "fields": [FieldMeta]
+    "fields": [FieldMeta],
+    // Only on the model that holds the admins' accounts (ADR-0009), else null.
+    // On the record whose pk equals user.id these fields are read-only and the
+    // record cannot be deleted (the server answers 409 self_lockout).
+    "account": { "protected_fields": ["is_active", "is_admin"] }
   }]
 }
 

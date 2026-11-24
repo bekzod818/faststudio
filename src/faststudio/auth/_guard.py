@@ -64,6 +64,10 @@ class AccountGuard(Protocol):
         """
         ...
 
+    def protected_fields(self, model: type[Any]) -> tuple[str, ...]:
+        """Return the fields of a guarded model an admin cannot change on their own record."""
+        ...
+
     async def before_write(
         self, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
     ) -> PostWriteCheck | None:

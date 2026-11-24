@@ -290,3 +290,17 @@ async def test_update_racing_a_delete_is_a_conflict(
     response = await alice.patch(identity, pk, body)
     assert response.status_code == 409, response.text
     assert _code(response) == "conflict"
+
+
+@pytest.mark.usefixtures("backend")
+async def test_meta_marks_the_user_model_as_accounts(
+    sign_in: Callable[[str], Awaitable[Client]],
+) -> None:
+    alice = await sign_in("alice")
+    meta = (await alice.http.get("/admin/api/v1/meta")).json()
+    accounts = {m["identity"]: m["account"] for m in meta["models"]}
+    assert accounts == {
+        "admin_users": {"protected_fields": ["is_active", "is_admin"]},
+        "teams": None,
+    }
+    assert meta["user"]["id"] == "1"

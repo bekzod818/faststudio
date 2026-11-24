@@ -204,6 +204,10 @@ class ModelUserBackend:
         mapper = sa_inspect(model, raiseerr=False)
         return isinstance(mapper, Mapper) and mapper.isa(self._mapper)
 
+    def protected_fields(self, model: type[Any]) -> tuple[str, ...]:
+        """Return the sign-in flags: an admin cannot change them on their own record."""
+        return self._flags()
+
     def check_model(self, model: type[Any]) -> None:
         """Refuse other mappings of the user table: their writes could not be checked."""
         mapper = sa_inspect(model, raiseerr=False)

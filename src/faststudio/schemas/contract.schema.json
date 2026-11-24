@@ -1,5 +1,21 @@
 {
   "$defs": {
+    "AccountMeta": {
+      "additionalProperties": false,
+      "description": "The model holds the admins' accounts (ADR-0009).\n\nOn the record of the signed-in admin (`pk == MetaResponse.user.id`), the\n`protected_fields` cannot be changed and the record cannot be deleted; the\nserver refuses with `self_lockout`.",
+      "properties": {
+        "protected_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "protected_fields"
+      ],
+      "type": "object"
+    },
     "ChoiceMeta": {
       "additionalProperties": false,
       "description": "One allowed value: wire `value` and display `label`.",
@@ -389,6 +405,16 @@
       "additionalProperties": false,
       "description": "Everything the SPA needs to render one registered model.",
       "properties": {
+        "account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccountMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fields": {
           "items": {
             "$ref": "#/$defs/FieldMeta"
@@ -467,7 +493,8 @@
         "sortable_fields",
         "page_size",
         "permissions",
-        "fields"
+        "fields",
+        "account"
       ],
       "type": "object"
     },

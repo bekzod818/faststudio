@@ -73,6 +73,7 @@ const meta: MetaResponse = {
       list_filter: [{ field: "is_active", kind: "boolean", choices: [] }],
       ordering: ["-id"],
       sortable_fields: ["id", "team_id"],
+      account: null,
       page_size: 25,
       permissions: { create: true, edit: true, delete: false },
       fields: [field],
