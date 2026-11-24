@@ -9,6 +9,11 @@
   --fs-muted: oklch(0.96 0.005 265);
   --fs-muted-foreground: oklch(0.5 0.02 265);
   --fs-border: oklch(0.92 0.005 265);
+  --fs-card: oklch(1 0 0);
+  --fs-card-foreground: oklch(0.21 0.02 265);
+  --fs-destructive: oklch(0.58 0.22 27);
+  --fs-destructive-foreground: oklch(0.99 0 0);
+  --fs-ring: oklch(0.55 0.2 265);
   --fs-radius: 0.625rem;
 }
 
@@ -20,6 +25,11 @@
   --fs-muted: oklch(0.22 0.015 265);
   --fs-muted-foreground: oklch(0.7 0.015 265);
   --fs-border: oklch(0.28 0.015 265);
+  --fs-card: oklch(0.19 0.015 265);
+  --fs-card-foreground: oklch(0.96 0.005 265);
+  --fs-destructive: oklch(0.65 0.2 27);
+  --fs-destructive-foreground: oklch(0.16 0.015 265);
+  --fs-ring: oklch(0.68 0.17 265);
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -32,6 +42,11 @@
   --color-muted: var(--fs-muted);
   --color-muted-foreground: var(--fs-muted-foreground);
   --color-border: var(--fs-border);
+  --color-card: var(--fs-card);
+  --color-card-foreground: var(--fs-card-foreground);
+  --color-destructive: var(--fs-destructive);
+  --color-destructive-foreground: var(--fs-destructive-foreground);
+  --color-ring: var(--fs-ring);
   --radius-lg: var(--fs-radius);
 }
 

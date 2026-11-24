@@ -73,7 +73,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | M6 | Auth, CSRF, rate limiting, `ModelUserBackend` | done |
 | M7 | Meta + read API | done |
 | M8 | Write API | done |
-| M9 | Frontend foundation (layout, login, dashboard) | planned |
+| M9 | Frontend foundation (layout, login, dashboard) | done |
 | M10 | List view | planned |
 | M11 | Forms, delete, toasts | planned |
 | M12 | Example app, Playwright E2E, wheel smoke | planned |

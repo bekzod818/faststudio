@@ -97,6 +97,21 @@ listed under **Changed** or **Removed** with migration notes.
 - `Admin(title=...)` rejects control and invisible formatting characters.
 - Playwright E2E now runs the built SPA through the real admin mount and
   fails on any CSP violation.
+- Frontend foundation: login page (React Hook Form + Zod, generic errors,
+  `next` limited to in-app paths), authenticated layout with sidebar built
+  from `/meta`, dashboard of registered models, light/dark/system theme
+  (`faststudio:theme`), typed API client that sends the CSRF header on writes
+  and returns to login when a session expires mid-use. Toasts use a small
+  in-house component because toast libraries that inject `<style>` elements
+  violate the admin's strict CSP, and zod runs without its `eval` probe.
+  The theme toggle cycles light, dark and system (system follows OS changes).
+  Playwright now signs in end to end, covers session expiry, and fails on any
+  `securitypolicyviolation` event, unexpected 401 or console error.
+
+### Fixed
+
+- Model display names keep acronyms that contain digits together
+  (`E2EUser` -> "E2E users", previously "E2 E users").
 
 ## [0.0.1] - 2026-11-23
 
