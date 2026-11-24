@@ -16,7 +16,7 @@ test("signing in shows the dashboard and signing out returns to login", async ({
   await page.goto("./");
   await signIn(page, state);
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Models" })).toContainText("E2E users");
+  await expect(page.getByRole("navigation", { name: "Models" })).toContainText("Users");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/admin\/login/);
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
@@ -39,7 +39,7 @@ test("deep links survive login (history fallback + next)", async ({ page }) => {
   await expect(page).toHaveURL(/\/admin\/login\?next=%2Fmodels%2Fusers$/);
   await signIn(page, state);
   await expect(page).toHaveURL(/\/admin\/models\/users$/);
-  await expect(page.getByRole("heading", { name: "E2E users" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
   await expectClean(page, state);
 });
 
@@ -53,7 +53,7 @@ test("an expired session returns to login and back", async ({ page, context }) =
   // Mid-use: the list request gets a 401 and the app returns to login.
   await page
     .getByRole("navigation", { name: "Models" })
-    .getByRole("link", { name: "E2E users" })
+    .getByRole("link", { name: "Users" })
     .click();
   await expect(page).toHaveURL(/\/admin\/login\?next=%2Fmodels%2Fusers$/);
   await expect(toastText(page, "Your session has ended. Please sign in again.")).toBeVisible();

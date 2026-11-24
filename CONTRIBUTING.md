@@ -26,7 +26,8 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 | Type check | `uv run mypy` |
 | Frontend lint / test | `pnpm -C frontend lint && pnpm -C frontend test` |
 | Frontend dev server | `pnpm -C frontend dev` |
-| E2E | `pnpm -C frontend test:e2e` |
+| E2E | `pnpm -C frontend build && pnpm -C frontend test:e2e` (starts `examples/basic --ephemeral`) |
+| Example app | `uv run python -m examples.basic` (see `examples/basic/README.md`) |
 | Build wheel | `pnpm -C frontend build && uv build && uv run python scripts/verify_wheel.py dist/*.whl` |
 
 ## Workflow

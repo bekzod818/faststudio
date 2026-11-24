@@ -153,7 +153,7 @@ jobs:
       - name: Install wheel into a clean virtualenv (no source tree on sys.path)
         run: |
           uv venv /tmp/smoke --python ${{ matrix.python }}
-          uv pip install --python /tmp/smoke/bin/python dist/*.whl pytest pytest-asyncio
+          uv pip install --python /tmp/smoke/bin/python dist/*.whl pytest pytest-asyncio httpx aiosqlite
       - name: Run smoke tests against the installed wheel
         env:
           FASTSTUDIO_WHEEL_SMOKE: "1"

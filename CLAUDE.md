@@ -49,7 +49,7 @@ pnpm -C frontend lint | typecheck | test | build      # frontend checks / build 
 pnpm -C frontend test:e2e                  # Playwright
 uv build && uv run python scripts/verify_wheel.py dist/*.whl   # wheel with SPA
 uv run python scripts/export_contract.py && pnpm -C frontend gen:contract  # contract sync (M4+)
-uv run uvicorn examples.basic.app:app --reload   # example app (M12+)
+uv run python -m examples.basic                   # example app (see examples/basic/README.md)
 uv run pre-commit run --all-files          # all hooks
 ```
 

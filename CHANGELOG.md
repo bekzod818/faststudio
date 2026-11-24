@@ -137,6 +137,11 @@ listed under **Changed** or **Removed** with migration notes.
 - Model pages are loaded on demand, keeping the initial bundle small; a
   page whose code cannot be loaded (e.g. a tab opened before an upgrade)
   offers a reload, and a progress bar shows while pages load.
+- `examples/basic`: a runnable shop back office (users, categories,
+  products, tasks) covering every supported field type, with demo data, a
+  `create_admin` command and a throwaway `--ephemeral` mode. Playwright now
+  runs against it, and the wheel smoke test runs it on the installed wheel
+  (SPA shell, every referenced asset, sign-in, list, create, delete).
 
 ### Fixed
 

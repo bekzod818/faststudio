@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { expectClean, signIn, watch, type Watch } from "./helpers";
 
-// Data seeded by scripts/e2e_server.py: 30 products, 10 per page, ordered by id.
+// Data seeded by examples/basic (db.py): 30 products, 10 per page, ordered by id.
 
 async function openProducts(page: Page, path = "./models/products"): Promise<Watch> {
   const state = await watch(page);

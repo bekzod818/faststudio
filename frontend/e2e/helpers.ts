@@ -1,8 +1,8 @@
 import { expect, type Page } from "@playwright/test";
 
-// Test-only credentials seeded by scripts/e2e_server.py.
-export const USERNAME = process.env.FASTSTUDIO_E2E_USERNAME ?? "e2e-admin";
-export const PASSWORD = process.env.FASTSTUDIO_E2E_PASSWORD ?? "e2e-only-password";
+import { PASSWORD, USERNAME } from "./credentials";
+
+export { PASSWORD, USERNAME };
 
 // Runs in the page before any app script (the e2e tsconfig has no DOM types).
 const RECORD_CSP_VIOLATIONS = `

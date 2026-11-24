@@ -67,3 +67,15 @@ uvicorn main:app --reload
 ```
 
 Open <http://127.0.0.1:8000/admin>.
+
+## A complete example
+
+[`examples/basic`](../examples/basic/README.md) is a runnable app with four
+models covering every supported field type, demo data and a `create_admin`
+command:
+
+```bash
+export FASTSTUDIO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python -m examples.basic.create_admin admin
+python -m examples.basic
+```
