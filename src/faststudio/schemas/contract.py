@@ -56,6 +56,8 @@ ErrorCode = Literal[
     "not_found",
     "method_not_allowed",
     "conflict",
+    "self_lockout",
+    "last_admin",
     "validation_error",
     "payload_too_large",
     "rate_limited",

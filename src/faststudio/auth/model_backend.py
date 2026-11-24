@@ -6,14 +6,24 @@ import hashlib
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, assert_never, cast
 
-from sqlalchemy import Boolean, Column, Index, UniqueConstraint, select
+from sqlalchemy import (
+    Boolean,
+    Column,
+    ColumnElement,
+    Index,
+    UniqueConstraint,
+    and_,
+    select,
+    true,
+)
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapper
 from starlette.requests import Request
 
+from faststudio.auth._guard import PostWriteCheck, WriteIntent, WriteRefused
 from faststudio.auth.backend import AuthenticatedUser
 from faststudio.auth.passwords import (
     dummy_verify_async,
@@ -68,6 +78,10 @@ class ModelUserBackend:
     changing the password, deactivating the user or revoking admin rights
     invalidates all of their sessions.
 
+    When the user model is registered in the admin, writes to it are guarded
+    (ADR-0009): an admin cannot clear their own sign-in flags or delete their
+    own row, and nobody can remove the last active admin.
+
     Example::
 
         Admin(app, engine=engine, auth_backend=ModelUserBackend(User))
@@ -95,6 +109,7 @@ class ModelUserBackend:
             msg = f"ModelUserBackend: {model!r} is not a mapped SQLAlchemy class."
             raise ConfigurationError(msg)
         self._model: type[Any] = model
+        self._mapper: Mapper[Any] = mapper
         columns = mapped_columns(mapper)
         if username_field == password_field:
             msg = "ModelUserBackend: username_field and password_field must differ."
@@ -173,6 +188,74 @@ class ModelUserBackend:
             username=str(getattr(row, self._username_field)),
             auth_version=hashlib.sha256(state.encode()).hexdigest()[:32],
         )
+
+    # ------------------------------------------------------------- account guard
+
+    def _flags(self) -> tuple[str, ...]:
+        return tuple(f for f in (self._is_active_field, self._is_admin_field) if f is not None)
+
+    def _active_admin(self) -> ColumnElement[bool]:
+        """Return the SQL condition for rows that may sign in (every flag is true)."""
+        conditions = [getattr(self._model, flag).is_(True) for flag in self._flags()]
+        return and_(true(), *conditions)
+
+    def guards(self, model: type[Any]) -> bool:
+        """Return True for the user model and mapped subclasses of it."""
+        mapper = sa_inspect(model, raiseerr=False)
+        return isinstance(mapper, Mapper) and mapper.isa(self._mapper)
+
+    def check_model(self, model: type[Any]) -> None:
+        """Refuse other mappings of the user table: their writes could not be checked."""
+        mapper = sa_inspect(model, raiseerr=False)
+        if not isinstance(mapper, Mapper) or mapper.isa(self._mapper):
+            return
+        if set(mapper.tables) & set(self._mapper.tables):
+            msg = (
+                f"{model.__name__} maps a table of {self._model.__name__}, the user model of "
+                f"ModelUserBackend. Register {self._model.__name__} (or a subclass of it) "
+                "instead, so that writes to admin accounts are checked (ADR-0009)."
+            )
+            raise ConfigurationError(msg)
+
+    async def before_write(
+        self, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
+    ) -> PostWriteCheck | None:
+        """Refuse self-lockout; check the last active admin after the write (ADR-0009)."""
+        obj = intent.obj
+        own = str(getattr(obj, self._pk_field)) == user.id
+        if intent.action == "delete":
+            if own:
+                raise WriteRefused("self_lockout", "You cannot delete your own account.")
+            may_remove_admin = True
+        elif intent.action == "update":
+            sent = [flag for flag in self._flags() if flag in intent.changes]
+            if own and any(intent.changes[flag] != getattr(obj, flag) for flag in sent):
+                raise WriteRefused(
+                    "self_lockout", "You cannot change your own active or admin status."
+                )
+            may_remove_admin = any(intent.changes[flag] is not True for flag in sent)
+        else:  # an action this backend does not know: refuse (fail closed)
+            assert_never(intent.action)
+        # Decided from the request, never from `obj`: it was loaded before any lock,
+        # so a concurrent write may already have made it an active admin.
+        if not may_remove_admin:
+            return None
+        pk = getattr(self._model, self._pk_field)
+        # Lock every active admin in a fixed order before writing, so concurrent
+        # removals serialize instead of each seeing the other admin still there.
+        # (FOR UPDATE is omitted on SQLite, where the flush takes the write lock.)
+        await session.execute(select(pk).where(self._active_admin()).order_by(pk).with_for_update())
+
+        async def check_remaining() -> None:
+            # A locking read sees the latest committed rows. A plain read would use
+            # the transaction's earlier snapshot under MySQL REPEATABLE READ.
+            statement = select(pk).where(self._active_admin()).limit(1).with_for_update()
+            if (await session.scalars(statement)).first() is None:
+                raise WriteRefused("last_admin", "At least one active admin must remain.")
+
+        return check_remaining
+
+    # ------------------------------------------------------------- AuthBackend
 
     async def authenticate(
         self, request: Request, username: str, password: str

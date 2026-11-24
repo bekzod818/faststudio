@@ -105,6 +105,7 @@ Residual risks (documented, accepted for v0.1):
 | Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
 | `exclude`d fields never appear in metadata (checked on the whole serialized payload), list, retrieve or choices responses (relation labels use visible fields only, never `__str__`; lists load only displayed columns; label and choices queries go through the mapped entity so inheritance joins and discriminators apply), and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `tests/unit/schemas/test_contract.py`, `tests/integration/api/` |
 | `can_create` / `can_edit` / `can_delete` enforced server-side (403, before reading the body), not only hidden in the UI. | `tests/integration/api/test_write.py` |
+| Account safety (ADR-0009): when the user model of `ModelUserBackend` is registered, an admin cannot change their own sign-in flags or delete their own row (409 `self_lockout`), and no write can remove the last active admin (409 `last_admin`). The last-admin check runs for every write that could remove an admin (decided from the request, not the possibly stale loaded row), locks the active admin rows (`FOR UPDATE`) and re-reads the remaining active admins with a locking read after the flush, in the same transaction, so concurrent removals cannot both succeed; the loser of a lock race gets 409, never 500. Other mappings of the user table are refused at `register()`. | `tests/unit/auth/test_account_guard.py`, `tests/unit/auth/test_account_guard_mappings.py`, `tests/integration/security/test_account_guard.py`, `tests/unit/api/test_db_errors.py` |
 | Integrity errors return 409, data errors 422, other database errors 500, all with generic messages; FastStudio logs only the exception types (never SQL or parameters), also for unhandled database errors on reads. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `tests/integration/api/test_write.py` |
 
 ### T6. Cross-site scripting
@@ -157,6 +158,17 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
 - Stateless sessions cannot be revoked server-side before expiry, except by
   changing the user's password or deactivating them (ADR-0004).
 - No granular permissions: every admin can access every registered model.
+- The account-safety guard (ADR-0009) only covers writes through the admin
+  API with `ModelUserBackend`. Custom `AuthBackend`s are unprotected until
+  they implement the capability (public in v0.2). Host code, direct database
+  changes, and database-only `ON DELETE CASCADE` foreign keys from other
+  tables (no ORM relationship, so the delete check cannot see them) can still
+  remove the last admin; recover with `restore_admin.py`
+  (docs/getting-started.md).
+- After a successful commit, the response is built from a fresh read of the
+  row. If that read fails (the row was deleted right after the commit, or a
+  SQLite writer holds the lock past the busy timeout), the client gets an
+  error although the write was saved.
 - No audit log.
 - The foreign-key existence check on writes queries the referenced table even
   when its model is not registered, so an admin can learn whether a given key

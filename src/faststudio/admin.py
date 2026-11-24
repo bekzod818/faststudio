@@ -15,6 +15,7 @@ from starlette.types import Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
+from faststudio.auth._guard import AccountGuard
 from faststudio.auth.backend import AuthBackend
 from faststudio.auth.csrf import CsrfTokens
 from faststudio.auth.session import SessionManager
@@ -137,13 +138,16 @@ class Admin:
         Raises:
             ConfigurationError: on unknown or misspelled options, unknown field
                 names, search/filter fields of unsupported types, excluded fields
-                used elsewhere, composite primary keys, or a duplicate identity
-                or model.
+                used elsewhere, composite primary keys, a duplicate identity or
+                model, or another mapping of the auth backend's user table,
+                including sibling subclasses sharing that table (only the user
+                model or a subclass is allowed; ADR-0009).
 
         """
-        self._registry.add(
-            resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
-        )
+        registered = resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
+        if isinstance(self._auth_backend, AccountGuard):
+            self._auth_backend.check_model(registered.model)
+        self._registry.add(registered)
         return model_admin
 
     @property

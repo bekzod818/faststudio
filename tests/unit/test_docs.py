@@ -94,10 +94,10 @@ def test_getting_started_uses_the_tested_quickstart(file: str) -> None:
     assert _python_block_after(marker, GETTING_STARTED) == _python_block_after(marker)
 
 
-def test_readme_quickstart_works_end_to_end(
+def _run_quickstart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Save main.py, run create_admin.py, start the app and sign in, as the README says."""
+) -> types.ModuleType:
+    """Save main.py and run create_admin.py as the README says; return `main`."""
     main_code = _python_block_after("Save as `main.py`")
     admin_code = _python_block_after("Save as `create_admin.py`")
     url = "sqlite+aiosqlite:///app.db"
@@ -116,10 +116,21 @@ def test_readme_quickstart_works_end_to_end(
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     monkeypatch.setattr("getpass.getpass", lambda prompt="": "a long passphrase")
     exec(compile(admin_code, "README.md:create_admin.py", "exec"), {"__name__": "__main__"})
+    return main
 
+
+def _app_and_engine(main: types.ModuleType) -> tuple[FastAPI, AsyncEngine]:
     app, engine = main.__dict__["app"], main.__dict__["engine"]
     assert isinstance(app, FastAPI)
     assert isinstance(engine, AsyncEngine)
+    return app, engine
+
+
+def test_readme_quickstart_works_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Save main.py, run create_admin.py, start the app and sign in, as the README says."""
+    app, engine = _app_and_engine(_run_quickstart(tmp_path, monkeypatch, caplog))
     asyncio.run(_sign_in_and_list_users(app, engine))
 
 
@@ -143,3 +154,66 @@ async def _sign_in_and_list_users(app: FastAPI, engine: AsyncEngine) -> None:
             assert "password_hash" not in users["items"][0]["data"]
     finally:
         await engine.dispose()
+
+
+ORIGIN = "https://testserver"
+
+
+async def _client_status(app: FastAPI, engine: AsyncEngine, password: str) -> tuple[int, int]:
+    """Sign in as `admin` and try to drop the own admin flag: (login, PATCH) statuses."""
+    try:
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as client:
+            await client.get("/admin/api/v1/auth/me")
+            login = await client.post(
+                "/admin/api/v1/auth/login",
+                json={"username": "admin", "password": password},
+                headers={
+                    "x-faststudio-csrf": client.cookies["faststudio_csrftoken"],
+                    "origin": ORIGIN,
+                },
+            )
+            if login.status_code != 200:
+                return login.status_code, 0
+            demote = await client.patch(
+                "/admin/api/v1/models/users/items/1",
+                json={"is_admin": False},
+                headers={
+                    "x-faststudio-csrf": client.cookies["faststudio_csrftoken"],
+                    "origin": ORIGIN,
+                },
+            )
+            assert (await client.get("/admin/api/v1/auth/me")).status_code == 200
+            return login.status_code, demote.status_code
+    finally:
+        await engine.dispose()
+
+
+async def _lock_out_in_the_database(engine: AsyncEngine) -> None:
+    try:
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("UPDATE users SET is_admin = 0")
+    finally:
+        await engine.dispose()
+
+
+def test_getting_started_lockout_guard_and_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The quickstart admin cannot demote themselves; restore_admin.py recovers a lockout."""
+    main = _run_quickstart(tmp_path, monkeypatch, caplog)
+    app, engine = _app_and_engine(main)
+    assert asyncio.run(_client_status(app, engine, "a long passphrase")) == (200, 409)
+
+    asyncio.run(_lock_out_in_the_database(engine))  # e.g. a manual database edit
+    assert asyncio.run(_client_status(app, engine, "a long passphrase")) == (401, 0)
+
+    restore_code = _python_block_after("Save as `restore_admin.py`", GETTING_STARTED)
+    monkeypatch.setattr(sys, "argv", ["restore_admin.py", "admin"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "a new long passphrase")
+    exec(
+        compile(restore_code, "getting-started.md:restore_admin.py", "exec"),
+        {"__name__": "__main__"},
+    )
+    assert asyncio.run(_client_status(app, engine, "a new long passphrase")) == (200, 409)
