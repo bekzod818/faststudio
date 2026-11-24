@@ -68,16 +68,25 @@ export function useUpdateItem(identity: string, pk: string) {
   });
 }
 
+/**
+ * Deletes a record. The caller leaves the record's page first and then calls
+ * `forget()`: removing the cached record while its page is still mounted
+ * would make the page refetch it (a 404).
+ */
 export function useDeleteItem(identity: string, pk: string) {
   const api = useApi();
   const queryClient = useQueryClient();
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: () => api.delete(itemPath(identity, pk)),
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: queryKeys.item(identity, pk) });
       invalidateAfterWrite(queryClient);
     },
   });
+  const forget = () => {
+    void queryClient.cancelQueries({ queryKey: queryKeys.item(identity, pk) });
+    queryClient.removeQueries({ queryKey: queryKeys.item(identity, pk) });
+  };
+  return { ...mutation, forget };
 }
 
 /** Options for a foreign-key field (first page, 20 items, searchable). */

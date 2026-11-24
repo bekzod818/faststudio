@@ -51,7 +51,7 @@ function setup(path: string, options: { meta?: ModelMeta; client?: Partial<ApiCl
     return Promise.reject(new ApiError(404, "not_found", "Not found."));
   });
   const client = fakeClient({ get: get as unknown as ApiClient["get"], ...options.client });
-  return renderRoutes(routes, { client, path });
+  return { ...renderRoutes(routes, { client, path }), get };
 }
 
 afterEach(() => {
@@ -158,7 +158,7 @@ describe("edit", () => {
 describe("delete", () => {
   it("asks for confirmation, deletes and returns to the list", async () => {
     const del = vi.fn().mockResolvedValue(undefined);
-    const { router } = setup("/models/users/items/7", { client: { delete: del } });
+    const { router, get } = setup("/models/users/items/7", { client: { delete: del } });
     await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -172,6 +172,8 @@ describe("delete", () => {
     });
     expect(del).toHaveBeenCalledWith("/models/users/items/7");
     expect(getToasts().map((t) => t.message)).toContain("User 7 deleted.");
+    // The deleted record is never fetched again (that would 404).
+    expect(get.mock.calls.filter(([url]) => url === "/models/users/items/7")).toHaveLength(1);
   });
 
   it("reports a refused delete and stays on the record", async () => {

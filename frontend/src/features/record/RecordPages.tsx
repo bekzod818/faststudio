@@ -86,8 +86,11 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
       onSuccess: () => {
         setConfirming(false);
         toast.success(`${title} deleted.`);
-        // The record is gone: unsaved edits to it cannot be kept.
-        void navigate(routes.list(model.identity), { replace: true, state: SKIP_GUARD });
+        // The record is gone: unsaved edits to it cannot be kept. Leave its
+        // page before dropping it from the cache (a mounted page would refetch).
+        void Promise.resolve(
+          navigate(routes.list(model.identity), { replace: true, state: SKIP_GUARD }),
+        ).then(remove.forget);
       },
       onError: (error) => {
         setConfirming(false);
