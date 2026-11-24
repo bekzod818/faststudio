@@ -152,7 +152,19 @@ inheritance respected).
   would touch still has related rows: one-to-many, many-to-many, or
   many-to-one with a `delete` cascade. This keeps ORM cascades from changing
   rows of other models; database foreign-key rules also give `409`.
-- **Database errors:** integrity errors ⇒ `409 conflict`; data errors (value
+- **Account safety** (ADR-0009): when the auth backend's user model is
+  registered (`ModelUserBackend`), an admin cannot change their own sign-in
+  flags (`is_active` / `is_admin` as configured) to a different value or delete
+  their own row (`409 self_lockout`; re-sending the current values is fine),
+  and no write may remove the last active admin (`409 last_admin`, checked in
+  the write's transaction). Nothing is written when a write is refused.
+  Registering another mapping of the user model's table (a base class or a
+  second class on the same table) fails at startup. Custom `AuthBackend`s are
+  not covered unless they implement the guard capability (public in v0.2).
+- **Database errors:** integrity errors ⇒ `409 conflict`; a write that loses
+  a lock or snapshot race to a concurrent request (SQLite busy/locked,
+  serialization failure, deadlock), or updates a row another request deleted
+  meanwhile ⇒ `409 conflict`; data errors (value
   rejected by the database) ⇒ `422` with `type: "database"`; anything else
   ⇒ `500`. The transaction is rolled back; no SQL or values are returned or
   logged by FastStudio.
@@ -178,7 +190,11 @@ inheritance respected).
     "ordering": ["-created_at"], "sortable_fields": ["id", "email", "created_at"],
     "page_size": 25,
     "permissions": { "create": true, "edit": true, "delete": false },
-    "fields": [FieldMeta]
+    "fields": [FieldMeta],
+    // Only on the model that holds the admins' accounts (ADR-0009), else null.
+    // On the record whose pk equals user.id these fields are read-only and the
+    // record cannot be deleted (the server answers 409 self_lockout).
+    "account": { "protected_fields": ["is_active", "is_admin"] }
   }]
 }
 
@@ -216,7 +232,9 @@ characters, and at most 50 issues are returned.
 | 403 | `forbidden` | action disabled by `can_create` / `can_edit` / `can_delete` |
 | 404 | `not_found` | unknown model identity, field or primary key; any unknown `/api/*` path (never the SPA) |
 | 405 | `method_not_allowed` | wrong method on an API route, or a non-GET request to a UI path |
-| 409 | `conflict` | database integrity error (no SQL in the message) |
+| 409 | `conflict` | database integrity error or lost lock race with a concurrent write (no SQL in the message) |
+| 409 | `self_lockout` | the signed-in admin tried to change their own sign-in flags or delete their own account |
+| 409 | `last_admin` | the write would leave no active admin |
 | 413 | `payload_too_large` | request body over 1 MiB |
 | 422 | `validation_error` | body failed validation, including unknown/readonly/excluded fields |
 | 429 | `rate_limited` | too many login attempts (`Retry-After` header set) |

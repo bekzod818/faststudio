@@ -4,10 +4,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
 import type { ModelMeta } from "@/api/contract.gen";
-import { useCreateItem, useDeleteItem, useItem, useUpdateItem } from "@/api/hooks";
+import { useCreateItem, useDeleteItem, useItem, useMeta, useUpdateItem } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RecordForm } from "@/features/form/RecordForm";
+import { isOwnAccount, withProtectedFields } from "@/features/record/account";
 import { ModelGate } from "@/features/model/ModelGate";
 import { inSentence, routes } from "@/features/model/routes";
 import { toast } from "@/lib/toast";
@@ -72,6 +73,7 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
   const item = useItem(model.identity, pk);
   const update = useUpdateItem(model.identity, pk);
   const remove = useDeleteItem(model.identity, pk);
+  const userId = useMeta().data?.user.id;
   const [confirming, setConfirming] = useState(false);
   const title = `${model.name} ${pk}`;
 
@@ -80,6 +82,18 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
     if (item.error instanceof ApiError && item.error.code === "not_found") return <NotFoundPage />;
     return <p role="alert">Could not load this {inSentence(model.name)}. Try again later.</p>;
   }
+
+  // The server refuses these changes on one's own account (409 self_lockout).
+  const own = isOwnAccount(model, item.data, userId);
+  const canDelete = model.permissions.delete && !own;
+  const lockedFields = model.permissions.edit && (model.account?.protected_fields.length ?? 0) > 0;
+  const ownHint = !own
+    ? null
+    : lockedFields
+      ? "This is your account: you cannot change your own sign-in status or delete it here."
+      : model.permissions.delete
+        ? "This is your account: you cannot delete it here."
+        : null;
 
   const deleteRecord = () => {
     remove.mutate(undefined, {
@@ -108,8 +122,9 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
           Editing {inSentence(model.name_plural)} is disabled.
         </p>
       )}
+      {ownHint !== null && <p className="text-sm text-muted-foreground">{ownHint}</p>}
       <RecordForm
-        model={model}
+        model={own ? withProtectedFields(model) : model}
         mode="edit"
         row={item.data}
         readOnly={!model.permissions.edit}
@@ -119,7 +134,7 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
           toast.success("Changes saved.");
         }}
         actions={
-          model.permissions.delete ? (
+          canDelete ? (
             <Button
               type="button"
               variant="outline"

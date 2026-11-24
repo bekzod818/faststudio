@@ -28,6 +28,8 @@ _MESSAGES: dict[ErrorCode, str] = {
     "not_found": "Not found.",
     "method_not_allowed": "Method not allowed.",
     "conflict": "Conflict.",
+    "self_lockout": "You cannot remove your own access.",
+    "last_admin": "At least one active admin must remain.",
     "validation_error": "Invalid input.",
     "payload_too_large": "Request body too large.",
     "rate_limited": "Too many requests.",

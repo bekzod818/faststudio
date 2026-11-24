@@ -9,6 +9,44 @@ listed under **Changed** or **Removed** with migration notes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+### Added
+
+- `Admin(max_list_offset=...)` and the matching `max_list_offset` field in the
+  SPA's runtime config.
+- Error codes `self_lockout` and `last_admin` in the API contract.
+- `ModelMeta.account` (additive, `schema_version` stays `"1"`): on the model
+  that holds the admins' accounts it lists the fields an admin cannot change
+  on their own record. The UI shows them read-only there and hides the delete
+  button; the server enforces the rule regardless.
+
+### Changed
+
+- Lists and relation pickers stop at `max_list_offset` rows (default
+  10 000): a page is reachable while `(page - 1) * page_size` is below it,
+  and pages past that now return `400 invalid_query`. Before, pages up to
+  100 000 were accepted (an `OFFSET` of up to 10 million rows). Response
+  shapes are unchanged. **Migration:** pass
+  `Admin(max_list_offset=...)` (up to 10 000 000) to restore deeper paging.
+- With `ModelUserBackend`, `Admin.register()` now raises `ConfigurationError`
+  for a model that maps the user model's table without being the user model
+  or a subclass of it (an inheritance base class, a sibling subclass sharing
+  the table, or a second class on the same table), because writes through it
+  would bypass the account-safety checks. **Migration:** register the user
+  model itself (or a subclass of it).
+
+### Fixed
+
+- An admin could lock themselves out: clearing their own `is_admin` /
+  `is_active` flag or deleting their own row in the registered user model
+  succeeded, and every later request returned 401. These writes now return
+  `409 self_lockout`, and no write can remove the last active admin
+  (`409 last_admin`, checked atomically in the write's transaction; ADR-0009).
+- Writes that lose a race to a concurrent request (SQLite "database is
+  locked", serialization failures, deadlocks, or an update of a row deleted
+  meanwhile) return `409 conflict` instead of `500`.
+
 ## [0.1.0] - 2026-11-24
 
 ### Added
@@ -172,5 +210,6 @@ listed under **Changed** or **Removed** with migration notes.
   (`E2EUser` -> "E2E users", previously "E2 E users").
 
 
-[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bekzod818/faststudio/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bekzod818/faststudio/releases/tag/v0.1.0

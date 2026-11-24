@@ -127,6 +127,56 @@ Open <http://127.0.0.1:8000/admin> and sign in.
   `http://localhost` and `http://127.0.0.1`; everywhere else, serve the app
   over HTTPS.
 
+## Locked out?
+
+FastStudio refuses writes that would lock you out: you cannot clear your own
+`is_admin` / `is_active` flag or delete your own account in the admin, and
+nobody can remove the last active admin (the API answers `409 self_lockout` or
+`409 last_admin`). You can still lose access in other ways, such as a
+forgotten password or a change made directly in the database. Restore an
+account from a shell that can reach the database.
+
+Save as `restore_admin.py`:
+
+```python
+import asyncio
+import getpass
+import sys
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from faststudio import hash_password
+from main import User, engine
+
+
+async def restore_admin(username: str) -> None:
+    try:
+        async with async_sessionmaker(engine)() as session:
+            user = await session.scalar(select(User).where(User.username == username))
+            if user is None:
+                sys.exit(f"No user named {username!r}.")
+            user.is_active = True
+            user.is_admin = True
+            if input("Reset the password too? [y/N] ").strip().lower() == "y":
+                user.password_hash = hash_password(getpass.getpass("New password: "))
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(restore_admin(sys.argv[1]))
+```
+
+```bash
+python restore_admin.py admin
+```
+
+It re-enables the account, gives it admin rights and optionally sets a new
+password. When a flag or the password actually changes, the account is signed
+out of every existing session. To add a second admin instead, run `create_admin.py` with a new
+username.
+
 ## A complete example
 
 [`examples/basic`](https://github.com/bekzod818/faststudio/blob/main/examples/basic/README.md) is a runnable app with four

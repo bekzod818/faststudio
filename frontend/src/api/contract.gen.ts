@@ -18,6 +18,8 @@ export type ErrorCode =
   | "not_found"
   | "method_not_allowed"
   | "conflict"
+  | "self_lockout"
+  | "last_admin"
   | "validation_error"
   | "payload_too_large"
   | "rate_limited"
@@ -168,6 +170,7 @@ export interface MetaResponse {
  * via the `definition` "ModelMeta".
  */
 export interface ModelMeta {
+  account: AccountMeta | null;
   fields: FieldMeta[];
   icon: string | null;
   identity: string;
@@ -181,6 +184,19 @@ export interface ModelMeta {
   pk_field: string;
   search_fields: string[];
   sortable_fields: string[];
+}
+/**
+ * The model holds the admins' accounts (ADR-0009).
+ *
+ * On the record of the signed-in admin (`pk == MetaResponse.user.id`), the
+ * `protected_fields` cannot be changed and the record cannot be deleted; the
+ * server refuses with `self_lockout`.
+ *
+ * This interface was referenced by `FastStudioContract`'s JSON-Schema
+ * via the `definition` "AccountMeta".
+ */
+export interface AccountMeta {
+  protected_fields: string[];
 }
 /**
  * Description of one visible field (see docs/api-contract.md, "Field flags").
@@ -269,6 +285,7 @@ export interface UserMeta {
 export interface SpaConfig {
   api_url: string;
   base_url: string;
+  max_list_offset: number;
   schema_version: "1";
   title: string;
 }

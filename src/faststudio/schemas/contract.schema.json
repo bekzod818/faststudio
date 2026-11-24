@@ -1,5 +1,21 @@
 {
   "$defs": {
+    "AccountMeta": {
+      "additionalProperties": false,
+      "description": "The model holds the admins' accounts (ADR-0009).\n\nOn the record of the signed-in admin (`pk == MetaResponse.user.id`), the\n`protected_fields` cannot be changed and the record cannot be deleted; the\nserver refuses with `self_lockout`.",
+      "properties": {
+        "protected_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "protected_fields"
+      ],
+      "type": "object"
+    },
     "ChoiceMeta": {
       "additionalProperties": false,
       "description": "One allowed value: wire `value` and display `label`.",
@@ -78,6 +94,8 @@
         "not_found",
         "method_not_allowed",
         "conflict",
+        "self_lockout",
+        "last_admin",
         "validation_error",
         "payload_too_large",
         "rate_limited",
@@ -387,6 +405,16 @@
       "additionalProperties": false,
       "description": "Everything the SPA needs to render one registered model.",
       "properties": {
+        "account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccountMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fields": {
           "items": {
             "$ref": "#/$defs/FieldMeta"
@@ -465,7 +493,8 @@
         "sortable_fields",
         "page_size",
         "permissions",
-        "fields"
+        "fields",
+        "account"
       ],
       "type": "object"
     },
@@ -562,6 +591,11 @@
         "base_url": {
           "type": "string"
         },
+        "max_list_offset": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "schema_version": {
           "const": "1",
           "type": "string"
@@ -574,7 +608,8 @@
         "schema_version",
         "base_url",
         "api_url",
-        "title"
+        "title",
+        "max_list_offset"
       ],
       "type": "object"
     },

@@ -62,6 +62,7 @@ def _resolve(**overrides: Any) -> Settings:
         "session_max_age": timedelta(hours=8),
         "secure_cookies": True,
         "max_page_size": 100,
+        "max_list_offset": 10_000,
         "show_powered_by": True,
     }
     kwargs.update(overrides)
@@ -110,9 +111,22 @@ def test_invalid_max_page_size(size: int) -> None:
         _resolve(max_page_size=size)
 
 
+@pytest.mark.parametrize("offset", [1, 10_000, 10_000_000])
+def test_max_list_offset_bounds_accepted(offset: int) -> None:
+    assert _resolve(max_list_offset=offset).max_list_offset == offset
+
+
+@pytest.mark.parametrize("offset", [0, -1, 10_000_001])
+def test_invalid_max_list_offset(offset: int) -> None:
+    with pytest.raises(ConfigurationError, match="max_list_offset must be between 1 and 10000000"):
+        _resolve(max_list_offset=offset)
+
+
 @pytest.mark.parametrize(
     ("option", "value", "message"),
     [
+        ("max_list_offset", "10000", "max_list_offset must be int"),
+        ("max_list_offset", True, "max_list_offset must be int"),
         ("title", None, "title must be str"),
         ("title", 1, "title must be str"),
         ("session_max_age", 3600, "session_max_age must be timedelta"),

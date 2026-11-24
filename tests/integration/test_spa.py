@@ -119,7 +119,7 @@ async def test_host_app_is_untouched(
 async def test_runtime_config_is_injected(
     make_admin: AdminFactory, client: httpx.AsyncClient
 ) -> None:
-    make_admin(title="Back Office", base_url="/back-office/studio")
+    make_admin(title="Back Office", base_url="/back-office/studio", max_list_offset=2_500)
     response = await client.get("/back-office/studio/")
     assert '<base href="/back-office/studio/">' in response.text
     assert _config(response.text) == {
@@ -127,6 +127,7 @@ async def test_runtime_config_is_injected(
         "base_url": "/back-office/studio",
         "api_url": "/back-office/studio/api/v1",
         "title": "Back Office",
+        "max_list_offset": 2_500,
     }
     assert "<title>Back Office</title>" in response.text
 

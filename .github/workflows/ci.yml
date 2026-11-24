@@ -64,6 +64,39 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  test-postgres:
+    # FOR UPDATE and snapshot isolation (ADR-0009) cannot be exercised on SQLite.
+    name: Test (PostgreSQL 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17@sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf
+        env:
+          POSTGRES_USER: faststudio
+          POSTGRES_PASSWORD: faststudio-ci-only
+          POSTGRES_DB: faststudio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faststudio -d faststudio_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      FASTSTUDIO_TEST_POSTGRES_URL: postgresql+asyncpg://faststudio:faststudio-ci-only@localhost:5432/faststudio_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - name: PostgreSQL tests (must run, not skip)
+        shell: bash  # -eo pipefail: a failing pytest fails the step despite tee
+        run: uv run pytest -m postgres -q | tee pytest.log && ! grep -q "skipped" pytest.log
+
   test-lowest:
     # The declared minimum versions must work: users may have them installed.
     name: Test (lowest dependencies, Python 3.11)
@@ -79,7 +112,8 @@ jobs:
         run: |
           uv venv /tmp/lowest --python 3.11
           uv pip install --python /tmp/lowest/bin/python --resolution lowest-direct -e .
-          uv pip install --python /tmp/lowest/bin/python pytest pytest-asyncio httpx aiosqlite uvicorn
+          # aiosqlite range: keep in sync with the dev group (tests/_leaks.py relies on it).
+          uv pip install --python /tmp/lowest/bin/python pytest pytest-asyncio httpx "aiosqlite>=0.22.1,<0.23" uvicorn
       - run: /tmp/lowest/bin/python -m pytest -q -p no:cacheprovider
 
   security:

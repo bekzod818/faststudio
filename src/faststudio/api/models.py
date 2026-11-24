@@ -10,6 +10,7 @@ from faststudio.api._records import detail_row, load_or_404
 from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError
+from faststudio.auth._guard import AccountGuard
 from faststudio.query._list import choices_statements, list_statements
 from faststudio.query._params import parse_choices_params, parse_list_params
 from faststudio.schemas._meta import build_models_meta
@@ -33,13 +34,15 @@ async def meta(request: Request, user: CurrentUser) -> MetaResponse:
     from faststudio import __version__  # noqa: PLC0415
 
     context = get_context(request)
+    backend = context.auth_backend
+    guard = backend if isinstance(backend, AccountGuard) else None
     return MetaResponse(
         schema_version=SCHEMA_VERSION,
         version=__version__,
         title=context.settings.title,
         show_powered_by=context.settings.show_powered_by,
         user=UserMeta(id=user.id, username=user.username),
-        models=build_models_meta(context.registry),
+        models=build_models_meta(context.registry, guard=guard),
     )
 
 
@@ -47,8 +50,12 @@ async def meta(request: Request, user: CurrentUser) -> MetaResponse:
 async def list_items(request: Request, registered: ModelDep, session: DbSession) -> ListResponse:
     """Return a page of records with search, filters and sorting from the allowlists."""
     context = get_context(request)
+    settings = context.settings
     params = parse_list_params(
-        request.query_params.multi_items(), registered, context.settings.max_page_size
+        request.query_params.multi_items(),
+        registered,
+        settings.max_page_size,
+        max_list_offset=settings.max_list_offset,
     )
     page_query, count_query = list_statements(registered, params)
     rows = (await session.execute(page_query)).scalars().all()
@@ -82,7 +89,10 @@ async def choices(
     target = registry.target_of(spec.relation.target) if spec and spec.relation else None
     if target is None:
         raise ApiError(404, "not_found")
-    page, q = parse_choices_params(request.query_params.multi_items())
+    page, q = parse_choices_params(
+        request.query_params.multi_items(),
+        max_list_offset=get_context(request).settings.max_list_offset,
+    )
     page_query, count_query = choices_statements(target, q, page)
     total = (await session.execute(count_query)).scalar_one()
     result = await session.execute(page_query)

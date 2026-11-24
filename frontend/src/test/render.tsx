@@ -6,7 +6,7 @@ import { createMemoryRouter, RouterProvider, type RouteObject } from "react-rout
 import { ApiProvider } from "@/api/provider";
 import type { ApiClient } from "@/api/client";
 import { ThemeProvider } from "@/app/theme/ThemeProvider";
-import { DEV_CONFIG } from "@/lib/config";
+import { DEV_CONFIG, type AppConfig } from "@/lib/config";
 import { ConfigProvider } from "@/lib/ConfigProvider";
 
 export function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
@@ -25,11 +25,12 @@ export function renderRoutes(
     client,
     path = "/",
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-  }: { client: ApiClient; path?: string; queryClient?: QueryClient },
+    config = DEV_CONFIG,
+  }: { client: ApiClient; path?: string; queryClient?: QueryClient; config?: AppConfig },
 ): RenderResult & { router: ReturnType<typeof createMemoryRouter>; queryClient: QueryClient } {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   const ui: ReactElement = (
-    <ConfigProvider value={DEV_CONFIG}>
+    <ConfigProvider value={config}>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <ApiProvider client={client}>

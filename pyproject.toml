@@ -63,11 +63,14 @@ dev = [
   "pytest-asyncio>=0.25",
   "pytest-cov>=6.0",
   "httpx>=0.28",
-  "aiosqlite>=0.21",
+  # The test leak guard relies on the worker thread name of these releases
+  # (tests/_leaks.py). Keep in sync with the test-lowest job in ci.yml.
+  "aiosqlite>=0.22.1,<0.23",
   "uvicorn>=0.34",
   "bandit>=1.8",
   "pip-audit>=2.8",
   "pre-commit>=4.0",
+  "asyncpg>=0.30",
 ]
 
 # ---------------------------------------------------------------- hatch
@@ -143,7 +146,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["-ra", "--strict-markers", "--strict-config"]
-markers = ["e2e: wheel-install smoke tests (slow, need a built wheel)"]
+markers = [
+  "e2e: wheel-install smoke tests (slow, need a built wheel)",
+  "postgres: need a PostgreSQL server (FASTSTUDIO_TEST_POSTGRES_URL)",
+]
 filterwarnings = ["error"]
 
 [tool.coverage.run]

@@ -154,3 +154,31 @@ async def test_filters_on_nullable_fields(
 async def test_list_without_relations_has_no_labels(api: httpx.AsyncClient) -> None:
     page = (await api.get("/admin/api/v1/models/teams/items")).json()
     assert all(item["labels"] == {} for item in page["items"])
+
+
+# --------------------------------------------------------------------------- offset cap
+# A page is reachable iff (page - 1) * page_size < max_list_offset (default 10 000).
+
+
+@pytest.mark.parametrize(("page_size", "last"), [(10, 1000), (25, 400), (30, 334)])
+async def test_pages_stop_at_the_default_offset_cap(
+    api: httpx.AsyncClient, page_size: int, last: int
+) -> None:
+    ok = await api.get(USERS, params={"page": last, "page_size": page_size})
+    assert ok.status_code == 200
+    assert ok.json()["items"] == []  # reachable, just past the 30 seeded rows
+    refused = await api.get(USERS, params={"page": last + 1, "page_size": page_size})
+    assert refused.status_code == 400
+    error = refused.json()["error"]
+    assert error["code"] == "invalid_query"
+    assert "last reachable page" in error["message"]
+
+
+@pytest.mark.parametrize("admin_options", [{"max_list_offset": 25}])
+async def test_offset_cap_is_configurable(api: httpx.AsyncClient) -> None:
+    # users: page_size 10, cap 25 -> offsets 0, 10, 20 are reachable (pages 1-3).
+    assert (await api.get(USERS, params={"page": 3})).json()["items"][0]["pk"] == "21"
+    assert (await api.get(USERS, params={"page": 4})).status_code == 400
+    choices = "/admin/api/v1/models/users/fields/team_id/choices"
+    assert (await api.get(choices, params={"page": 2})).status_code == 200  # offset 20 < 25
+    assert (await api.get(choices, params={"page": 3})).status_code == 400  # offset 40

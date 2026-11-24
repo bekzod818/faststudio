@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 
 import { ApiError, type ApiClient, type GetOptions } from "@/api/client";
 import type { ListResponse, MetaResponse, Row } from "@/api/contract.gen";
+import { DEV_CONFIG } from "@/lib/config";
 import { testModel } from "@/test/fixtures";
 import { fakeClient, renderRoutes } from "@/test/render";
 
@@ -44,6 +45,7 @@ function setup(
   path: string,
   list: (options: GetOptions | undefined) => Promise<ListResponse> = () =>
     Promise.resolve(page([row(1), row(2)], 5)),
+  maxListOffset = DEV_CONFIG.maxListOffset,
 ) {
   const get = vi.fn((url: string, options?: GetOptions) => {
     if (url === "/meta") return Promise.resolve(META);
@@ -53,6 +55,7 @@ function setup(
   const rendered = renderRoutes(routes, {
     client: fakeClient({ get: get as unknown as ApiClient["get"] }),
     path,
+    config: { ...DEV_CONFIG, maxListOffset },
   });
   const listCalls = () =>
     get.mock.calls.filter(([url]) => url === "/models/users/items").map(([, o]) => o?.params);
@@ -164,6 +167,47 @@ describe("ModelListRoute", () => {
   it("offers a way back when the page is past the end", async () => {
     setup("/models/users?page=9", () => Promise.resolve(page([], 5, 9)));
     expect(await screen.findByRole("button", { name: "Go to the first page" })).toBeVisible();
+  });
+
+  it("stops paging at the offset cap and says how to see more", async () => {
+    // page_size 2, cap 6: pages 1-3 are reachable out of 25.
+    setup(
+      "/models/users?page=3",
+      (options) => Promise.resolve(page([row(5)], 50, Number(options?.params?.page))),
+      6,
+    );
+    expect(await screen.findByText("Page 3 of 3")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Last page" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Only the first 6 users can be paged through. Search or filter to find the rest.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("does not mention the cap when every page is reachable", async () => {
+    setup("/models/users", () => Promise.resolve(page([row(1)], 5)), 6);
+    expect(await screen.findByText("Page 1 of 3")).toBeVisible();
+    expect(screen.queryByText(/can be paged through/)).toBeNull();
+  });
+
+  it("explains a refused deep page (stale tab or edited link) and offers page 1", async () => {
+    const { router } = setup("/models/users?page=3", (options) =>
+      Number(options?.params?.page) > 1
+        ? Promise.reject(
+            new ApiError(400, "invalid_query", "`page` is past the last reachable page."),
+          )
+        : Promise.resolve(page([row(1)], 50)),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This page is too far into the list to load. Search or filter to narrow the results.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Go to the first page" }));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("");
+    });
+    expect(await screen.findByText("user1@example.com")).toBeVisible();
   });
 
   it("shows a load error with retry", async () => {

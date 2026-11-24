@@ -212,16 +212,27 @@ class MentorshipAdmin(ModelAdmin, model=Mentorship):
 
 
 @pytest.fixture
-def admin(
+def admin_options() -> dict[str, Any]:
+    """Extra `Admin(...)` options; tests override it with `parametrize`."""
+    return {}
+
+
+@pytest.fixture
+def admin(  # noqa: PLR0917 - pytest fixtures
     app: FastAPI,
     db: AsyncEngine,
     secret_key: str,
     static_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
+    admin_options: dict[str, Any],
 ) -> Admin:
     monkeypatch.setattr("faststudio.admin._STATIC_DIR", static_dir)
     instance = Admin(
-        app, engine=db, auth_backend=ModelUserBackend(AdminUser), secret_key=secret_key
+        app,
+        engine=db,
+        auth_backend=ModelUserBackend(AdminUser),
+        secret_key=secret_key,
+        **admin_options,
     )
     instance.register(TeamAdmin)
     instance.register(UserAdmin)

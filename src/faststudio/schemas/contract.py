@@ -56,6 +56,8 @@ ErrorCode = Literal[
     "not_found",
     "method_not_allowed",
     "conflict",
+    "self_lockout",
+    "last_admin",
     "validation_error",
     "payload_too_large",
     "rate_limited",
@@ -130,6 +132,17 @@ class PermissionsMeta(_Contract):
     delete: bool
 
 
+class AccountMeta(_Contract):
+    """The model holds the admins' accounts (ADR-0009).
+
+    On the record of the signed-in admin (`pk == MetaResponse.user.id`), the
+    `protected_fields` cannot be changed and the record cannot be deleted; the
+    server refuses with `self_lockout`.
+    """
+
+    protected_fields: list[str]
+
+
 class ModelMeta(_Contract):
     """Everything the SPA needs to render one registered model."""
 
@@ -147,6 +160,8 @@ class ModelMeta(_Contract):
     page_size: int
     permissions: PermissionsMeta
     fields: list[FieldMeta]
+    #: Set on the model that stores the admins' accounts, else null.
+    account: AccountMeta | None
 
 
 class UserMeta(_Contract):
@@ -207,6 +222,9 @@ class SpaConfig(_Contract):
     base_url: str
     api_url: str
     title: str
+    #: Lists never skip this many rows: the last reachable page is
+    #: ceil(max_list_offset / page_size).
+    max_list_offset: int = Field(ge=1, le=10_000_000)
 
 
 class LoginRequest(_Contract):

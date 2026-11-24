@@ -36,7 +36,7 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 |---|---|
 | Every route except `POST /auth/login` is on the session-protected router; a test enumerates all mounted API routes and asserts 401 without a session. | `tests/integration/security/test_auth.py::test_every_api_route_except_login_requires_a_session` |
 | Session cookie signed with itsdangerous (HMAC), purpose-specific salt; tampered, truncated, forged-payload or foreign-key cookie ⇒ 401 and the cookie is cleared. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
-| Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
+| Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. Logout clears the browser's cookie but cannot revoke a copy of it before expiry (see Known limitations). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` (incl. `test_logout_does_not_revoke_a_copied_cookie`) |
 | `auth_version` in cookie must match the user's current value (`ModelUserBackend`: SHA-256 of password hash + active/admin flags); password change, deactivation or losing admin rights invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `tests/integration/security/test_auth.py`, `tests/unit/auth/test_model_backend.py`, `tests/unit/test_authenticated_user.py` |
 | `ModelUserBackend` admits only active **and** admin users; its column configuration is validated at startup. | `tests/unit/auth/test_model_backend.py` |
 | Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path` = browser-visible admin root (proxy prefix + `base_url`), `Max-Age` = `session_max_age`. | `tests/integration/security/test_auth.py` |
@@ -105,6 +105,7 @@ Residual risks (documented, accepted for v0.1):
 | Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
 | `exclude`d fields never appear in metadata (checked on the whole serialized payload), list, retrieve or choices responses (relation labels use visible fields only, never `__str__`; lists load only displayed columns; label and choices queries go through the mapped entity so inheritance joins and discriminators apply), and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `tests/unit/schemas/test_contract.py`, `tests/integration/api/` |
 | `can_create` / `can_edit` / `can_delete` enforced server-side (403, before reading the body), not only hidden in the UI. | `tests/integration/api/test_write.py` |
+| Account safety (ADR-0009): when the user model of `ModelUserBackend` is registered, an admin cannot change their own sign-in flags or delete their own row (409 `self_lockout`), and no write can remove the last active admin (409 `last_admin`). The last-admin check runs for every write that could remove an admin (decided from the request, not the possibly stale loaded row), locks the active admin rows (`FOR UPDATE`) and re-reads the remaining active admins with a locking read after the flush, in the same transaction, so concurrent removals cannot both succeed; the loser of a lock race gets 409, never 500. Other mappings of the user table are refused at `register()`. | `tests/unit/auth/test_account_guard.py`, `tests/unit/auth/test_account_guard_mappings.py`, `tests/integration/security/test_account_guard.py`, `tests/integration/security/test_account_guard_postgres.py` (PostgreSQL CI job: READ COMMITTED, REPEATABLE READ, SERIALIZABLE), `tests/unit/api/test_db_errors.py` |
 | Integrity errors return 409, data errors 422, other database errors 500, all with generic messages; FastStudio logs only the exception types (never SQL or parameters), also for unhandled database errors on reads. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `tests/integration/api/test_write.py` |
 
 ### T6. Cross-site scripting
@@ -154,9 +155,31 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
   not readable from there). If the host serves untrusted or user-generated
   content, mount the admin on its own subdomain.
 
-- Stateless sessions cannot be revoked server-side before expiry, except by
-  changing the user's password or deactivating them (ADR-0004).
+- **Logout only clears the browser's cookie.** Sessions are stateless signed
+  cookies (ADR-0004): the server keeps no session list, so signing out cannot
+  invalidate a copy of the cookie. A copied or stolen session cookie stays
+  valid until `session_max_age` after sign-in (default 8 hours; absolute, not
+  renewed by activity) unless the user's password or active/admin flags
+  change, which changes `auth_version` and revokes every session of that user
+  (`ModelUserBackend`; a custom backend revokes sessions when its own
+  `auth_version` changes). Mitigations today: `HttpOnly` and `Secure`
+  cookies, a short `session_max_age`, changing the password after a suspected
+  leak, and rotating `FASTSTUDIO_SECRET_KEY`, which signs everyone out at
+  once.
+  Planned: an idle timeout and "sign out everywhere" in v0.2, and a
+  server-side session store with per-session revocation in v0.3.
 - No granular permissions: every admin can access every registered model.
+- The account-safety guard (ADR-0009) only covers writes through the admin
+  API with `ModelUserBackend`. Custom `AuthBackend`s are unprotected until
+  they implement the capability (public in v0.2). Host code, direct database
+  changes, and database-only `ON DELETE CASCADE` foreign keys from other
+  tables (no ORM relationship, so the delete check cannot see them) can still
+  remove the last admin; recover with `restore_admin.py`
+  (docs/getting-started.md).
+- After a successful commit, the response is built from a fresh read of the
+  row. If that read fails (the row was deleted right after the commit, or a
+  SQLite writer holds the lock past the busy timeout), the client gets an
+  error although the write was saved.
 - No audit log.
 - The foreign-key existence check on writes queries the referenced table even
   when its model is not registered, so an admin can learn whether a given key
@@ -172,8 +195,9 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
 - Host-side logging of SQLAlchemy errors (e.g. `echo=True` or host exception
   handlers after ADR-0008 propagation) may include parameters; create the
   engine with `hide_parameters=True` in production.
-- Read-API cost for authenticated admins: deep pages use `OFFSET` (up to
-  page 100 000 × `max_page_size`), every list runs a `COUNT(*)`, contains
+- Read-API cost for authenticated admins: deep pages use `OFFSET`, capped
+  below `max_list_offset` rows (default 10 000; configurable up to
+  10 000 000), every list runs a `COUNT(*)`, contains
   search (`%q%`) always scans, and sorting on unindexed `list_display`
   columns is slow on large tables; text and JSON columns in `list_display` are
   returned whole. Index sortable/searchable columns and keep `list_display`

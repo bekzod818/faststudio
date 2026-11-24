@@ -15,10 +15,11 @@ from starlette.types import Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
+from faststudio.auth._guard import AccountGuard
 from faststudio.auth.backend import AuthBackend
 from faststudio.auth.csrf import CsrfTokens
 from faststudio.auth.session import SessionManager
-from faststudio.config import Settings, resolve_settings
+from faststudio.config import DEFAULT_MAX_LIST_OFFSET, Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
 from faststudio.model_admin import ModelAdmin
 from faststudio.registry import Registry, resolve_model_admin
@@ -58,6 +59,7 @@ class Admin:
         session_max_age: timedelta = timedelta(hours=8),
         secure_cookies: bool = True,
         max_page_size: int = 100,
+        max_list_offset: int = DEFAULT_MAX_LIST_OFFSET,
         rate_limiter: RateLimiter | None = None,
         show_powered_by: bool = True,
     ) -> None:
@@ -78,6 +80,12 @@ class Admin:
             secure_cookies: Set the ``Secure`` cookie flag. Disable only for
                 plain-HTTP development on non-localhost hosts.
             max_page_size: Upper bound for list page sizes.
+            max_list_offset: Lists and relation choices never skip this many
+                rows or more: a page is reachable only while
+                ``(page - 1) * page_size < max_list_offset``. Deep ``OFFSET``s
+                scan every skipped row; raise it only if your database can
+                afford that, otherwise narrow results with search, filters or
+                sorting. 1 to 10 000 000.
             rate_limiter: Login throttling; defaults to `InMemoryRateLimiter()`
                 (5 attempts per 15 minutes per client IP and username, per process).
             show_powered_by: Show the "Powered by FastStudio" footer.
@@ -98,6 +106,7 @@ class Admin:
             session_max_age=session_max_age,
             secure_cookies=secure_cookies,
             max_page_size=max_page_size,
+            max_list_offset=max_list_offset,
             show_powered_by=show_powered_by,
         )
 
@@ -137,13 +146,16 @@ class Admin:
         Raises:
             ConfigurationError: on unknown or misspelled options, unknown field
                 names, search/filter fields of unsupported types, excluded fields
-                used elsewhere, composite primary keys, or a duplicate identity
-                or model.
+                used elsewhere, composite primary keys, a duplicate identity or
+                model, or another mapping of the auth backend's user table,
+                including sibling subclasses sharing that table (only the user
+                model or a subclass is allowed; ADR-0009).
 
         """
-        self._registry.add(
-            resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
-        )
+        registered = resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
+        if isinstance(self._auth_backend, AccountGuard):
+            self._auth_backend.check_model(registered.model)
+        self._registry.add(registered)
         return model_admin
 
     @property

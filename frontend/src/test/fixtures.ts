@@ -49,6 +49,7 @@ export function testModel(overrides: Partial<ModelMeta> = {}): ModelMeta {
     sortable_fields: ["id", "email"],
     page_size: 2,
     permissions: { create: true, edit: true, delete: true },
+    account: null,
     fields: [
       testField({ name: "id", label: "ID", type: "integer", primary_key: true, readonly: true }),
       testField({ name: "email", label: "Email" }),

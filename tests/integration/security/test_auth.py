@@ -362,6 +362,35 @@ async def test_password_change_revokes_sessions(
 
 
 @pytest.mark.usefixtures("admin")
+async def test_logout_does_not_revoke_a_copied_cookie(
+    https_client: httpx.AsyncClient, db_engine: AsyncEngine
+) -> None:
+    """Known limitation (threat model, ADR-0004): logout only clears the browser's cookie.
+
+    A copy of the session cookie stays valid until `session_max_age`, unless the
+    password or the active/admin flags change. v0.2 adds "sign out everywhere".
+    """
+    await _login(https_client)
+    copied = https_client.cookies.get(SESSION_COOKIE)
+    assert copied
+    out = await https_client.post(
+        LOGOUT, headers={CSRF_HEADER: https_client.cookies.get(CSRF_COOKIE) or ""}
+    )
+    assert out.status_code == 204
+    assert (await https_client.get(ME)).status_code == 401  # this browser is signed out
+
+    _replace_cookie(https_client, SESSION_COOKIE, copied)  # e.g. a stolen copy
+    assert (await https_client.get(ME)).status_code == 200  # still valid: no server-side state
+
+    async with async_sessionmaker(db_engine)() as session:
+        user = await session.get(AdminUser, 1)
+        assert user is not None
+        user.password_hash = hash_password("rotated")
+        await session.commit()
+    assert (await https_client.get(ME)).status_code == 401  # a password change revokes it
+
+
+@pytest.mark.usefixtures("admin")
 @pytest.mark.parametrize("change", [{"is_active": False}, {"is_admin": False}])
 async def test_deactivation_revokes_sessions(
     https_client: httpx.AsyncClient, db_engine: AsyncEngine, change: dict[str, bool]

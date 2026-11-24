@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from faststudio.auth._guard import AccountGuard
 from faststudio.introspection._fields import FieldSpec, JsonValue, Relation
 from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas.contract import (
     MAX_SAFE_INTEGER,
+    AccountMeta,
     ChoiceMeta,
     FieldMeta,
     FilterMeta,
@@ -15,12 +17,27 @@ from faststudio.schemas.contract import (
 )
 
 
-def build_models_meta(registry: Registry) -> list[ModelMeta]:
+def build_models_meta(registry: Registry, *, guard: AccountGuard | None = None) -> list[ModelMeta]:
     """Describe every registered model, in registration order."""
-    return [build_model_meta(registered, registry) for registered in registry]
+    return [build_model_meta(registered, registry, guard=guard) for registered in registry]
 
 
-def build_model_meta(registered: RegisteredModel, registry: Registry) -> ModelMeta:
+def _account_meta(registered: RegisteredModel, guard: AccountGuard | None) -> AccountMeta | None:
+    """List the guard's protected fields the form can show and send (ADR-0009)."""
+    if guard is None or not guard.guards(registered.model):
+        return None
+    specs = registered.field_specs
+    protected = [
+        name
+        for name in guard.protected_fields(registered.model)
+        if name in specs and not specs[name].readonly
+    ]
+    return AccountMeta(protected_fields=protected)
+
+
+def build_model_meta(
+    registered: RegisteredModel, registry: Registry, *, guard: AccountGuard | None = None
+) -> ModelMeta:
     """Describe one registered model for the SPA."""
     specs = registered.field_specs
     return ModelMeta(
@@ -39,6 +56,7 @@ def build_model_meta(registered: RegisteredModel, registry: Registry) -> ModelMe
             create=registered.can_create, edit=registered.can_edit, delete=registered.can_delete
         ),
         fields=[_field_meta(spec, registry) for spec in specs.values()],
+        account=_account_meta(registered, guard),
     )
 
 

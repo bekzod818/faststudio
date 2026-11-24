@@ -13,7 +13,6 @@ from faststudio.api.errors import ApiError
 from faststudio.introspection._columns import base_type
 from faststudio.registry import RegisteredModel
 
-MAX_PAGE = 100_000
 MAX_QUERY_LENGTH = 200
 MAX_ORDERING_FIELDS = 5
 CHOICES_PAGE_SIZE = 20
@@ -50,6 +49,28 @@ def _single(
             raise _invalid(msg)
         values[key] = value
     return values
+
+
+def last_reachable_page(max_list_offset: int, page_size: int) -> int:
+    """Return the last page whose OFFSET, ``(page - 1) * page_size``, is below the cap.
+
+    The SPA computes the same value (`lastReachablePage` in features/list/query.ts).
+    """
+    return -(-max_list_offset // page_size)
+
+
+def _page(raw: str | None, *, page_size: int, max_list_offset: int) -> int:
+    """Parse `page` and refuse pages past the offset cap (threat model: read cost)."""
+    if raw is None:
+        return 1
+    if not _DIGITS.fullmatch(raw) or int(raw) < 1:
+        msg = "`page` must be a positive integer."
+        raise _invalid(msg)
+    page = int(raw)
+    if page > last_reachable_page(max_list_offset, page_size):
+        msg = "`page` is past the last reachable page; narrow the results with search or filters."
+        raise _invalid(msg)
+    return page
 
 
 def _positive(raw: str | None, *, name: str, default: int, maximum: int) -> int:
@@ -110,7 +131,11 @@ def _filter_value(registered: RegisteredModel, name: str, raw: str) -> object:
 
 
 def parse_list_params(
-    items: Sequence[tuple[str, str]], registered: RegisteredModel, max_page_size: int
+    items: Sequence[tuple[str, str]],
+    registered: RegisteredModel,
+    max_page_size: int,
+    *,
+    max_list_offset: int,
 ) -> ListParams:
     """Validate list query parameters against the model's allowlists.
 
@@ -129,22 +154,25 @@ def parse_list_params(
             msg = "Unknown filter."
             raise _invalid(msg)
         filters[name] = _filter_value(registered, name, raw)
+    page_size = _positive(
+        values.get("page_size"),
+        name="page_size",
+        default=registered.page_size,
+        maximum=max_page_size,
+    )
     return ListParams(
-        page=_positive(values.get("page"), name="page", default=1, maximum=MAX_PAGE),
-        page_size=_positive(
-            values.get("page_size"),
-            name="page_size",
-            default=registered.page_size,
-            maximum=max_page_size,
-        ),
+        page=_page(values.get("page"), page_size=page_size, max_list_offset=max_list_offset),
+        page_size=page_size,
         q=parse_search(values.get("q")),
         ordering=_ordering(values.get("ordering"), registered),
         filters=filters,
     )
 
 
-def parse_choices_params(items: Sequence[tuple[str, str]]) -> tuple[int, str | None]:
+def parse_choices_params(
+    items: Sequence[tuple[str, str]], *, max_list_offset: int
+) -> tuple[int, str | None]:
     """Validate `page` and `q` for the choices endpoint."""
     values = _single(items, {"page", "q"}, allow_filters=False)
-    page = _positive(values.get("page"), name="page", default=1, maximum=MAX_PAGE)
+    page = _page(values.get("page"), page_size=CHOICES_PAGE_SIZE, max_list_offset=max_list_offset)
     return page, parse_search(values.get("q"))

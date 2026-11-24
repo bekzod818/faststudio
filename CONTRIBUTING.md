@@ -22,6 +22,7 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 | Task | Command |
 |---|---|
 | Python tests + coverage | `uv run pytest --cov` |
+| PostgreSQL tests (throwaway database; skipped without the variable) | `FASTSTUDIO_TEST_POSTGRES_URL=postgresql+asyncpg://user@localhost/faststudio_test uv run pytest -m postgres` |
 | Lint / format | `uv run ruff check . && uv run ruff format .` |
 | Type check | `uv run mypy` |
 | Frontend lint / test | `pnpm -C frontend lint && pnpm -C frontend test` |
@@ -47,6 +48,10 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 - Backend coverage ≥ 90 %; security-relevant code is tested for both the
   allowed and the rejected path.
 - Never weaken a security check or skip a test to make CI pass.
+- Tests dispose every engine and close every connection they open; engine
+  fixtures are function-scoped and dispose the engine in their teardown. A
+  guard in `tests/conftest.py` (`tests/_leaks.py`) fails the test that leaves
+  an aiosqlite connection open, instead of a random later test.
 - Never commit `src/faststudio/static/` (built output).
 - Public API changes are deliberate: everything not exported from
   `faststudio/__init__.py` is private.

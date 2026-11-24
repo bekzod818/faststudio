@@ -6,7 +6,6 @@ import type { QueryParams } from "@/api/client";
 import type { ModelMeta } from "@/api/contract.gen";
 import { hasForbiddenCharacters } from "@/lib/text";
 
-export const MAX_PAGE = 100_000;
 export const MAX_SEARCH_LENGTH = 200;
 export const MAX_ORDERING = 5;
 
@@ -21,10 +20,18 @@ export interface ListQuery {
 
 const FILTER_KEY = /^filter\[([^\]]+)\]$/u;
 
-function parsePage(raw: string | null): number {
-  if (raw === null || !/^[1-9][0-9]{0,5}$/u.test(raw)) return 1;
-  const page = Number(raw);
-  return page <= MAX_PAGE ? page : 1;
+/**
+ * The last page whose OFFSET, `(page - 1) * pageSize`, is below `maxListOffset`;
+ * the server refuses later pages. Same rule as `last_reachable_page` in
+ * `faststudio/query/_params.py`.
+ */
+export function lastReachablePage(maxListOffset: number, pageSize: number): number {
+  return Math.ceil(maxListOffset / pageSize);
+}
+
+function parsePage(raw: string | null, lastPage: number): number {
+  if (raw === null || !/^[1-9][0-9]{0,8}$/u.test(raw)) return 1;
+  return Math.min(Number(raw), lastPage);
 }
 
 /** Length in Unicode code points, as the server counts it. */
@@ -75,9 +82,14 @@ function parseFilters(search: URLSearchParams, model: ModelMeta): Record<string,
   return filters;
 }
 
-export function parseListQuery(search: URLSearchParams, model: ModelMeta): ListQuery {
+export function parseListQuery(
+  search: URLSearchParams,
+  model: ModelMeta,
+  maxListOffset: number,
+): ListQuery {
+  // Lists use the model's page size (the SPA never sends `page_size`).
   return {
-    page: parsePage(search.get("page")),
+    page: parsePage(search.get("page"), lastReachablePage(maxListOffset, model.page_size)),
     q: parseSearch(search.get("q"), model),
     ordering: parseOrdering(search.get("ordering"), model),
     filters: parseFilters(search, model),

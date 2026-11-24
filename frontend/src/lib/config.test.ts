@@ -22,6 +22,7 @@ describe("readConfig", () => {
         base_url: "/back-office",
         api_url: "/back-office/api/v1",
         title: "Back Office",
+        max_list_offset: 2500,
       }),
     );
     expect(readConfig()).toEqual({
@@ -29,6 +30,7 @@ describe("readConfig", () => {
       baseUrl: "/back-office",
       apiUrl: "/back-office/api/v1",
       title: "Back Office",
+      maxListOffset: 2500,
     });
   });
 
@@ -36,7 +38,13 @@ describe("readConfig", () => {
     expect(readConfig()).toEqual(DEV_CONFIG);
   });
 
+  const valid = { schema_version: "1", base_url: "/a", api_url: "/a/api/v1", title: "t" };
+
   it.each([
+    JSON.stringify(valid), // no max_list_offset
+    JSON.stringify({ ...valid, max_list_offset: 0 }),
+    JSON.stringify({ ...valid, max_list_offset: 1.5 }),
+    JSON.stringify({ ...valid, max_list_offset: "10000" }),
     "not json",
     JSON.stringify({ schema_version: "2", base_url: "/a", api_url: "/a/api/v1", title: "t" }),
     JSON.stringify({ schema_version: "1", base_url: "//evil", api_url: "/a", title: "t" }),
