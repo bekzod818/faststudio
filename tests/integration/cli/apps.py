@@ -78,3 +78,28 @@ def no_accounts() -> Admin:
 
 not_an_admin = object()
 fastapi_app = FastAPI()  # callable, but not an Admin factory
+
+
+def env_secret() -> Admin:
+    """Reads the secret from FASTSTUDIO_SECRET_KEY (the quickstart's setup)."""
+    return Admin(
+        FastAPI(), engine=create_async_engine(DATABASE_URL), auth_backend=StubAuthBackend()
+    )
+
+
+def broken() -> Admin:
+    """A factory failing with configuration in its message."""
+    msg = "could not connect to postgresql://admin:hunter2@db/prod"
+    raise RuntimeError(msg)
+
+
+def binds_only() -> Admin:
+    """contrib.auth through a session factory routed only by `binds=`."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: PLC0415
+
+    from tests.factories.contrib_models import ContribBase  # noqa: PLC0415
+
+    maker = async_sessionmaker(binds={ContribBase: create_async_engine(DATABASE_URL)})
+    return Admin(
+        FastAPI(), session_maker=maker, auth_backend=DatabaseAuthBackend(AUTH), secret_key=SECRET
+    )

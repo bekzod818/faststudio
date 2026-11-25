@@ -74,18 +74,27 @@ def main(argv: Sequence[str] | None = None, *, io: CliIO | None = None) -> int:
     try:
         admin = load_admin(args.app)
         return asyncio.run(_run(admin, args, terminal))
-    except CliError as exc:
-        terminal.error(str(exc))
-        return exc.code
-    except (OperationalError, ProgrammingError) as exc:
-        terminal.error(
+    except (CliError, EOFError, KeyboardInterrupt, SQLAlchemyError) as exc:
+        message, code = _failure(exc)
+        terminal.error(message)
+        return code
+
+
+def _failure(exc: BaseException) -> tuple[str, int]:
+    """Map an expected failure to its message and exit code (no internals)."""
+    if isinstance(exc, CliError):
+        return str(exc), exc.code
+    if isinstance(exc, EOFError):  # Ctrl-D at a prompt
+        return "Aborted: nothing was changed.", 1
+    if isinstance(exc, KeyboardInterrupt):  # Ctrl-C
+        return "Interrupted: nothing was changed.", 130
+    if isinstance(exc, (OperationalError, ProgrammingError)):
+        return (
             f"Database error ({type(exc).__name__}). If the tables do not exist yet, run "
-            "your migrations (or Base.metadata.create_all) first."
+            "your migrations (or Base.metadata.create_all) first.",
+            1,
         )
-        return 1
-    except SQLAlchemyError as exc:
-        terminal.error(f"Database error ({type(exc).__name__}). Nothing was changed.")
-        return 1
+    return f"Database error ({type(exc).__name__}). Nothing was changed.", 1
 
 
 async def _run(admin: Admin, args: argparse.Namespace, terminal: CliIO) -> int:
@@ -93,9 +102,10 @@ async def _run(admin: Admin, args: argparse.Namespace, terminal: CliIO) -> int:
         return await COMMANDS[args.command](admin, args, terminal)
     finally:
         # Close the engine's connections inside this event loop, before it ends.
-        bind = admin._session_maker.kw.get("bind")
-        if isinstance(bind, AsyncEngine):
-            await bind.dispose()
+        options = admin._session_maker.kw
+        engines = [options.get("bind"), *options.get("binds", {}).values()]
+        for engine in {id(e): e for e in engines if isinstance(e, AsyncEngine)}.values():
+            await engine.dispose()
 
 
 def console_main() -> None:

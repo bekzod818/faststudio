@@ -8,6 +8,16 @@ from pathlib import Path
 
 from faststudio.admin import Admin
 from faststudio.cli._io import CliError
+from faststudio.exceptions import ConfigurationError
+
+
+def _failed(spec: str, exc: Exception) -> str:
+    # The type only: messages can hold connection URLs or other configuration.
+    module = spec.partition(":")[0]
+    return (
+        f"Cannot load {spec} ({type(exc).__name__}). Run "
+        f'`python -c "import {module}"` to see the error.'
+    )
 
 
 def load_admin(spec: str) -> Admin:
@@ -24,6 +34,10 @@ def load_admin(spec: str) -> Admin:
     except ModuleNotFoundError as exc:
         msg = f"Cannot import {module_name!r} ({exc.name} not found)."
         raise CliError(msg, code=2) from None
+    except ConfigurationError as exc:  # e.g. FASTSTUDIO_SECRET_KEY not set: safe to show
+        raise CliError(f"Cannot load {spec}: {exc}", code=2) from None
+    except Exception as exc:
+        raise CliError(_failed(spec, exc), code=2) from None
     target: object = module
     for part in attr.split("."):
         if not hasattr(target, part):
@@ -36,6 +50,10 @@ def load_admin(spec: str) -> Admin:
         except TypeError:  # e.g. a FastAPI app, which is callable but not a factory
             msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
             raise CliError(msg, code=2) from None
+        except ConfigurationError as exc:
+            raise CliError(f"Cannot load {spec}: {exc}", code=2) from None
+        except Exception as exc:
+            raise CliError(_failed(spec, exc), code=2) from None
     if not isinstance(target, Admin):
         msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
         raise CliError(msg, code=2)

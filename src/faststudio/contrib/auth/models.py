@@ -53,6 +53,11 @@ def new_session_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _normalized_default(context: Any) -> str:  # noqa: ANN401 - SQLAlchemy context
+    """Derive the sign-in key from `username` on insert (Core inserts included)."""
+    return normalize_username(context.get_current_parameters()["username"])
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -63,7 +68,9 @@ class UserMixin:
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(MAX_USERNAME_LENGTH), unique=True)
     #: `normalize_username(username)`, kept in sync on assignment; unique, used to sign in.
-    username_normalized: Mapped[str] = mapped_column(String(MAX_USERNAME_LENGTH), unique=True)
+    username_normalized: Mapped[str] = mapped_column(
+        String(MAX_USERNAME_LENGTH), unique=True, default=_normalized_default
+    )
     email: Mapped[str] = mapped_column(String(254), default="")
     #: argon2id hash, or an unusable marker (new users cannot sign in yet).
     password_hash: Mapped[str] = mapped_column(String(255), default=unusable_password)

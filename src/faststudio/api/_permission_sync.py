@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import Column, Table, delete, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,6 +92,20 @@ async def plan_sync(session: AsyncSession, rules: EscalationRules, registry: Reg
     return result
 
 
+#: Dialects with an "insert, skip duplicates" statement.
+_UPSERT_DIALECTS = frozenset({"sqlite", "postgresql", "mysql", "mariadb"})
+
+
+def _insert_ignoring_duplicates(table: Table, codename: Column[Any], dialect: str) -> Any:  # noqa: ANN401
+    if dialect == "sqlite":
+        return sqlite_insert(table).on_conflict_do_nothing(index_elements=[codename])
+    if dialect == "postgresql":
+        return postgresql_insert(table).on_conflict_do_nothing(index_elements=[codename])
+    if dialect in {"mysql", "mariadb"}:
+        return insert(table).prefix_with("IGNORE")
+    return insert(table)
+
+
 def _pk(rules: EscalationRules) -> Column[Any]:
     from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
 
@@ -102,19 +118,27 @@ async def apply_sync(
 ) -> None:
     """Create missing permissions, update names, and (with `prune`) delete stale ones.
 
-    Runs in the caller's transaction; each insert has its own savepoint, so a
-    codename created meanwhile by another worker is tolerated.
+    Runs in the caller's transaction. A codename created meanwhile by another
+    worker is skipped (``ON CONFLICT DO NOTHING`` / ``INSERT IGNORE``; a
+    savepoint per insert on other databases).
     """
     model = rules.models["permission"]
     bind = bind_to(model)
     table = rules.codename.table
+    dialect = session.get_bind(mapper=bind["mapper"]).dialect.name
     for codename in plan.missing:
         values: dict[Any, Any] = {rules.codename: codename}
         if rules.name_column is not None:
             values[rules.name_column] = plan.expected[codename]
-        try:
+        statement = _insert_ignoring_duplicates(table, rules.codename, dialect).values(values)
+        if dialect in _UPSERT_DIALECTS:
+            # A codename created meanwhile by another worker is skipped, inside
+            # this one transaction (no savepoint).
+            await session.execute(statement, bind_arguments=bind)
+            continue
+        try:  # other databases: a savepoint per insert
             async with session.begin_nested():
-                await session.execute(insert(table).values(values), bind_arguments=bind)
+                await session.execute(statement, bind_arguments=bind)
         except IntegrityError:
             continue  # created concurrently
     if rules.name_column is not None:

@@ -525,3 +525,108 @@ def test_checkusers_fix_skips_vanished_rows(db: str) -> None:
         await engine.dispose()
 
     _run(run())
+
+
+# --------------------------------------------------------------------------- review follow-ups
+
+
+def test_load_errors_are_short_messages(
+    terminal: FakeTerminal, url: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("FASTSTUDIO_SECRET_KEY", raising=False)
+    assert cli(terminal, "syncpermissions", "--app", f"{APP}:env_secret") == 2
+    assert "Cannot load" in terminal.text
+    assert "FASTSTUDIO_SECRET_KEY" in terminal.text
+    terminal.err.clear()
+    assert cli(terminal, "syncpermissions", "--app", f"{APP}:broken") == 2
+    assert terminal.err == [
+        f'Cannot load {APP}:broken (RuntimeError). Run `python -c "import {APP}"` to see the error.'
+    ]
+    assert "hunter2" not in terminal.text
+    (tmp_path / "cli_boom_mod.py").write_text("raise ValueError('at import')\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    terminal.err.clear()
+    assert cli(terminal, "syncpermissions", "--app", "cli_boom_mod:admin") == 2
+    assert "(ValueError)" in terminal.text
+    (tmp_path / "cli_config_mod.py").write_text(
+        "from faststudio import ConfigurationError\nraise ConfigurationError('bad option')\n",
+        encoding="utf-8",
+    )
+    terminal.err.clear()
+    assert cli(terminal, "syncpermissions", "--app", "cli_config_mod:admin") == 2
+    assert terminal.err == ["Cannot load cli_config_mod:admin: bad option"]
+
+
+@pytest.mark.parametrize(
+    ("stop", "code", "message"),
+    [(EOFError, 1, "Aborted"), (KeyboardInterrupt, 130, "Interrupted")],
+)
+def test_ctrl_d_and_ctrl_c_at_prompts(
+    db: str, stop: type[BaseException], code: int, message: str
+) -> None:
+    from faststudio.cli import CliIO  # noqa: PLC0415
+
+    def interrupted(prompt: str) -> str:
+        raise stop
+
+    out: list[str] = []
+    io = CliIO(
+        read_line=interrupted,
+        read_password=interrupted,
+        is_tty=lambda: True,
+        write=out.append,
+        error=out.append,
+    )
+    assert main(["createadmin", "--app", f"{APP}:contrib"], io=io) == code
+    assert any(message in line for line in out)
+    assert _run(_query(db, select(AUTH.user))) == []
+
+
+def test_engines_routed_by_binds_are_used_and_disposed(terminal: FakeTerminal, db: str) -> None:
+    assert cli(terminal, "syncpermissions", "--app", f"{APP}:binds_only") == 0, terminal.text
+    assert len(_codenames(db)) == 12  # users, groups, permissions
+
+
+def test_other_databases_use_a_savepoint_per_insert(
+    terminal: FakeTerminal, db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import insert as plain_insert  # noqa: PLC0415
+
+    from faststudio.api import _permission_sync  # noqa: PLC0415
+    from faststudio.api._permission_sync import apply_sync, plan_sync  # noqa: PLC0415
+    from faststudio.cli._app import load_admin  # noqa: PLC0415
+
+    monkeypatch.setattr(_permission_sync, "_UPSERT_DIALECTS", frozenset())
+    monkeypatch.setattr(
+        _permission_sync,
+        "_insert_ignoring_duplicates",
+        lambda table, column, dialect: plain_insert(table),
+    )
+
+    async def both() -> None:
+        admin = load_admin(f"{APP}:contrib")
+        rules, registry, maker = admin._escalation, admin._registry, admin._session_maker
+        assert rules is not None
+        async with maker() as first, maker() as second:
+            plan_a = await plan_sync(first, rules, registry)
+            plan_b = await plan_sync(second, rules, registry)
+            await apply_sync(first, rules, plan_a, prune=False)
+            await first.commit()
+            await apply_sync(second, rules, plan_b, prune=False)  # every insert collides
+            await second.commit()
+        await maker.kw["bind"].dispose()
+
+    _run(both())
+    assert len(_codenames(db)) == 17
+
+
+def test_insert_statements_per_dialect() -> None:
+    from sqlalchemy.dialects import mysql  # noqa: PLC0415
+
+    from faststudio.api._permission_sync import _insert_ignoring_duplicates  # noqa: PLC0415
+
+    table = AUTH.permission.__table__  # type: ignore[attr-defined]
+    statement = _insert_ignoring_duplicates(table, table.c.codename, "mysql")
+    assert "INSERT IGNORE" in str(statement.compile(dialect=mysql.dialect()))
+    plain = _insert_ignoring_duplicates(table, table.c.codename, "oracle")
+    assert "IGNORE" not in str(plain)

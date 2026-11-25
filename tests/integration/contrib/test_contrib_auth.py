@@ -541,3 +541,23 @@ def test_any_declarative_base_maps_the_relationships() -> None:
 
     with pytest.raises(ConfigurationError, match="MappedAsDataclass"):
         AuthModels(Dataclassy)
+
+
+def test_the_default_admins_register_without_warnings(
+    app: FastAPI, db: AsyncEngine, secret_key: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING", logger="faststudio"):
+        Admin(app, engine=db, auth_backend=DatabaseAuthBackend(AUTH), secret_key=secret_key)
+    assert caplog.records == []
+
+
+async def test_core_inserts_get_the_sign_in_key_too(db: AsyncEngine) -> None:
+    async with db.begin() as conn:
+        await conn.execute(
+            insert(AUTH.user.__table__),  # type: ignore[attr-defined]
+            [{"id": 50, "username": "CoreUser"}],
+        )
+    async with AsyncSession(db) as session:
+        row = await session.get(AUTH.user, 50)
+        assert row is not None
+        assert row.username_normalized == "coreuser"
