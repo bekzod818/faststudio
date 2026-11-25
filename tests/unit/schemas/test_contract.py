@@ -253,7 +253,7 @@ def test_field_meta_has_every_spec_attribute() -> None:
     expected = {
         "name", "label", "type", "nullable", "required", "readonly", "create_only",
         "primary_key", "default", "has_default", "max_length", "min_value", "max_value",
-        "choices", "relation", "timezone", "precision", "scale", "help_text",
+        "choices", "relation", "timezone", "precision", "scale", "help_text", "max_items",
     }  # fmt: skip
     assert set(FieldMeta.model_fields) == expected
 

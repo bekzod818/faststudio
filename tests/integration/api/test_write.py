@@ -338,7 +338,13 @@ async def test_row_reflects_database_after_write(api: httpx.AsyncClient, db: Asy
     async with async_sessionmaker(db)() as session:
         names = (await session.execute(select(Team.name).order_by(Team.id))).scalars().all()
     assert names[-1] == "Design"
-    assert response.json() == {"pk": "4", "data": {"id": 4, "name": "Design"}, "labels": {}}
+    assert response.json() == {
+        "pk": "4",
+        "data": {"id": 4, "name": "Design"},
+        "labels": {},
+        "many_labels": {},
+        "truncated": [],
+    }
 
 
 @pytest.mark.parametrize(

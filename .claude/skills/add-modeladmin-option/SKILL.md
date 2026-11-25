@@ -29,6 +29,13 @@ description: How to add a new ModelAdmin option to FastStudio safely - naming, d
 - Validate in `src/faststudio/registry.py` against the mapper (field names
   exist, types compatible, no overlap conflicts such as `exclude` ∩
   `list_display`).
+- **Relationship options** (like `many_to_many`) validate against
+  `mapper.relationships`, not columns. Column-only options must keep rejecting
+  relationship names with a specific message (`_field_name` handles this).
+  Store the resolved values apart from `RegisteredModel.fields`, which holds
+  columns only.
+- Add the option to `OPTION_NAMES` in `model_admin.py`, otherwise
+  registration rejects it as unknown.
 - Store the resolved value on the internal registered-model object; request
   code reads only resolved values, never the raw class attribute.
 - Expose via `ModelMeta` in `schemas/contract.py` if the SPA needs it, then
@@ -38,5 +45,6 @@ description: How to add a new ModelAdmin option to FastStudio safely - naming, d
 - Consume from metadata; add Vitest coverage.
 
 ## 5. Docs
-- `docs/configuration.md` ModelAdmin table, README if user-facing headline,
+- `docs/configuration.md` ModelAdmin table (`tests/unit/test_docs.py` fails if
+  an `OPTION_NAMES` entry is missing), README if user-facing headline,
   CHANGELOG "Added".

@@ -244,3 +244,12 @@ describe("buildBody", () => {
     ).toEqual({ body: { priority: 3 }, errors: {} });
   });
 });
+
+describe("many-to-many fields (read-only until M16)", () => {
+  const tags = testField({ name: "tags", type: "many_to_many", max_items: 500 });
+
+  it("are never editable", () => {
+    expect(isEditable(tags, "create")).toBe(false);
+    expect(isEditable(tags, "edit")).toBe(false);
+  });
+});

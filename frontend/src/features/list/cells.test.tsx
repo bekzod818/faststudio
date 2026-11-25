@@ -7,7 +7,13 @@ import { CellValue } from "./cells";
 import { isNumeric } from "./fields";
 
 function cell(field: FieldMeta, value: unknown, labels: Row["labels"] = {}) {
-  const row: Row = { pk: "1", data: { [field.name]: value }, labels };
+  const row: Row = {
+    pk: "1",
+    data: { [field.name]: value },
+    labels,
+    many_labels: {},
+    truncated: [],
+  };
   return render(<CellValue field={field} row={row} />);
 }
 

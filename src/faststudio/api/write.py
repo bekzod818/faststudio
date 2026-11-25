@@ -17,6 +17,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
+from faststudio.api._many import linked_keys
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
 from faststudio.api.auth import CurrentUser, current_user, get_context
@@ -28,8 +29,15 @@ from faststudio.auth._guard import (
     WriteRefused,
 )
 from faststudio.auth.backend import AuthenticatedUser
+from faststudio.query._many import (
+    chunks,
+    delete_links_statement,
+    delete_links_to_statement,
+    existing_keys_statement,
+    insert_links_statement,
+)
 from faststudio.query._write import dependents_statements, exists_statement
-from faststudio.registry import RegisteredModel
+from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas._dynamic import WriteSchema
 from faststudio.schemas.contract import Row, ValidationIssue
 
@@ -91,6 +99,105 @@ async def _check_relations(
             )
     if issues:
         raise _invalid(issues)
+
+
+def _split_many(
+    registered: RegisteredModel, values: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    """Separate column values from many-to-many key lists (ADR-0010)."""
+    many = {name: values[name] for name in registered.many_to_many if name in values}
+    columns = {name: value for name, value in values.items() if name not in many}
+    return columns, many
+
+
+async def _check_many(
+    session: AsyncSession, registered: RegisteredModel, many: dict[str, list[Any]]
+) -> None:
+    """Every sent key must exist in the target table (422 `foreign_key` otherwise).
+
+    With SQLite's `PRAGMA foreign_keys` off this is the only guard against links
+    to missing rows; inserts racing a concurrent delete still fail with 409 where
+    the database enforces foreign keys.
+    """
+    issues: list[ValidationIssue] = []
+    for name, keys in many.items():
+        link = registered.many_to_many[name].link
+        found: set[object] = set()
+        for chunk in chunks(keys):
+            found.update((await session.scalars(existing_keys_statement(link, chunk))).all())
+        if any(key not in found for key in keys):
+            issues.append(
+                ValidationIssue(
+                    loc=[name], msg="Referenced record does not exist.", type="foreign_key"
+                )
+            )
+    if issues:
+        raise _invalid(issues)
+
+
+async def _check_not_truncated(
+    session: AsyncSession, registered: RegisteredModel, pk: object, many: dict[str, list[Any]]
+) -> None:
+    """Refuse to replace a set that has more links than can be shown (ADR-0010 §4)."""
+    issues: list[ValidationIssue] = []
+    for name in many:
+        field = registered.many_to_many[name]
+        if len(await linked_keys(session, field, pk, field.max_items + 1)) > field.max_items:
+            issues.append(
+                ValidationIssue(
+                    loc=[name],
+                    msg=f"More than {field.max_items} links exist; this field is read-only here.",
+                    type="truncated",
+                )
+            )
+    if issues:
+        raise _invalid(issues)
+
+
+async def _replace_many(
+    session: AsyncSession,
+    registered: RegisteredModel,
+    pk: object,
+    many: dict[str, list[Any]],
+    *,
+    created: bool,
+) -> None:
+    """Make each field's links exactly the sent keys: delete the removed, insert the added.
+
+    Only keys not already linked are inserted, so a concurrent identical write
+    cannot create a duplicate pair through this path (a unique constraint on the
+    pair turns a lost race into 409).
+    """
+    for name, keys in many.items():
+        field = registered.many_to_many[name]
+        current: set[object] = set()
+        if not created:
+            current = set(await linked_keys(session, field, pk, field.max_items + 1))
+        wanted = set(keys)
+        removed = sorted(current - wanted, key=repr)
+        added = [key for key in keys if key not in current]
+        for chunk in chunks(removed):
+            await session.execute(delete_links_statement(field.link, pk, chunk))
+        for chunk in chunks(added):
+            await session.execute(insert_links_statement(field.link, pk, chunk))
+
+
+async def _delete_links(
+    session: AsyncSession, registry: Registry, registered: RegisteredModel, pk: object
+) -> None:
+    """Remove the links of opted-in many-to-many fields that involve the row `pk`.
+
+    That is the row's own fields and every registered field whose target is
+    this model (ADR-0010 §6). Links of relationships that are not opted in are
+    left alone, so those deletes keep the v0.1 behaviour (409).
+    """
+    for field in registered.many_to_many.values():
+        await session.execute(delete_links_statement(field.link, pk))
+    mapper = sa_inspect(registered.model)
+    for other in registry:
+        for field in other.many_to_many.values():
+            if mapper.isa(sa_inspect(field.link.target_model)):
+                await session.execute(delete_links_to_statement(field.link, pk))
 
 
 @asynccontextmanager
@@ -157,12 +264,15 @@ async def _guard(
 async def create_item(request: Request, registered: ModelDep, session: DbSession) -> Row:
     """Create a record from the writable fields of the request body."""
     _require(registered.can_create)
-    values = await _validated(request, registered.create_schema)
+    values, many = _split_many(registered, await _validated(request, registered.create_schema))
     await _check_relations(session, registered, values)
+    await _check_many(session, registered, many)
     obj = registered.model(**values)
     async with _writing(session, registered, "create"):
         session.add(obj)
         await session.flush()
+        pk_value = getattr(obj, registered.pk_field)
+        await _replace_many(session, registered, pk_value, many, created=True)
     await session.refresh(obj)
     return await detail_row(session, get_context(request).registry, registered, obj)
 
@@ -174,14 +284,20 @@ async def update_item(
     """Change the writable fields sent in the body; primary keys never change."""
     _require(registered.can_edit)
     obj = await load_or_404(session, registered, pk)
-    values = await _validated(request, registered.update_schema)
+    sent = await _validated(request, registered.update_schema)
+    values, many = _split_many(registered, sent)
     await _check_relations(session, registered, values)
-    if values:
+    pk_value = getattr(obj, registered.pk_field)
+    await _check_not_truncated(session, registered, pk_value, many)
+    await _check_many(session, registered, many)
+    if sent:
         async with _writing(session, registered, "update"):
-            intent = WriteIntent(model=registered.model, obj=obj, action="update", changes=values)
+            # The guard sees many-to-many fields too, as lists of keys (ADR-0010 §5).
+            intent = WriteIntent(model=registered.model, obj=obj, action="update", changes=sent)
             check = await _guard(request, session, user, intent)
             for name, value in values.items():
                 setattr(obj, name, value)
+            await _replace_many(session, registered, pk_value, many, created=False)
             await session.flush()
             if check is not None:
                 await check()
@@ -195,15 +311,20 @@ async def delete_item(
 ) -> Response:
     """Delete one record.
 
-    Refused with 409 while an ORM relationship the delete would touch still has
-    related rows (one-to-many, many-to-many, or many-to-one with a delete
-    cascade), so ORM cascades do not change rows of other models. Rows added
-    concurrently between this check and the flush are not covered; database
-    foreign-key rules still apply and also give 409.
+    Links of opted-in many-to-many fields involving the record (its own fields
+    and fields of other models pointing at it) are removed in the same
+    transaction (ADR-0010 §6). Otherwise the delete is refused with 409 while an
+    ORM relationship it would touch still has related rows (one-to-many,
+    many-to-many that is not opted in, or many-to-one with a delete cascade), so
+    ORM cascades do not change rows of other models. Rows added concurrently
+    between this check and the flush are not covered; database foreign-key
+    rules still apply and also give 409.
     """
     _require(registered.can_delete)
     obj = await load_or_404(session, registered, pk)
     async with _writing(session, registered, "delete"):
+        registry = get_context(request).registry
+        await _delete_links(session, registry, registered, getattr(obj, registered.pk_field))
         for statement in dependents_statements(sa_inspect(registered.model), obj):
             if (await session.execute(statement)).first() is not None:
                 raise ApiError(409, "conflict", "Related records still reference this record.")

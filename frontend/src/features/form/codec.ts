@@ -24,7 +24,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const REQUIRED = "This field is required.";
 
 export function isEditable(field: FieldMeta, mode: Mode): boolean {
-  if (field.readonly || field.type === "unsupported") return false;
+  // Many-to-many fields get their editor in M16; until then they are shown read-only.
+  if (field.readonly || field.type === "unsupported" || field.type === "many_to_many") {
+    return false;
+  }
   return mode === "create" || !field.create_only;
 }
 

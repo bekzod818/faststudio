@@ -53,6 +53,14 @@ class ModelAdmin:
     exclude: ClassVar[Sequence[str]] = ()
     #: Display labels per field.
     column_labels: ClassVar[Mapping[str, str]] = MappingProxyType({})
+    #: Many-to-many relationships shown as editable fields, e.g. ``("tags",)``.
+    #: Each must be a ``relationship()`` over a plain association table (two
+    #: foreign keys to the single-column primary keys, no custom join
+    #: condition). Unlisted relationships stay invisible.
+    many_to_many: ClassVar[Sequence[str]] = ()
+    #: Most related keys per many-to-many field, e.g. ``{"tags": 2000}``.
+    #: Default 500; 1 to 10 000. Keys must be listed in ``many_to_many``.
+    many_to_many_limits: ClassVar[Mapping[str, int]] = MappingProxyType({})
     can_create: ClassVar[bool] = True
     can_edit: ClassVar[bool] = True
     can_delete: ClassVar[bool] = True
@@ -82,6 +90,8 @@ OPTION_NAMES: frozenset[str] = frozenset(
         "readonly_fields",
         "exclude",
         "column_labels",
+        "many_to_many",
+        "many_to_many_limits",
         "can_create",
         "can_edit",
         "can_delete",

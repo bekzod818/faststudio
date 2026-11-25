@@ -41,6 +41,7 @@ from sqlalchemy import (
     UnicodeText,
     UniqueConstraint,
     Uuid,
+    and_,
     func,
 )
 from sqlalchemy.dialects import postgresql
@@ -608,6 +609,89 @@ class Post(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(50))
     tags: Mapped[list[Tag]] = relationship(secondary=post_tags)
+
+
+# --------------------------------------------------------------------------- many-to-many
+
+
+follows = Table(
+    "follows",
+    Base.metadata,
+    Column("follower_id", ForeignKey("people.id"), primary_key=True),
+    Column("followed_id", ForeignKey("people.id"), primary_key=True),
+)
+
+
+class Person(Base):
+    """Self-referential many-to-many."""
+
+    __tablename__ = "people"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    follows: Mapped[list[Person]] = relationship(
+        secondary=follows,
+        primaryjoin=lambda: Person.id == follows.c.follower_id,
+        secondaryjoin=lambda: Person.id == follows.c.followed_id,
+    )
+
+
+class Topic(Base):
+    __tablename__ = "topics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+#: Plain: a primary key over both FKs plus an extra column with a server default.
+article_topics = Table(
+    "article_topics",
+    Base.metadata,
+    Column("article_id", ForeignKey("articles.id"), primary_key=True),
+    Column("topic_id", ForeignKey("topics.id"), primary_key=True),
+    Column("linked_at", DateTime, server_default=func.now()),
+)
+#: Plain but without a primary key or unique constraint (registration warns).
+article_loose_topics = Table(
+    "article_loose_topics",
+    Base.metadata,
+    Column("article_id", ForeignKey("articles.id"), nullable=False),
+    Column("topic_id", ForeignKey("topics.id"), nullable=False),
+)
+#: Not plain: an extra column without a default.
+article_weighted_topics = Table(
+    "article_weighted_topics",
+    Base.metadata,
+    Column("article_id", ForeignKey("articles.id"), primary_key=True),
+    Column("topic_id", ForeignKey("topics.id"), primary_key=True),
+    Column("weight", Integer, nullable=False),
+)
+
+
+class Article(Base):
+    """Many-to-many relationships covering every plain / non-plain case."""
+
+    __tablename__ = "articles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(50))
+    topics: Mapped[list[Topic]] = relationship(secondary=article_topics)
+    loose_topics: Mapped[list[Topic]] = relationship(secondary=article_loose_topics)
+    weighted_topics: Mapped[list[Topic]] = relationship(secondary=article_weighted_topics)
+    #: Not plain: the secondaryjoin filters on a target column.
+    active_topics: Mapped[list[Topic]] = relationship(
+        secondary=article_topics,
+        secondaryjoin=lambda: and_(Topic.id == article_topics.c.topic_id, Topic.active.is_(True)),
+        viewonly=True,
+    )
+    filtered_topics: Mapped[list[Topic]] = relationship(
+        secondary=article_topics,
+        secondaryjoin=lambda: and_(Topic.id == article_topics.c.topic_id, Topic.active.is_(True)),
+        overlaps="topics",
+    )
+    #: Plain, but view-only: shown read-only.
+    seen_topics: Mapped[list[Topic]] = relationship(secondary=article_topics, viewonly=True)
 
 
 class Twin(Base):

@@ -26,6 +26,8 @@ const ROW: Row = {
   pk: "7",
   data: { id: 7, email: "ann@example.com", is_active: true, status: "TODO", team_id: 1 },
   labels: { team_id: "Core" },
+  many_labels: {},
+  truncated: [],
 };
 
 const routes = [

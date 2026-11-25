@@ -24,6 +24,8 @@ function widgetFor(type: FieldType): string {
       return "datetime";
     case "enum":
       return "select";
+    case "many_to_many":
+      return "multiselect";
     case "unsupported":
       return "readonly";
     default: {
@@ -53,6 +55,7 @@ const field: FieldMeta = {
   precision: null,
   scale: null,
   help_text: null,
+  max_items: null,
 };
 
 const meta: MetaResponse = {

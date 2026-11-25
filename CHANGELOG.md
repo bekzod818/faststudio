@@ -9,6 +9,26 @@ listed under **Changed** or **Removed** with migration notes.
 
 ## [Unreleased]
 
+### Added
+
+- Many-to-many fields (ADR-0010). `ModelAdmin.many_to_many` opts in
+  relationships over a plain association table, edited as a list of target
+  keys. `ModelAdmin.many_to_many_limits` sets the most keys per field
+  (default 500, at most 10 000). Both are validated at registration.
+- API contract (additive, `schema_version` stays `"1"`):
+  - `FieldType` `"many_to_many"`;
+  - `FieldMeta.max_items`;
+  - `Row.many_labels` and `Row.truncated`;
+  - the choices endpoint for many-to-many fields;
+  - a documented forward-compatibility rule for clients.
+
+### Changed
+
+- Deleting a record removes the links of its opted-in many-to-many fields,
+  and of opted-in fields of other models pointing at it, instead of
+  answering `409`. Relationships that are not opted in behave as before.
+- Foreign-key labels are loaded in chunks of at most 500 keys per query.
+
 ## [0.1.1] - 2026-11-24
 
 ### Added

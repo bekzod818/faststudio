@@ -155,6 +155,16 @@
         "label": {
           "type": "string"
         },
+        "max_items": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "max_length": {
           "anyOf": [
             {
@@ -263,13 +273,15 @@
         "timezone",
         "precision",
         "scale",
-        "help_text"
+        "help_text",
+        "max_items"
       ],
       "type": "object"
     },
     "FieldType": {
       "enum": [
         "foreign_key",
+        "many_to_many",
         "string",
         "text",
         "integer",
@@ -570,14 +582,31 @@
           },
           "type": "object"
         },
+        "many_labels": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
         "pk": {
           "type": "string"
+        },
+        "truncated": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
         "pk",
         "data",
-        "labels"
+        "labels",
+        "many_labels",
+        "truncated"
       ],
       "type": "object"
     },

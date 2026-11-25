@@ -86,7 +86,13 @@ async def choices(
     """Return options for a foreign-key field whose target model is registered."""
     registry = get_context(request).registry
     spec = registered.field_specs.get(field)
-    target = registry.target_of(spec.relation.target) if spec and spec.relation else None
+    many = registered.many_to_many.get(field)
+    if spec is not None and spec.relation is not None:
+        target = registry.target_of(spec.relation.target)
+    elif many is not None:  # a many-to-many field picks keys of its target (ADR-0010)
+        target = registry.target_of(many.link.target_pk)
+    else:
+        target = None
     if target is None:
         raise ApiError(404, "not_found")
     page, q = parse_choices_params(

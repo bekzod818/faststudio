@@ -103,7 +103,12 @@ def test_readonly_aliases_together_are_accepted(admin: Admin) -> None:
 
 
 def test_every_writable_field_type_has_a_validator() -> None:
-    assert set(get_args(FieldType)) - WRITABLE_TYPES == {"foreign_key", "unsupported"}
+    # Foreign keys use the target's type; many-to-many fields have their own list schema.
+    assert set(get_args(FieldType)) - WRITABLE_TYPES == {
+        "foreign_key",
+        "many_to_many",
+        "unsupported",
+    }
 
 
 @pytest.fixture

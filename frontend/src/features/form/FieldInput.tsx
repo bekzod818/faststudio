@@ -151,6 +151,7 @@ export function FieldInput(props: FieldInputProps) {
         />
       );
     case "unsupported":
+    case "many_to_many":
       return <PlainInput {...common} value={text} onChange={onChange} readOnly />;
     default:
       return <PlainInput {...common} value={text} onChange={onChange} />;

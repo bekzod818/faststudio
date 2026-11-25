@@ -32,6 +32,8 @@ function row(id: number, extra: Partial<Row["data"]> = {}): Row {
       ...extra,
     },
     labels: { team_id: "Core" },
+    many_labels: {},
+    truncated: [],
   };
 }
 

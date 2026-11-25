@@ -20,6 +20,7 @@ export function testField(overrides: Partial<FieldMeta> & Pick<FieldMeta, "name"
     precision: null,
     scale: null,
     help_text: null,
+    max_items: null,
     ...overrides,
   };
 }

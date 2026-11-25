@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from faststudio.auth._guard import AccountGuard
 from faststudio.introspection._fields import FieldSpec, JsonValue, Relation
+from faststudio.introspection._many import ManyToManyField
 from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas.contract import (
     MAX_SAFE_INTEGER,
@@ -55,7 +56,10 @@ def build_model_meta(
         permissions=PermissionsMeta(
             create=registered.can_create, edit=registered.can_edit, delete=registered.can_delete
         ),
-        fields=[_field_meta(spec, registry) for spec in specs.values()],
+        fields=[
+            *(_field_meta(spec, registry) for spec in specs.values()),
+            *(_many_meta(field, registry) for field in registered.many_to_many.values()),
+        ],
         account=_account_meta(registered, guard),
     )
 
@@ -116,4 +120,32 @@ def _field_meta(spec: FieldSpec, registry: Registry) -> FieldMeta:
         precision=spec.precision,
         scale=spec.scale,
         help_text=spec.help_text,
+        max_items=None,
+    )
+
+
+def _many_meta(field: ManyToManyField, registry: Registry) -> FieldMeta:
+    """Describe an opted-in many-to-many field (ADR-0010): a list of target keys."""
+    link = field.link
+    return FieldMeta(
+        name=field.name,
+        label=field.label,
+        type="many_to_many",
+        nullable=False,
+        required=False,
+        readonly=field.readonly,
+        create_only=False,
+        primary_key=False,
+        default=[],
+        has_default=True,
+        max_length=None,
+        min_value=None,
+        max_value=None,
+        choices=None,
+        relation=_relation_meta(Relation(link.target_pk, link.value_type), registry),
+        timezone=None,
+        precision=None,
+        scale=None,
+        help_text=None,
+        max_items=field.max_items,
     )
