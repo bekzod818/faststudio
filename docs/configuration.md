@@ -136,6 +136,13 @@ class PostAdmin(ModelAdmin, model=Post):
   writes per record, but other code writing the table could still store
   duplicate links, so registration warns when the table has none. Reads hide
   duplicates either way.
+- **Concurrent writes.** Before changing a record's links, FastStudio locks
+  the record with a no-change `UPDATE` of its row and reads the current links
+  with a locking read. Concurrent link writes to the same record are therefore
+  serialized (under snapshot isolation the second gets `409`). Because it is a
+  real `UPDATE`, database `ON UPDATE` triggers on the record's table (audit or
+  `updated_at` triggers) fire even when only links change. SQLAlchemy
+  `onupdate` defaults are not applied.
 - **Deleting** a record removes its opted-in links (both directions for
   self-referential fields, and links of other registered models' opted-in
   fields pointing at it) instead of refusing with `409`. Relationships that

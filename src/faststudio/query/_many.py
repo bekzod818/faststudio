@@ -58,6 +58,8 @@ def touch_record_statement(link: ManyToManyLink, pk: object) -> Update:
     itself changes nothing, but it is a real write: concurrent link writes to
     the same record wait for it, and under snapshot isolation (PostgreSQL
     REPEATABLE READ) the loser fails with a serialization error (409).
+    Database `ON UPDATE` triggers on the table still fire; link-only writes do
+    not bump SQLAlchemy `onupdate` columns.
     """
     table = link.local_pk.table
     unchanged = {link.local_pk.key: link.local_pk}
