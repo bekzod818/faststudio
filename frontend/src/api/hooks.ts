@@ -1,10 +1,17 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import type { QueryParams } from "./client";
 
 import type {
   ChoicesResponse,
   JsonValue,
+  LinkCountsResponse,
   ListResponse,
   LoginRequest,
   MetaResponse,
@@ -19,7 +26,13 @@ export const queryKeys = {
   list: (identity: string, params: QueryParams) => ["list", identity, params] as const,
   item: (identity: string, pk: string) => ["item", identity, pk] as const,
   choices: (identity: string, field: string, q: string) => ["choices", identity, field, q] as const,
+  choicePages: (identity: string, field: string, q: string) =>
+    ["choices", identity, field, q, "pages"] as const,
+  links: (identity: string, pk: string) => ["links", identity, pk] as const,
 };
+
+/** Options per page of the choices endpoint (docs/api-contract.md, "Choices"). */
+export const CHOICES_PAGE_SIZE = 20;
 
 /** Path of one record; the primary key is always URL-encoded. */
 export function itemPath(identity: string, pk: string): string {
@@ -42,6 +55,8 @@ export function useItem(identity: string, pk: string) {
 function invalidateAfterWrite(queryClient: ReturnType<typeof useQueryClient>): void {
   void queryClient.invalidateQueries({ queryKey: ["list"] });
   void queryClient.invalidateQueries({ queryKey: ["choices"] });
+  // Marked stale only: refetching now could ask for a record that was just deleted.
+  void queryClient.invalidateQueries({ queryKey: ["links"], refetchType: "none" });
 }
 
 export function useCreateItem(identity: string) {
@@ -85,6 +100,7 @@ export function useDeleteItem(identity: string, pk: string) {
   const forget = () => {
     void queryClient.cancelQueries({ queryKey: queryKeys.item(identity, pk) });
     queryClient.removeQueries({ queryKey: queryKeys.item(identity, pk) });
+    queryClient.removeQueries({ queryKey: queryKeys.links(identity, pk) });
   };
   return { ...mutation, forget };
 }
@@ -95,13 +111,57 @@ export function useChoices(identity: string, field: string, q: string, enabled: 
   return useQuery({
     queryKey: queryKeys.choices(identity, field, q),
     queryFn: ({ signal }) =>
-      api.get<ChoicesResponse>(
-        `/models/${encodeURIComponent(identity)}/fields/${encodeURIComponent(field)}/choices`,
-        { params: { q: q === "" ? undefined : q }, signal },
-      ),
+      api.get<ChoicesResponse>(choicesPath(identity, field), {
+        params: { q: q === "" ? undefined : q },
+        signal,
+      }),
     enabled,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
+  });
+}
+
+function choicesPath(identity: string, field: string): string {
+  return `/models/${encodeURIComponent(identity)}/fields/${encodeURIComponent(field)}/choices`;
+}
+
+/**
+ * Options for a many-to-many field, page after page (`fetchNextPage`).
+ * Stops at the last page the server serves (`lastPage`, the offset cap).
+ */
+export function useChoicePages(
+  identity: string,
+  field: string,
+  q: string,
+  enabled: boolean,
+  lastPage: number,
+) {
+  const api = useApi();
+  return useInfiniteQuery({
+    queryKey: queryKeys.choicePages(identity, field, q),
+    queryFn: ({ pageParam, signal }) =>
+      api.get<ChoicesResponse>(choicesPath(identity, field), {
+        params: { q: q === "" ? undefined : q, page: pageParam === 1 ? undefined : pageParam },
+        signal,
+      }),
+    initialPageParam: 1,
+    getNextPageParam: (last, pages, page) =>
+      pages.length * CHOICES_PAGE_SIZE < last.total && page < lastPage ? page + 1 : undefined,
+    enabled,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Many-to-many links a delete of the record would remove, per field. */
+export function useLinkCounts(identity: string, pk: string, enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.links(identity, pk),
+    queryFn: ({ signal }) =>
+      api.get<LinkCountsResponse>(`${itemPath(identity, pk)}/links`, { signal }),
+    enabled,
+    staleTime: 0,
   });
 }
 

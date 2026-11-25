@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 import type { FormValue } from "./codec";
+import { ManyPicker } from "./ManyPicker";
 import { RelationPicker } from "./RelationPicker";
 
 export interface FieldInputProps {
@@ -17,6 +18,8 @@ export interface FieldInputProps {
   value: FormValue;
   /** Display label of the current foreign-key value, from `Row.labels`. */
   relationLabel: string | undefined;
+  /** Labels of the current many-to-many keys, from `Row.many_labels`. */
+  manyLabels: Partial<Record<string, string>> | undefined;
   disabled: boolean;
   /** Whether "no value" is a valid choice (nullable, or optional on create). */
   allowEmpty: boolean;
@@ -150,8 +153,26 @@ export function FieldInput(props: FieldInputProps) {
           spellCheck={false}
         />
       );
-    case "unsupported":
     case "many_to_many":
+      return (
+        <ManyPicker
+          id={id}
+          label={field.label}
+          identity={props.identity}
+          field={field.name}
+          value={Array.isArray(value) ? value : []}
+          initialLabels={props.manyLabels}
+          maxItems={field.max_items}
+          // Without a registered target there are no options to choose from.
+          disabled={disabled || field.relation?.target_identity == null}
+          invalid={invalid}
+          describedBy={describedBy}
+          inputRef={props.inputRef}
+          onChange={onChange}
+          onBlur={onBlur}
+        />
+      );
+    case "unsupported":
       return <PlainInput {...common} value={text} onChange={onChange} readOnly />;
     default:
       return <PlainInput {...common} value={text} onChange={onChange} />;

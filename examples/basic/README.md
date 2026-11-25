@@ -1,9 +1,10 @@
 # Example: a small shop back office
 
-A FastAPI app with four SQLAlchemy 2.0 models (users, categories, products,
-tasks) that between them use every field type FastStudio maps: strings, text,
-integers, decimals, booleans, enums, dates, timezone-aware datetimes, JSON,
-UUIDs and foreign keys. On first start the database is filled with demo data.
+A FastAPI app with five SQLAlchemy 2.0 models (users, categories, products,
+tasks, tags) that between them use every field type FastStudio maps: strings,
+text, integers, decimals, booleans, enums, dates, timezone-aware datetimes,
+JSON, UUIDs, foreign keys and a many-to-many field. On first start the
+database is filled with demo data.
 
 ## Run it
 
@@ -29,7 +30,10 @@ uv run python -m examples.basic                       # http://127.0.0.1:8000/ad
 - `app.py`: one `ModelAdmin` per model. `UserAdmin` excludes the password
   hash and disables creating users from the admin (accounts and passwords come
   from `create_admin`); `ProductAdmin` shows search, filters, default ordering
-  and page size.
+  and page size; `TaskAdmin` opts its `tags` relationship in with
+  `many_to_many` and caps it at 20 tags per task with `many_to_many_limits`.
+- Deleting a tag removes it from every task; the confirmation says how many
+  links go.
 - `models.py`: the admin's sign-in uses the app's own `User` model through
   `ModelUserBackend` (`username`, `password_hash`, `is_active`, `is_admin`).
 - Deleting a category that still has products is refused (`409`): FastStudio

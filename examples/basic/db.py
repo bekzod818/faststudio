@@ -10,10 +10,17 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from examples.basic.models import Base, Category, Product, Status, Task, User
+from examples.basic.models import Base, Category, Product, Status, Tag, Task, User
 from faststudio import hash_password
 
 PRODUCT_COUNT = 30
+#: More than one page of choices (20), so the tag picker pages.
+TAG_NAMES = (
+    "urgent", "restock", "pricing", "backend", "frontend", "docs", "billing", "support",
+    "design", "legal", "ops", "security", "sales", "marketing", "hiring", "finance",
+    "research", "mobile", "api", "infra", "qa", "release", "translation", "analytics",
+    "onboarding",
+)  # fmt: skip
 MIN_PASSWORD_LENGTH = 12
 MAX_USERNAME_LENGTH = 150  # FastStudio's login accepts at most 150 characters
 
@@ -43,11 +50,18 @@ def _demo_rows() -> list[Base]:
         )
         for i in range(1, PRODUCT_COUNT + 1)
     ]
+    tags = [Tag(id=i, name=name) for i, name in enumerate(TAG_NAMES, start=1)]
     tasks: list[Base] = [
-        Task(title="Restock widgets", priority=1, status=Status.PUBLISHED, category_id=1),
-        Task(title="Review book prices", priority=2, estimate=Decimal("1.50")),
+        Task(
+            title="Restock widgets",
+            priority=1,
+            status=Status.PUBLISHED,
+            category_id=1,
+            tags=[tags[0], tags[1]],
+        ),
+        Task(title="Review book prices", priority=2, estimate=Decimal("1.50"), tags=[tags[2]]),
     ]
-    return [hardware, books, *products, *tasks]
+    return [hardware, books, *products, *tags, *tasks]
 
 
 async def seed_demo_data(session_maker: async_sessionmaker[AsyncSession]) -> bool:

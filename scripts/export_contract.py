@@ -35,6 +35,7 @@ RESPONSES: tuple[type[BaseModel], ...] = (
     contract.ListResponse,
     contract.Row,
     contract.ChoicesResponse,
+    contract.LinkCountsResponse,
     contract.ErrorResponse,
     contract.SpaConfig,
 )

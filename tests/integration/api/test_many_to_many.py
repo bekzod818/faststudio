@@ -436,6 +436,61 @@ async def test_self_referential_delete_removes_both_directions(
     assert await _links(db, follows, "follower_id", "followed_id", 2) == []
 
 
+async def test_link_counts_of_a_record_and_of_a_target(client: Client) -> None:
+    """What a delete would remove, per field (M16, the delete confirmation)."""
+    post = await client.get("/models/posts/items/1/links")
+    assert post.status_code == 200, post.text
+    assert post.json() == {
+        "items": [{"identity": "posts", "field": "tags", "label": "Tags", "count": 2}]
+    }
+    tag = (await client.get("/models/tags/items/1/links")).json()
+    assert tag == {"items": [{"identity": "posts", "field": "tags", "label": "Tags", "count": 1}]}
+    unused = (await client.get("/models/tags/items/3/links")).json()
+    assert unused["items"][0]["count"] == 0
+    assert (await client.get("/models/labels/items/red/links")).json()["items"] == [
+        {"identity": "boards", "field": "labels", "label": "Labels", "count": 0}
+    ]
+
+
+async def test_link_counts_match_what_delete_removes(client: Client, db: AsyncEngine) -> None:
+    assert (await client.patch("/models/people/items/2", {"follows": [1, 3]})).status_code == 200
+    counts = (await client.get("/models/people/items/2/links")).json()["items"]
+    # Both directions of a self-referential field are one entry: 2 -> 1, 2 -> 3 and 1 -> 2.
+    assert counts == [{"identity": "people", "field": "follows", "label": "Follows", "count": 3}]
+    async with AsyncSession(db) as session:
+        before = (await session.execute(select(func.count()).select_from(follows))).scalar_one()
+    assert (await client.delete("/models/people/items/2")).status_code == 204
+    async with AsyncSession(db) as session:
+        after = (await session.execute(select(func.count()).select_from(follows))).scalar_one()
+    assert before - after == 3
+
+
+async def test_link_counts_list_every_opted_in_field(client: Client) -> None:
+    """Fields sharing one association table are each listed (each loses its links)."""
+    counts = (await client.get("/models/articles/items/1/links")).json()["items"]
+    assert [(c["field"], c["count"]) for c in counts] == [
+        ("topics", 2),
+        ("seen_topics", 2),
+        ("loose_topics", 0),
+    ]
+    assert (await client.get("/models/boards/items/1/links")).json()["items"] == [
+        {"identity": "boards", "field": "labels", "label": "Labels", "count": 0},
+        {"identity": "boards", "field": "tokens", "label": "Tokens", "count": 0},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "status"),
+    [
+        ("/models/posts/items/99/links", 404),
+        ("/models/posts/items/not-a-key/links", 404),
+        ("/models/nope/items/1/links", 404),
+    ],
+)
+async def test_link_counts_of_missing_records(client: Client, path: str, status: int) -> None:
+    assert (await client.get(path)).status_code == status
+
+
 # --------------------------------------------------------------------------- concurrency
 
 
@@ -681,6 +736,16 @@ async def test_session_factory_with_binds_only(
         )
         assert replaced.status_code == 200, replaced.text
         assert replaced.json()["data"]["tags"] == [3]
+        created = await http.post(
+            f"{API}/models/posts/items", json={"title": "new", "tags": [1, 3]}, headers=headers
+        )
+        assert created.status_code == 201, created.text
+        new_pk = int(created.json()["pk"])
+        counts = await http.get(f"{API}/models/tags/items/3/links")
+        assert counts.json()["items"][0]["count"] == 2
+        tag_deleted = await http.delete(f"{API}/models/tags/items/3", headers=headers)
+        assert tag_deleted.status_code == 204, tag_deleted.text
         deleted = await http.delete(f"{API}/models/posts/items/1", headers=headers)
         assert deleted.status_code == 204, deleted.text
     assert await _links(db, post_tags, "post_id", "tag_id", 1) == []
+    assert await _links(db, post_tags, "post_id", "tag_id", new_pk) == [1]

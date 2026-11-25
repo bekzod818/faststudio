@@ -256,6 +256,16 @@ async def test_disabled_actions_are_forbidden(
         assert country.name == "Uzbekistan"
 
 
+async def test_link_counts_follow_the_delete_permission(api: httpx.AsyncClient) -> None:
+    """The delete preview is only for records the admin may delete."""
+    refused = await api.get(f"{BASE}/countries/items/UZ/links")
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "forbidden"
+    none = await api.get(f"{BASE}/notes/items/1/links")
+    assert none.status_code == 200
+    assert none.json() == {"items": []}
+
+
 async def test_writes_require_csrf(api: httpx.AsyncClient) -> None:
     response = await api.post(f"{BASE}/notes/items", json={"title": "x"})
     assert response.status_code == 403

@@ -38,7 +38,13 @@ const routes = [
 
 function setup(
   path: string,
-  options: { meta?: ModelMeta; client?: Partial<ApiClient>; row?: Row } = {},
+  options: {
+    meta?: ModelMeta;
+    client?: Partial<ApiClient>;
+    row?: Row;
+    others?: ModelMeta[];
+    responses?: Record<string, unknown>;
+  } = {},
 ) {
   const row = options.row ?? ROW;
   const meta: MetaResponse = {
@@ -47,11 +53,15 @@ function setup(
     title: "Admin",
     show_powered_by: true,
     user: { id: "1", username: "admin" },
-    models: [options.meta ?? model()],
+    models: [options.meta ?? model(), ...(options.others ?? [])],
   };
   const get = vi.fn((url: string) => {
     if (url === "/meta") return Promise.resolve(meta);
+    if (options.responses !== undefined && url in options.responses) {
+      return Promise.resolve(options.responses[url]);
+    }
     if (url === `/models/users/items/${row.pk}`) return Promise.resolve(row);
+    if (url.endsWith("/links")) return Promise.resolve({ items: [] });
     if (url === "/models/users/items")
       return Promise.resolve({ items: [ROW], total: 1, page: 1, page_size: 2 });
     return Promise.reject(new ApiError(404, "not_found", "Not found."));
@@ -365,5 +375,189 @@ describe("own account (ADR-0009)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "You cannot change your own active or admin status.",
     );
+  });
+});
+
+describe("many-to-many fields", () => {
+  const groups = testField({
+    name: "groups",
+    label: "Groups",
+    type: "many_to_many",
+    default: [],
+    has_default: true,
+    max_items: 2,
+    relation: { target_identity: "groups", target_field: "id", value_type: "integer" },
+  });
+  const withGroups = () => {
+    const base = model();
+    return { ...base, fields: [...base.fields, groups] };
+  };
+  const row: Row = {
+    ...ROW,
+    data: { ...ROW.data, groups: [1] },
+    many_labels: { groups: { "1": "Staff" } },
+  };
+  const choices = {
+    "/models/users/fields/groups/choices": {
+      items: [
+        { value: "1", label: "Staff" },
+        { value: "2", label: "Ops" },
+      ],
+      total: 2,
+    },
+  };
+
+  it("edits the set and sends the whole new list", async () => {
+    const patch = vi.fn().mockResolvedValue({ ...row, data: { ...row.data, groups: [1, 2] } });
+    setup("/models/users/items/7", {
+      meta: withGroups(),
+      row,
+      client: { patch },
+      responses: choices,
+    });
+    const chips = await screen.findByRole("list", { name: "Selected Groups" });
+    expect(within(chips).getByText("Staff")).toBeVisible();
+    await userEvent.click(screen.getByRole("combobox", { name: "Groups" }));
+    await userEvent.click(await screen.findByRole("option", { name: /Ops/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(patch).toHaveBeenCalledWith("/models/users/items/7", { groups: [1, 2] });
+    });
+  });
+
+  it("leaves an unchanged set out of the PATCH", async () => {
+    const patch = vi.fn().mockResolvedValue(row);
+    setup("/models/users/items/7", { meta: withGroups(), row, client: { patch } });
+    const email = await screen.findByLabelText(/Email/);
+    await userEvent.type(email, "x");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(patch).toHaveBeenCalledWith("/models/users/items/7", { email: "ann@example.comx" });
+    });
+  });
+
+  it("shows a truncated field read-only, explains why, and never sends it", async () => {
+    const patch = vi.fn().mockResolvedValue(row);
+    setup("/models/users/items/7", {
+      meta: withGroups(),
+      row: { ...row, truncated: ["groups"] },
+      client: { patch },
+    });
+    const chips = await screen.findByRole("list", { name: "Selected Groups" });
+    expect(chips).toHaveAccessibleDescription(
+      "This record has more than 2 groups, so only the first 2 are shown and the field cannot be edited here.",
+    );
+    expect(screen.queryByRole("combobox", { name: "Groups" })).toBeNull();
+    expect(within(chips).queryByRole("button")).toBeNull();
+    await userEvent.type(screen.getByLabelText(/Email/), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(patch).toHaveBeenCalledWith("/models/users/items/7", { email: "ann@example.comx" });
+    });
+  });
+
+  it("adds the field on create", async () => {
+    const post = vi.fn().mockResolvedValue(row);
+    setup("/models/users/new", { meta: withGroups(), client: { post }, responses: choices });
+    await userEvent.type(await screen.findByLabelText(/Email/), "new@example.com");
+    await userEvent.click(screen.getByRole("combobox", { name: "Groups" }));
+    await userEvent.click(await screen.findByRole("option", { name: /Ops/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Create user" }));
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(
+        "/models/users/items",
+        expect.objectContaining({ email: "new@example.com", groups: [2] }),
+      );
+    });
+  });
+
+  it("lists the links a delete removes in the confirmation", async () => {
+    const teams = testModel({
+      identity: "teams",
+      name: "Team",
+      name_plural: "Teams",
+      fields: [
+        testField({
+          name: "members",
+          label: "Members",
+          type: "many_to_many",
+          relation: { target_identity: "users", target_field: "id", value_type: "integer" },
+        }),
+      ],
+    });
+    const { get } = setup("/models/users/items/7", {
+      meta: withGroups(),
+      others: [teams],
+      row,
+      responses: {
+        "/models/users/items/7/links": {
+          items: [
+            { identity: "users", field: "groups", label: "Groups", count: 1 },
+            { identity: "teams", field: "members", label: "Members", count: 3 },
+            { identity: "projects", field: "owners", label: "Owners", count: 0 },
+          ],
+        },
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
+    expect(await within(dialog).findByText("1 link in Groups")).toBeVisible();
+    expect(within(dialog).getByText("3 links in Teams › Members")).toBeVisible();
+    expect(within(dialog).queryByText(/Owners/)).toBeNull();
+    expect(get).toHaveBeenCalledWith("/models/users/items/7/links", expect.anything());
+  });
+
+  it("says when the link count could not be loaded", async () => {
+    setup("/models/users/items/7", {
+      meta: withGroups(),
+      row,
+      client: {
+        get: vi.fn((url: string) =>
+          url.endsWith("/links")
+            ? Promise.reject(new ApiError(500, "internal_error", "Boom."))
+            : url === "/meta"
+              ? Promise.resolve({
+                  schema_version: "1",
+                  version: "0",
+                  title: "Admin",
+                  show_powered_by: true,
+                  user: { id: "1", username: "admin" },
+                  models: [withGroups()],
+                })
+              : Promise.resolve(row),
+        ) as unknown as ApiClient["get"],
+      },
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
+    expect(
+      await within(dialog).findByText("Could not count the links this delete removes."),
+    ).toBeVisible();
+  });
+
+  it("asks the server, which knows every affected field, and shows nothing extra for none", async () => {
+    const { get } = setup("/models/users/items/7");
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
+    await waitFor(() => {
+      expect(get).toHaveBeenCalledWith("/models/users/items/7/links", expect.anything());
+    });
+    await waitFor(() => {
+      expect(dialog).toHaveAccessibleDescription("This cannot be undone.");
+    });
+    expect(within(dialog).queryByText(/Counting/)).toBeNull();
+  });
+
+  it("shows a field whose target model is not registered read-only", async () => {
+    const orphan = {
+      ...groups,
+      relation: { target_identity: null, target_field: "id", value_type: "integer" as const },
+    };
+    const base = model();
+    setup("/models/users/items/7", { meta: { ...base, fields: [...base.fields, orphan] }, row });
+    const chips = await screen.findByRole("list", { name: "Selected Groups" });
+    expect(within(chips).getByText("Staff")).toBeVisible();
+    expect(within(chips).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Groups" })).toBeNull();
   });
 });

@@ -165,3 +165,55 @@ test("signing out with unsaved changes asks first, then reaches the login page",
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectClean(page, state); // no stray 401s from the signed-out page
 });
+
+test("edits many-to-many tags with the multi-select", async ({ page }) => {
+  const state = await open(page, "./models/tasks");
+  await createTask(page, uniqueTitle());
+  const tags = page.getByRole("combobox", { name: "Tags" });
+  const chips = page.getByRole("list", { name: "Selected Tags" });
+  await expect(chips).toContainText("None selected.");
+
+  // More tags than one page: scrolling the list loads the rest.
+  await tags.click();
+  const listbox = page.getByRole("listbox", { name: "Tags" });
+  await expect(page.getByText("Showing 20 of 25. Scroll or type to see more.")).toBeVisible();
+  await listbox.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect(listbox.getByRole("option", { name: "urgent" })).toBeVisible();
+  await listbox.getByRole("option", { name: "urgent" }).click();
+  await expect(tags).toHaveAttribute("aria-expanded", "true"); // stays open for more
+
+  // Keyboard: search, walk to the option, toggle it with Enter.
+  await tags.fill("doc");
+  await expect(listbox.getByRole("option")).toHaveCount(1);
+  await tags.press("ArrowDown");
+  await tags.press("Enter");
+  await tags.press("Escape");
+  await expect(chips.getByRole("listitem")).toHaveText(["urgent", "docs"]);
+
+  const save = page.getByRole("button", { name: "Save changes" });
+  let patch = page.waitForRequest((request) => request.method() === "PATCH");
+  await save.click();
+  expect((await patch).postDataJSON()).toEqual({ tags: [1, 6] });
+  await expect(toastText(page, "Changes saved.")).toBeVisible();
+
+  // Edits of other fields leave the set out of the PATCH.
+  patch = page.waitForRequest((request) => request.method() === "PATCH");
+  await page.getByLabel("Priority").fill("2");
+  await save.click();
+  expect((await patch).postDataJSON()).toEqual({ priority: 2 });
+
+  await page.getByRole("button", { name: "Remove urgent from Tags" }).click();
+  patch = page.waitForRequest((request) => request.method() === "PATCH");
+  await save.click();
+  expect((await patch).postDataJSON()).toEqual({ tags: [6] });
+  await page.reload();
+  await expect(chips.getByRole("listitem")).toHaveText(["docs"]);
+
+  // The delete confirmation says which links go with the record.
+  await page.getByRole("button", { name: "Delete" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("1 link in Tags");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expectClean(page, state);
+});

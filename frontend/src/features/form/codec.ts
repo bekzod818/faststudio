@@ -6,7 +6,8 @@ import type { FieldMeta, JsonValue } from "@/api/contract.gen";
 import { searchLength as characterCount } from "@/features/list/query";
 import { parseWireDateTime } from "@/lib/datetime";
 
-export type FormValue = string | boolean;
+/** Text inputs hold strings, checkboxes booleans, many-to-many fields lists of keys. */
+export type FormValue = string | boolean | string[];
 export type FormValues = Record<string, FormValue>;
 export type Mode = "create" | "edit";
 export type Parsed =
@@ -23,11 +24,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 const REQUIRED = "This field is required.";
 
-export function isEditable(field: FieldMeta, mode: Mode): boolean {
-  // Many-to-many fields get their editor in M16; until then they are shown read-only.
-  if (field.readonly || field.type === "unsupported" || field.type === "many_to_many") {
-    return false;
-  }
+/**
+ * Whether the form edits (and sends) a field. `truncated` lists the record's
+ * many-to-many fields with more links than `max_items` (`Row.truncated`): the
+ * form only sees part of their set, so it must never send them.
+ */
+export function isEditable(
+  field: FieldMeta,
+  mode: Mode,
+  truncated: ReadonlySet<string> = new Set(),
+): boolean {
+  if (field.readonly || field.type === "unsupported") return false;
+  if (field.type === "many_to_many" && truncated.has(field.name)) return false;
   return mode === "create" || !field.create_only;
 }
 
@@ -169,9 +177,29 @@ function parseJson(text: string): Parsed {
   return found.problem === null ? ok(parsed) : error(found.problem);
 }
 
+/** Selected many-to-many keys -> the list the server expects (ADR-0010). */
+function parseKeys(field: FieldMeta, keys: string[]): Parsed {
+  if (field.max_items !== null && keys.length > field.max_items) {
+    return error(`Choose at most ${String(field.max_items)}.`);
+  }
+  if (new Set(keys).size !== keys.length) return error("Each item can be chosen only once.");
+  const values: JsonValue[] = [];
+  for (const key of keys) {
+    if (field.relation?.value_type !== "integer") {
+      values.push(key);
+      continue;
+    }
+    const parsed = parseInteger(key, field);
+    if (parsed.kind !== "value") return error("Choose items from the list.");
+    values.push(parsed.value);
+  }
+  return ok(values);
+}
+
 /** Form value -> wire value (or an error / "leave it out"). */
 export function fromFormValue(field: FieldMeta, value: FormValue, mode: Mode): Parsed {
   if (typeof value === "boolean") return ok(value);
+  if (Array.isArray(value)) return parseKeys(field, value);
   const isText = field.type === "string" || field.type === "text";
   const empty = isText ? value === "" : value.trim() === "";
   if (!empty) return parsePresent(field, value);
@@ -193,6 +221,12 @@ function localInput(date: Date): string {
 
 /** Wire value -> form value. */
 export function toFormValue(field: FieldMeta, value: unknown): FormValue {
+  if (field.type === "many_to_many") {
+    // Keys as strings, the same form as the keys of `Row.many_labels`.
+    return Array.isArray(value)
+      ? value.map((key) => (typeof key === "string" ? key : JSON.stringify(key)))
+      : [];
+  }
   if (field.type === "boolean" && !field.nullable) return value === true;
   if (value === null || value === undefined) return "";
   if (field.type === "boolean") return value === true ? "true" : "false";
@@ -220,17 +254,34 @@ export function initialValues(
   return values;
 }
 
-/** Build the request body; on edit only `changed` fields are sent. */
+function sameValue(a: FormValue | undefined, b: FormValue | undefined): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => item === b[index]);
+  }
+  return a === b;
+}
+
+/** Fields whose value differs from `initial` (lists compared by content). */
+export function changedNames(values: FormValues, initial: FormValues): Set<string> {
+  return new Set(Object.keys(values).filter((name) => !sameValue(values[name], initial[name])));
+}
+
+/**
+ * Build the request body; on edit only `changed` fields are sent. Fields
+ * the form may not edit (`isEditable`, with the record's `truncated` fields)
+ * are never sent.
+ */
 export function buildBody(
   fields: FieldMeta[],
   values: FormValues,
   mode: Mode,
   changed?: ReadonlySet<string>,
+  truncated?: ReadonlySet<string>,
 ): { body: Record<string, JsonValue>; errors: Record<string, string> } {
   const body: Record<string, JsonValue> = {};
   const errors: Record<string, string> = {};
   for (const field of fields) {
-    if (!isEditable(field, mode)) continue;
+    if (!isEditable(field, mode, truncated)) continue;
     if (changed !== undefined && !changed.has(field.name)) continue;
     const parsed = fromFormValue(field, values[field.name] ?? "", mode);
     if (parsed.kind === "error") errors[field.name] = parsed.message;

@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 
 from examples.basic.app import create_app
-from examples.basic.db import PRODUCT_COUNT, create_or_update_admin
+from examples.basic.db import PRODUCT_COUNT, TAG_NAMES, create_or_update_admin
 
 ORIGIN = "https://testserver"
 USERNAME = "demo-admin"
@@ -56,7 +56,7 @@ async def test_bootstrapped_admin_can_use_every_model(database_url: str) -> None
         assert (await _sign_in(client)).status_code == 200
         meta = (await client.get("/admin/api/v1/meta")).json()
         identities = [m["identity"] for m in meta["models"]]
-        assert identities == ["users", "categories", "products", "tasks"]
+        assert identities == ["users", "categories", "products", "tasks", "tags"]
         users = next(m for m in meta["models"] if m["identity"] == "users")
         assert "password_hash" not in {f["name"] for f in users["fields"]}
         assert users["permissions"]["create"] is False
@@ -74,6 +74,24 @@ async def test_bootstrapped_admin_can_use_every_model(database_url: str) -> None
         assert created.status_code == 201, created.text
         refused = await client.delete("/admin/api/v1/models/categories/items/1", headers=headers)
         assert refused.status_code == 409  # products still reference it
+
+        # Many-to-many: tasks carry tags (seeded, more than one page of choices).
+        first = (await client.get("/admin/api/v1/models/tasks/items/1")).json()
+        assert first["data"]["tags"] == [1, 2]
+        assert first["many_labels"]["tags"] == {"1": "urgent", "2": "restock"}
+        choices = (await client.get("/admin/api/v1/models/tasks/fields/tags/choices")).json()
+        assert choices["total"] == len(TAG_NAMES) > len(choices["items"])
+        tagged = await client.patch(
+            f"/admin/api/v1/models/tasks/items/{created.json()['pk']}",
+            json={"tags": [3, 4]},
+            headers=headers,
+        )
+        assert tagged.status_code == 200, tagged.text
+        assert tagged.json()["data"]["tags"] == [3, 4]
+        links = (await client.get("/admin/api/v1/models/tags/items/3/links")).json()
+        assert links["items"] == [
+            {"identity": "tasks", "field": "tags", "label": "Tags", "count": 2}
+        ]
 
 
 @pytest.mark.usefixtures("secret")

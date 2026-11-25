@@ -1,4 +1,4 @@
-"""Reading many-to-many fields for detail rows (ADR-0010 §3-4)."""
+"""Reading many-to-many fields for detail rows and delete previews (ADR-0010 §3-4, §6)."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from faststudio.api._serialize import encode_pk, encode_value, format_label
 from faststudio.introspection._fields import JsonValue
 from faststudio.introspection._many import ManyToManyField
 from faststudio.query._list import label_statement
-from faststudio.query._many import chunks, linked_keys_statement
+from faststudio.query._many import chunks, count_links_statement, linked_keys_statement
 from faststudio.registry import RegisteredModel, Registry
+from faststudio.schemas.contract import LinkCount
 
 
 @dataclass(slots=True)
@@ -67,3 +68,65 @@ async def many_values(
                     labels[encode_pk(key)] = format_label(key, label)
         result.labels[name] = labels
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class AffectedField:
+    """An opted-in field whose links a delete of a `registered` record removes.
+
+    `own`: a field of the record's model (its links from the record);
+    `pointing`: a field whose target is the record's model (links to it).
+    A self-referential field is both.
+    """
+
+    owner: RegisteredModel
+    name: str
+    many: ManyToManyField
+    own: bool
+    pointing: bool
+
+
+def affected_fields(registry: Registry, registered: RegisteredModel) -> list[AffectedField]:
+    """List the record's own fields, then fields of registered models pointing at it.
+
+    Links of relationships that are not opted in are not affected, so those
+    deletes keep the v0.1 behaviour (409).
+    """
+    mapper = sa_inspect(registered.model)
+    found = [
+        AffectedField(
+            registered,
+            name,
+            many,
+            own=True,
+            pointing=mapper.isa(sa_inspect(many.link.target_model)),
+        )
+        for name, many in registered.many_to_many.items()
+    ]
+    found.extend(
+        AffectedField(other, name, many, own=False, pointing=True)
+        for other in registry
+        if other is not registered
+        for name, many in other.many_to_many.items()
+        if mapper.isa(sa_inspect(many.link.target_model))
+    )
+    return found
+
+
+async def link_counts(
+    session: AsyncSession, registry: Registry, registered: RegisteredModel, pk: object
+) -> list[LinkCount]:
+    """How many links each affected field loses when the record `pk` is deleted."""
+    counts = []
+    for item in affected_fields(registry, registered):
+        statement = count_links_statement(item.many.link, pk, own=item.own, pointing=item.pointing)
+        count = await session.execute(statement, bind_arguments=bind_to(item.owner.model))
+        counts.append(
+            LinkCount(
+                identity=item.owner.identity,
+                field=item.name,
+                label=item.many.label,
+                count=count.scalar_one(),
+            )
+        )
+    return counts

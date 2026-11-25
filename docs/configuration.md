@@ -158,7 +158,13 @@ class PostAdmin(ModelAdmin, model=Post):
 - **Deleting** a record removes its opted-in links (both directions for
   self-referential fields, and links of other registered models' opted-in
   fields pointing at it) instead of refusing with `409`. Relationships that
-  are not opted in keep the `409` rule above.
+  are not opted in keep the `409` rule above. The admin's delete
+  confirmation lists how many links each field loses.
+- **In the admin UI** the field is a searchable multi-select: chosen items
+  are chips with a remove button, the option list loads further pages as it
+  is scrolled, and Enter toggles the highlighted option (Backspace in the
+  empty search box removes the last chip). A save sends the field only when
+  its set changed, and never for read-only or truncated fields.
 
 ## Deep pagination
 

@@ -20,7 +20,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from examples.basic.db import create_or_update_admin, create_tables, seed_demo_data
-from examples.basic.models import Category, Product, Task, User
+from examples.basic.models import Category, Product, Tag, Task, User
 from faststudio import Admin, ModelAdmin, ModelUserBackend
 
 DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///./example.db"
@@ -56,6 +56,14 @@ class TaskAdmin(ModelAdmin, model=Task):
     search_fields = ("title",)
     list_filter = ("done", "status")
     readonly_fields = ("created_at",)
+    # Edited as a searchable multi-select; at most 20 tags per task.
+    many_to_many = ("tags",)
+    many_to_many_limits: ClassVar[dict[str, int]] = {"tags": 20}
+
+
+class TagAdmin(ModelAdmin, model=Tag):
+    list_display = ("id", "name")
+    search_fields = ("name",)
 
 
 def create_app(
@@ -98,6 +106,6 @@ def create_app(
         session_maker=session_maker,
         auth_backend=ModelUserBackend(User),
     )
-    for model_admin in (UserAdmin, CategoryAdmin, ProductAdmin, TaskAdmin):
+    for model_admin in (UserAdmin, CategoryAdmin, ProductAdmin, TaskAdmin, TagAdmin):
         admin.register(model_admin)
     return app

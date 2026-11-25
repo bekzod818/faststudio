@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any, TypeVar
 
-from sqlalchemy import Delete, Insert, Select, Update, delete, insert, select, update
+from sqlalchemy import Delete, Insert, Select, Update, delete, func, insert, or_, select, update
 
 from faststudio.introspection._many import ManyToManyLink
 
@@ -92,3 +92,18 @@ def delete_links_statement(
 def delete_links_to_statement(link: ManyToManyLink, target_pk: object) -> Delete:
     """Delete every link pointing at the target row `target_pk` (it is being deleted)."""
     return delete(link.secondary).where(link.remote_fk == target_pk)
+
+
+def count_links_statement(
+    link: ManyToManyLink, pk: object, *, own: bool, pointing: bool
+) -> Select[Any]:
+    """Count the links a delete of the row `pk` removes from `link`'s table.
+
+    `own`: links of the row's own field; `pointing`: links whose target is the
+    row. Both for a self-referential field. At least one must be set.
+    """
+    conditions = [
+        *([link.local_fk == pk] if own else []),
+        *([link.remote_fk == pk] if pointing else []),
+    ]
+    return select(func.count()).select_from(link.secondary).where(or_(*conditions))
