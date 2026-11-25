@@ -3,9 +3,15 @@
 Copied from tag `v0.1.0` (commit `1393844b6ac683e758949e0b78139a131bdea88b`). Do not edit: `tests/compat/test_v0_1_0.py`
 checks these hashes and runs the code against the current FastStudio.
 
-The only change from the tag: the import path `examples.basic.` became
-`tests.compat.v0_1_0.basic.` in `basic/*.py`, so the snapshot imports itself.
-The directory is excluded from ruff and mypy so it stays byte-identical.
+The only change from the tag: every `examples.basic.` occurrence in `basic/*.py`
+(the imports, plus the module docstring and one comment in `app.py`) became
+`tests.compat.v0_1_0.basic.`, so the snapshot imports itself. `__main__.py`
+and `create_admin.py` were not vendored: they are CLI entry points, replaced
+by the `faststudio` CLI in M19; the logic they call is in `db.py`.
+
+The directory is excluded from ruff and from mypy's file discovery (mypy
+still checks it through the test's imports), and `.gitattributes` keeps it
+byte-identical on every platform (`-text`, no line-ending conversion).
 
 | File | SHA-256 |
 |---|---|

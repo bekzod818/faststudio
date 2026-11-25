@@ -131,14 +131,16 @@ async def _quickstart_admin_has_full_access(app: FastAPI, engine: AsyncEngine) -
 
 
 @pytest.fixture
-def example_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+def example_url(tmp_path: Path) -> str:
+    return f"sqlite+aiosqlite:///{tmp_path}/example.db"
+
+
+@pytest.fixture
+def example_app(example_url: str, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     from tests.compat.v0_1_0.basic.app import create_app  # noqa: PLC0415
 
     monkeypatch.setenv("FASTSTUDIO_SECRET_KEY", secrets.token_urlsafe(48))
-    app: FastAPI = create_app(
-        f"sqlite+aiosqlite:///{tmp_path}/example.db",
-        bootstrap_admin=("demo-admin", "a long demo passphrase"),
-    )
+    app: FastAPI = create_app(example_url, bootstrap_admin=("demo-admin", "a long demo passphrase"))
     return app
 
 
@@ -179,3 +181,29 @@ async def test_v0_1_0_example_admin_has_full_access(example_app: FastAPI) -> Non
         assert choices.status_code == 200
         refused = await s.client.delete(f"{API}/models/categories/items/1", headers=s.headers)
         assert refused.status_code == 409  # products still reference it, as in v0.1.0
+
+
+async def test_v0_1_0_every_admin_has_full_access(example_app: FastAPI, example_url: str) -> None:
+    """Not only the bootstrap account: any active admin created by v0.1 code."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: PLC0415
+
+    from tests.compat.v0_1_0.basic.db import create_or_update_admin  # noqa: PLC0415
+
+    async with example_app.router.lifespan_context(example_app):
+        engine = create_async_engine(example_url)
+        try:
+            await create_or_update_admin(
+                async_sessionmaker(engine), "second-admin", "another long passphrase"
+            )
+        finally:
+            await engine.dispose()
+        async with _client(example_app) as s:
+            assert await s.sign_in("second-admin", "another long passphrase") == 200
+            created = await s.client.post(
+                f"{API}/models/tasks/items",
+                json={"title": "By the second admin"},
+                headers=s.headers,
+            )
+            assert created.status_code == 201, created.text
+            users = (await s.client.get(f"{API}/models/users/items")).json()
+            assert {u["data"]["username"] for u in users["items"]} == {"demo-admin", "second-admin"}

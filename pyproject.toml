@@ -132,7 +132,9 @@ ban-relative-imports = "all"
 strict = true
 python_version = "3.11"
 files = ["src", "tests", "scripts", "examples"]
-# Frozen v0.1.0 snapshot (tests/compat/v0_1_0/SNAPSHOT.md): typed as released, not re-checked.
+# Frozen v0.1.0 snapshot (tests/compat/v0_1_0/SNAPSHOT.md): excluded from discovery, but still
+# type-checked through tests/compat/test_v0_1_0.py's imports, which surfaces typing breaks that
+# would hit v0.1 users (fix FastStudio, never the snapshot).
 exclude = ["^tests/compat/v0_1_0/"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
