@@ -2,7 +2,7 @@
 
 - Status: Accepted (2026-11-25, maintainer approval with amendments A1–A7)
 - Date: 2026-11-24
-- Amends: the v0.1 delete rule (docs/api-contract.md "Delete"). Plan: docs/plans/v0.2.md §2
+- Amends: the v0.1 delete rule (docs/api-contract.md, "Writes"). Plan: docs/plans/v0.2.md §2
 
 ## Context
 
@@ -62,4 +62,5 @@ happen silently.
 ## Consequences
 
 - No behaviour change on upgrade until a host opts in.
-- A contract value is added. This is additive (ADR-0011 versioning rule).
+- Contract additions (one `FieldType` value, `max_items`, `many_labels`,
+  `truncated`) are additive (ADR-0011 versioning rule).

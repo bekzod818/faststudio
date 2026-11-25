@@ -35,6 +35,7 @@ leak guard, and a clearer threat model for sessions.
 - Audit log of admin changes
 - Server-side session store (revocable sessions; Redis/DB backends)
 - Shared rate limiter backends (Redis), including the per-client login budget
+- List-query hook for row-level visibility (object-level permissions on lists and choices)
 - Composite primary keys
 - Association objects with extra columns and inline/related editing
 

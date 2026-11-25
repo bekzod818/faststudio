@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
+- Amended by: ADR-0011 (backend capabilities may manage users) and ADR-0013 (sessions), v0.2
 - Implementation notes (M6): sessions are signed with HMAC-SHA256; see docs/threat-model.md T1-T3.
 - Amended (v0.1.1): the logout limitation is spelled out in docs/threat-model.md
   (Known limitations) and pinned by `test_logout_does_not_revoke_a_copied_cookie`;

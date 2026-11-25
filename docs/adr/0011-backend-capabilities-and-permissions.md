@@ -62,7 +62,7 @@ and the definition of "admin".
    - **Implications:** `edit` implies `view`. `create` and `delete` without
      `view` are API-only, because `/meta` lists only viewable models.
      Create without view returns a minimal `Row` (`pk` plus the submitted
-     fields). The full table is in docs/auth.md.
+     fields). The full table will be in docs/auth.md (M21).
 6. **Escalation rules**, enforced by core before the account guard, on
    **create, update and delete**. The guard capability declares the
    superuser-like flag and the permission-bearing M2M fields, including any
@@ -125,8 +125,11 @@ and the definition of "admin".
 - `ModelUserBackend` users see no behaviour change and no new HTTP write
   path. The HTTP password endpoints are opt-in for that backend
   (`password_endpoints=False` by default), because every one of its admins
-  holds `ALL`. `/meta` gains only the additive keys `permissions.view`,
-  `capabilities` and `account.set_password` (false unless opted in).
+  holds `ALL`. Responses gain only additive keys:
+  - in `/meta`: `permissions.view`, `capabilities`, `account.set_password`
+    (false unless opted in) and `account.admin_flag`;
+  - on detail rows: `many_labels` and `truncated`, empty without M2M
+    fields.
 - With the `user_admin` and `session_revocation` capabilities, FastStudio
   may write to the host's user table, but only through capabilities the
   backend explicitly provides. Threat model T2 is amended accordingly.
