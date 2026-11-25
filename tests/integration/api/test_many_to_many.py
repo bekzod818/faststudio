@@ -117,27 +117,31 @@ class ArticleAdmin(ModelAdmin, model=Article):
     params=[
         "sqlite-fk-on",
         "sqlite-fk-off",
-        pytest.param(
-            "postgres",
-            marks=[
-                pytest.mark.postgres,
-                pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
-            ],
+        *(
+            pytest.param(
+                kind,
+                marks=[
+                    pytest.mark.postgres,
+                    pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
+                ],
+            )
+            for kind in ("postgres", "postgres-repeatable-read")
         ),
     ]
 )
 def database(request: pytest.FixtureRequest, tmp_path: Path) -> str:
     kind: str = request.param
-    return kind if kind != "postgres" else POSTGRES_URL and kind  # skipif guards the empty URL
+    return kind
 
 
 @pytest.fixture
 async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    if database == "postgres":
+    if database.startswith("postgres"):
         name = make_url(POSTGRES_URL).database or ""
         if not name.endswith("_test"):
             pytest.fail(f"Refusing to drop tables in {name!r}: use a database named *_test.")
-        engine = create_async_engine(POSTGRES_URL)
+        isolation = "REPEATABLE READ" if database.endswith("repeatable-read") else "READ COMMITTED"
+        engine = create_async_engine(POSTGRES_URL, isolation_level=isolation)
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/m2m.db")
         pragma = "ON" if database == "sqlite-fk-on" else "OFF"
@@ -172,7 +176,7 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
             insert(article_topics),
             [{"article_id": 1, "topic_id": 1}, {"article_id": 1, "topic_id": 2}],
         )
-        if database == "postgres":  # explicit ids do not advance PostgreSQL sequences
+        if database.startswith("postgres"):  # explicit ids do not advance sequences
             for table in ("tags", "posts", "people", "topics", "articles", "boards"):
                 await session.execute(
                     text(

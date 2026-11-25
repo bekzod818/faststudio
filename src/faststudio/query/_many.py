@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any, TypeVar
 
-from sqlalchemy import Delete, Insert, Select, delete, insert, select
+from sqlalchemy import Delete, Insert, Select, Update, delete, insert, select, update
 
 from faststudio.introspection._many import ManyToManyLink
 
@@ -32,6 +32,39 @@ def linked_keys_statement(link: ManyToManyLink, pk: object, limit: int) -> Selec
         .order_by(link.remote_fk)
         .limit(limit)
     )
+
+
+def locked_keys_statement(link: ManyToManyLink, pk: object, limit: int) -> Select[Any]:
+    """Target keys linked to `pk` with a locking read (`FOR SHARE`), at most `limit` rows.
+
+    A locking read sees the latest committed rows also under MySQL's
+    REPEATABLE READ. PostgreSQL forbids `FOR SHARE` with `DISTINCT`, so
+    duplicates (only possible when other code writes a table without a unique
+    pair) are removed by the caller.
+    """
+    return (
+        select(link.remote_fk)
+        .where(link.local_fk == pk)
+        .order_by(link.remote_fk)
+        .limit(limit)
+        .with_for_update(read=True)
+    )
+
+
+def touch_record_statement(link: ManyToManyLink, pk: object) -> Update:
+    """`UPDATE` the record's row without changing it: a write lock on every database.
+
+    Setting the primary key (and every column with an `onupdate` default) to
+    itself changes nothing, but it is a real write: concurrent link writes to
+    the same record wait for it, and under snapshot isolation (PostgreSQL
+    REPEATABLE READ) the loser fails with a serialization error (409).
+    """
+    table = link.local_pk.table
+    unchanged = {link.local_pk.key: link.local_pk}
+    unchanged.update(
+        {column.key: column for column in table.columns if column.onupdate is not None}
+    )
+    return update(table).where(link.local_pk == pk).values(unchanged)
 
 
 def existing_keys_statement(link: ManyToManyLink, keys: Sequence[object]) -> Select[Any]:

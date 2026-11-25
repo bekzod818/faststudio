@@ -11,14 +11,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
-from faststudio.api._many import linked_keys
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
 from faststudio.api.auth import CurrentUser, current_user, get_context
@@ -37,6 +35,8 @@ from faststudio.query._many import (
     delete_links_to_statement,
     existing_keys_statement,
     insert_links_statement,
+    locked_keys_statement,
+    touch_record_statement,
 )
 from faststudio.query._write import dependents_statements, exists_statement
 from faststudio.registry import RegisteredModel, Registry
@@ -138,17 +138,9 @@ async def _check_many(
 
 
 async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: object) -> None:
-    """Serialize concurrent link writes to the same record.
-
-    `SELECT ... FOR UPDATE` locks the row on PostgreSQL and MySQL; on SQLite,
-    which ignores it, a write statement that matches nothing takes the
-    database write lock. A concurrent writer then waits and reads the links
-    after the first commits (or gets 409 under snapshot isolation).
-    """
-    first = next(iter(registered.many_to_many.values()))
-    link = first.link
-    await session.execute(select(link.local_pk).where(link.local_pk == pk).with_for_update())
-    await session.execute(delete_links_statement(link, pk, ()))
+    """Serialize concurrent link writes to the same record (see `touch_record_statement`)."""
+    link = next(iter(registered.many_to_many.values())).link
+    await session.execute(touch_record_statement(link, pk))
 
 
 async def _replace_many(
@@ -176,8 +168,11 @@ async def _replace_many(
         field = registered.many_to_many[name]
         current: set[object] = set()
         if not created:
-            linked = await linked_keys(session, field, pk, field.max_items + 1)
-            if len(linked) > field.max_items:
+            rows = (
+                await session.scalars(locked_keys_statement(field.link, pk, field.max_items + 1))
+            ).all()
+            # Conservative: duplicate rows (written by other code) count toward the limit.
+            if len(rows) > field.max_items:
                 truncated.append(
                     ValidationIssue(
                         loc=[name],
@@ -187,7 +182,7 @@ async def _replace_many(
                     )
                 )
                 continue
-            current = set(linked)
+            current = set(rows)
         wanted = set(keys)
         removed = sorted(current - wanted, key=repr)
         added = [key for key in keys if key not in current]
