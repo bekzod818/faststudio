@@ -222,3 +222,7 @@ applies to edit, delete and link counts (404).
   admin accounts.
 - **Codename count (A3).** The warning when codenames exceed 10 000 moves to
   `syncpermissions` (M19): only there are all registered models known.
+- **Password helpers are public** (`faststudio.auth.passwords.__all__`):
+  `hash_password`, `hash_password_async`, `verify_password_async`,
+  `dummy_verify_async`, `is_password_hash`, `prepare_dummy_hash`. Contrib
+  depends only on public core API; custom backends need the same helpers.

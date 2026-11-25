@@ -234,8 +234,9 @@ async def test_case_variants_cannot_coexist(sign_in: SignIn) -> None:
     for username in ("STAFF", "\uff53\uff54\uff41\uff46\uff46"):
         response = await root.send("POST", f"/models/{USERS}/items", {"username": username})
         assert response.status_code == 409, response.text
-    renamed = await root.send("PATCH", f"/models/{USERS}/items/3", {"username": "staff"})
-    assert renamed.status_code == 409
+    for username in ("staff", "STAFF", "\uff53\uff54\uff41\uff46\uff46"):  # rename collisions
+        renamed = await root.send("PATCH", f"/models/{USERS}/items/3", {"username": username})
+        assert renamed.status_code == 409, username
     fine = await root.send("PATCH", f"/models/{USERS}/items/3", {"username": "Newbie2"})
     assert fine.status_code == 200
 
@@ -471,3 +472,72 @@ async def test_concurrent_writes_on_admin_accounts_never_fail_with_500(
     )
     statuses = sorted(r.status_code for r in results)
     assert statuses in ([200, 200], [200, 409]), [r.text for r in results]
+
+
+async def test_the_sign_in_key_always_follows_the_username(
+    app: FastAPI, db: AsyncEngine, secret_key: str
+) -> None:
+    """Even an admin exposing username_normalized cannot make it diverge."""
+    admin = Admin(
+        app,
+        engine=db,
+        auth_backend=DatabaseAuthBackend(AUTH, register_admins=False),
+        secret_key=secret_key,
+    )
+
+    class ExposingAdmin(user_admin(AUTH)):  # type: ignore[misc]
+        exclude = ("password_hash", "session_token")  # username_normalized visible, writable
+
+    admin.register(ExposingAdmin)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as http:
+        assert (await _login(http, "root", PASSWORD)).status_code == 200
+        client = Client(http)
+        response = await client.send(
+            "PATCH", f"/models/{USERS}/items/2", {"username_normalized": "root2"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["username_normalized"] == "staff"
+    async with AsyncSession(db) as session:
+        row = await session.get(AUTH.user, 2)
+        assert row is not None
+        assert row.username_normalized == "staff"
+
+
+async def test_a_busy_database_does_not_break_sign_in(
+    attempt: Callable[[str, str], Awaitable[int]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+    original = AsyncSession.commit
+    calls = {"n": 0}
+
+    async def busy(self: AsyncSession) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:  # the last_login write
+            raise OperationalError("UPDATE", {}, Exception("database is locked"))
+        await original(self)
+
+    monkeypatch.setattr(AsyncSession, "commit", busy)
+    with caplog.at_level("WARNING", logger="faststudio.auth"):
+        assert await attempt("root", PASSWORD) == 200
+    assert "Could not record last_login (OperationalError)" in caplog.text
+
+
+def test_any_declarative_base_maps_the_relationships() -> None:
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+    from sqlalchemy.orm import DeclarativeBaseNoMeta, MappedAsDataclass  # noqa: PLC0415
+
+    class NoMeta(DeclarativeBaseNoMeta):
+        pass
+
+    models = AuthModels(NoMeta, table_prefix="nometa_")
+    assert set(sa_inspect(models.user).relationships.keys()) == {"groups", "permissions"}
+    assert set(sa_inspect(models.permission).relationships.keys()) == {"groups", "users"}
+
+    class Dataclassy(MappedAsDataclass, DeclarativeBaseNoMeta):
+        pass
+
+    with pytest.raises(ConfigurationError, match="MappedAsDataclass"):
+        AuthModels(Dataclassy)

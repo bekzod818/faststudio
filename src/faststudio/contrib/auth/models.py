@@ -13,8 +13,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table, event
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column, relationship, validates
 
 from faststudio.exceptions import ConfigurationError
 
@@ -132,6 +133,11 @@ def _link(name: str, metadata: Any, left: tuple[str, str], right: tuple[str, str
     )
 
 
+def _sync_username(mapper: Any, connection: Any, target: UserMixin) -> None:  # noqa: ANN401
+    del mapper, connection
+    target.username_normalized = normalize_username(target.username)
+
+
 class AuthModels:
     """Declare the users, groups and permissions on your declarative `Base`.
 
@@ -172,6 +178,9 @@ class AuthModels:
         if not isinstance(prefix_value, str) or not _PREFIX.fullmatch(prefix_value):
             msg = "AuthModels: table_prefix must be empty or match [a-z][a-z0-9_]{0,30}."
             raise ConfigurationError(msg)
+        if issubclass(base, MappedAsDataclass):
+            msg = "AuthModels: dataclass-mapped bases (MappedAsDataclass) are not supported."
+            raise ConfigurationError(msg)
         if base in _USED:
             msg = f"AuthModels was already called for {base.__name__}."
             raise ConfigurationError(msg)
@@ -198,18 +207,21 @@ class AuthModels:
             {"__tablename__": perm_t},
         )
         user, group, permission = self.user, self.group, self.permission
-        user.groups = relationship(group, secondary=self.user_groups, back_populates="users")
-        user.permissions = relationship(
-            permission, secondary=self.user_permissions, back_populates="users"
-        )
-        group.users = relationship(user, secondary=self.user_groups, back_populates="groups")
-        group.permissions = relationship(
-            permission, secondary=self.group_permissions, back_populates="groups"
-        )
-        permission.users = relationship(
-            user, secondary=self.user_permissions, back_populates="permissions"
-        )
-        permission.groups = relationship(
-            group, secondary=self.group_permissions, back_populates="permissions"
-        )
+        # add_property maps the relationships on any declarative base (metaclass or not).
+        sides = [
+            (user, "groups", group, self.user_groups, "users"),
+            (user, "permissions", permission, self.user_permissions, "users"),
+            (group, "users", user, self.user_groups, "groups"),
+            (group, "permissions", permission, self.group_permissions, "groups"),
+            (permission, "users", user, self.user_permissions, "permissions"),
+            (permission, "groups", group, self.group_permissions, "permissions"),
+        ]
+        for owner, name, target, secondary, back in sides:
+            sa_inspect(owner).add_property(
+                name, relationship(target, secondary=secondary, back_populates=back)
+            )
+        # The sign-in key always follows `username`, whatever was assigned to it
+        # (an admin exposing the column, a stale value): recomputed on every flush.
+        event.listen(user, "before_insert", _sync_username)
+        event.listen(user, "before_update", _sync_username)
         _USED.add(base)

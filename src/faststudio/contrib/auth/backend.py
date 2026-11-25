@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, cast, literal, null, select, union, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
@@ -35,6 +37,8 @@ if TYPE_CHECKING:
     from faststudio import Admin
 
 __all__ = ["DatabaseAuthBackend"]
+
+logger = logging.getLogger("faststudio.auth")
 
 #: Accounts whose superuser status is remembered between get_user and resolve.
 _SUPERUSER_CACHE = 1024
@@ -152,17 +156,22 @@ class DatabaseAuthBackend:
                 return None
             if not await verify_password_async(stored, password) or not row.is_active:
                 return None
-            await session.execute(
-                update(self._user)
-                .where(self._user.id == row.id)
-                .values(last_login=datetime.now(UTC))
-            )
-            await session.commit()
-            return self._authenticated(row)
+            user = self._authenticated(row)
+            try:  # best effort: a busy database must not turn a valid sign-in into an error
+                await session.execute(
+                    update(self._user)
+                    .where(self._user.id == row.id)
+                    .values(last_login=datetime.now(UTC))
+                )
+                await session.commit()
+            except SQLAlchemyError as exc:
+                await session.rollback()
+                logger.warning("Could not record last_login (%s)", type(exc).__name__)
+            return user
 
     async def get_user(self, request: Request, user_id: str) -> AuthenticatedUser | None:
         """Reload the account for a session; None if gone or inactive (one query)."""
-        if not user_id.isdigit():
+        if not (user_id.isascii() and user_id.isdecimal()):
             return None
         async with self._maker(request)() as session:
             row = await session.get(self._user, int(user_id))
@@ -221,7 +230,11 @@ class DatabaseAuthBackend:
     # ------------------------------------------------------------- AccountManager
 
     async def _row(self, session: AsyncSession, account_id: str) -> UserMixin | None:
-        return await session.get(self._user, int(account_id)) if account_id.isdigit() else None
+        return (
+            await session.get(self._user, int(account_id))
+            if account_id.isascii() and account_id.isdecimal()
+            else None
+        )
 
     async def user_inputs(self, session: AsyncSession, account_id: str) -> Sequence[str]:
         """Return the username and email of the account."""

@@ -51,7 +51,9 @@ listed under **Changed** or **Removed** with migration notes.
   superusers, per-user and group permissions, escalation rules, passwords),
   and the users/groups/permissions admins (`user_admin`, `group_admin`,
   `permission_admin` to customize). For admin staff accounts only.
-- `AccountGuard.secret_fields` (enforced at `register()`) and
+- `AccountGuard.secret_fields` (enforced at `register()`; a required member
+  of the not yet released `AccountGuard` protocol, so custom guards written
+  against earlier development builds must add it) and
   `BackendCapabilities.register_admins`.
 - Passwords (ADR-0011, ADR-0013):
   - validators in `faststudio.auth.validators` (`DEFAULT_VALIDATORS`:

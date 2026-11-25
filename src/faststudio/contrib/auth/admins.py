@@ -28,7 +28,7 @@ from faststudio import ModelAdmin
 if TYPE_CHECKING:
     from faststudio.contrib.auth.models import AuthModels
 
-__all__ = ["SECRET_FIELDS", "group_admin", "permission_admin", "user_admin"]
+__all__ = ["group_admin", "permission_admin", "user_admin"]
 
 #: Never shown or accepted by the admin (enforced at `register()`).
 SECRET_FIELDS = ("password_hash", "session_token")

@@ -300,6 +300,12 @@ class MyBackend:
     async def resolve_accounts(self, session, keys): ...
 ```
 
+**Password helpers for backends** (`faststudio.auth.passwords`, public):
+`hash_password` / `hash_password_async` (argon2id), `verify_password_async`,
+`is_password_hash`, and `dummy_verify_async` with `prepare_dummy_hash` (call
+it at startup) to spend the same time on unknown accounts, as the
+`AuthBackend` protocol requires. The async variants run off the event loop.
+
 **Escalation rules.** When users, groups or permissions are edited in the
 admin, FastStudio refuses (403) any write by an admin who does not hold every
 permission that would change the superuser-like flag, touch an account
@@ -380,7 +386,12 @@ admin.register(permission_admin(auth))
 ```
 
 `password_hash` and `session_token` must stay excluded: registration fails
-otherwise.
+otherwise. Customize only this way: with automatic registration on, the
+registered classes are not reachable from your code.
+
+`username_normalized` is kept in sync when `username` is assigned through
+the ORM (the admin, the CLI, `user.username = ...`). Core `update()` or bulk
+statements bypass it: always change usernames through the ORM.
 
 ## Deep pagination
 
