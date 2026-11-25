@@ -182,8 +182,11 @@ inheritance respected).
   - the record already has more links than `max_items` (`truncated`);
   - the field is readonly (`extra_forbidden`), or the value is `null`.
 
-  Only missing links are inserted. A duplicate pair or a foreign-key
-  violation from a concurrent write is `409 conflict`, never `500`.
+  The record is locked for the write, so concurrent link writes to the same
+  record are serialized: they never merge and never store a duplicate pair.
+  Only missing links are inserted. A lost race (a foreign-key violation, a
+  duplicate pair written by other code when the association table has a
+  unique pair, or a serialization failure) is `409 conflict`, never `500`.
 - **Delete and many-to-many links (ADR-0010 §6):** deleting a record first
   removes the links of its opted-in many-to-many fields, and of opted-in
   fields of other registered models pointing at it, in the same

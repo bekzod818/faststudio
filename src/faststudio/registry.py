@@ -431,6 +431,7 @@ class _Validator:
         if entry in self.m2m_names:
             if allow_m2m:
                 return entry
+            # `exclude` is validated before `many_to_many`; it gets the relationship message.
             raise self.fail(
                 f"{option}: {entry!r} is a many-to-many field; many-to-many fields cannot be "
                 "listed, searched, filtered or sorted in this version."

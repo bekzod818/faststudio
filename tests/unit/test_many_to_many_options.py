@@ -154,6 +154,16 @@ def test_many_to_many_field_cannot_be_listed_searched_filtered_or_sorted(
     )
 
 
+def test_exclude_of_an_opted_in_field_says_how_to_hide_it(admin: Admin) -> None:
+    _rejected(
+        admin,
+        "exclude: 'tags' is a relationship, not a column; leave it out of many_to_many to keep "
+        "it hidden",
+        many_to_many=("tags",),
+        exclude=("tags",),
+    )
+
+
 def test_relationship_in_column_option_without_opt_in(admin: Admin) -> None:
     _rejected(admin, "list_display: 'tags' is a relationship", list_display=("tags",))
 

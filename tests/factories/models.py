@@ -694,6 +694,49 @@ class Article(Base):
     seen_topics: Mapped[list[Topic]] = relationship(secondary=article_topics, viewonly=True)
 
 
+class Label(Base):
+    """String primary key: a many-to-many target."""
+
+    __tablename__ = "labels"
+
+    code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+
+
+class Token(Base):
+    """UUID primary key: a many-to-many target."""
+
+    __tablename__ = "tokens"
+
+    uid: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+
+
+board_labels = Table(
+    "board_labels",
+    Base.metadata,
+    Column("board_id", ForeignKey("boards.id"), primary_key=True),
+    Column("label_code", ForeignKey("labels.code"), primary_key=True),
+)
+board_tokens = Table(
+    "board_tokens",
+    Base.metadata,
+    Column("board_id", ForeignKey("boards.id"), primary_key=True),
+    Column("token_uid", ForeignKey("tokens.uid"), primary_key=True),
+)
+
+
+class Board(Base):
+    """Many-to-many to string- and UUID-keyed targets."""
+
+    __tablename__ = "boards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(50))
+    labels: Mapped[list[Label]] = relationship(secondary=board_labels)
+    tokens: Mapped[list[Token]] = relationship(secondary=board_tokens)
+
+
 class Twin(Base):
     """Two writable attributes on one column: conflicting values in one body."""
 

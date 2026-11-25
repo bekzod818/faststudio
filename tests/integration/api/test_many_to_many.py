@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -28,12 +29,17 @@ from tests.factories.models import (
     AdminUser,
     Article,
     Base,
+    Board,
+    Label,
     Person,
     Post,
     Tag,
+    Token,
     Topic,
     article_loose_topics,
     article_topics,
+    board_labels,
+    board_tokens,
     follows,
     post_tags,
 )
@@ -55,6 +61,11 @@ TABLES = [
         "article_topics",
         "article_loose_topics",
         "article_weighted_topics",
+        "labels",
+        "tokens",
+        "boards",
+        "board_labels",
+        "board_tokens",
     )
 ]
 POSTGRES_URL = os.environ.get("FASTSTUDIO_TEST_POSTGRES_URL", "")
@@ -72,6 +83,23 @@ class TagAdmin(ModelAdmin, model=Tag):
 class PersonAdmin(ModelAdmin, model=Person):
     list_display = ("id", "name")
     many_to_many = ("follows",)
+
+
+class BoardAdmin(ModelAdmin, model=Board):
+    list_display = ("id", "title")
+    many_to_many = ("labels", "tokens")
+
+
+class LabelAdmin(ModelAdmin, model=Label):
+    list_display = ("code", "name")
+
+
+class TokenAdmin(ModelAdmin, model=Token):
+    list_display = ("uid", "name")
+
+
+TOKEN_A = uuid.UUID("0f8fad5b-d9cb-469f-a165-70867728950e")
+TOKEN_B = uuid.UUID("7c9e6679-7425-40de-944b-e07fc1f90ae7")
 
 
 class ArticleAdmin(ModelAdmin, model=Article):
@@ -132,6 +160,9 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
         session.add_all([Person(id=i, name=f"p{i}") for i in (1, 2, 3)])
         session.add_all([Post(id=1, title="tagged"), Post(id=2, title="plain")])
         session.add(Article(id=1, title="many topics"))
+        session.add_all([Label(code="red", name="Red"), Label(code="blue", name="Blue")])
+        session.add_all([Token(uid=TOKEN_A, name="alpha"), Token(uid=TOKEN_B, name="beta")])
+        session.add(Board(id=1, title="board"))
         await session.flush()
         await session.execute(
             insert(post_tags), [{"post_id": 1, "tag_id": 1}, {"post_id": 1, "tag_id": 2}]
@@ -142,7 +173,7 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
             [{"article_id": 1, "topic_id": 1}, {"article_id": 1, "topic_id": 2}],
         )
         if database == "postgres":  # explicit ids do not advance PostgreSQL sequences
-            for table in ("tags", "posts", "people", "topics", "articles"):
+            for table in ("tags", "posts", "people", "topics", "articles", "boards"):
                 await session.execute(
                     text(
                         f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
@@ -163,7 +194,15 @@ def admin(app: FastAPI, db: AsyncEngine, secret_key: str) -> Admin:
     instance = Admin(
         app, engine=db, auth_backend=ModelUserBackend(AdminUser), secret_key=secret_key
     )
-    for admin_class in (PostAdmin, TagAdmin, PersonAdmin, ArticleAdmin):
+    for admin_class in (
+        PostAdmin,
+        TagAdmin,
+        PersonAdmin,
+        ArticleAdmin,
+        BoardAdmin,
+        LabelAdmin,
+        TokenAdmin,
+    ):
         instance.register(admin_class)
     return instance
 
@@ -215,7 +254,7 @@ async def client(sign_in: Callable[[], Awaitable[Client]]) -> Client:
     return await sign_in()
 
 
-async def _links(db: AsyncEngine, table: Any, local: str, remote: str, pk: int) -> list[int]:
+async def _links(db: AsyncEngine, table: Any, local: str, remote: str, pk: int) -> list[Any]:
     async with AsyncSession(db) as session:
         rows = await session.execute(
             select(table.c[remote]).where(table.c[local] == pk).order_by(table.c[remote])
@@ -421,10 +460,33 @@ async def test_concurrent_identical_adds_never_fail_or_duplicate(
     )
     statuses = sorted(r.status_code for r in results)
     assert statuses in ([200, 200], [200, 409]), [r.text for r in results]
-    shown = (await first.get(path.removeprefix(API))).json()["data"][field]
-    assert shown == [1]  # DISTINCT: duplicates never reach the API
+    assert (await first.get(path)).json()["data"][field] == [1]  # and reads are DISTINCT
     pk = int(path.rsplit("/", 1)[1])
-    assert set(await _links(db, table, local, remote, pk)) == {1}
+    # The record lock serializes both writes: one pair is stored, even without a
+    # unique constraint on the association table.
+    assert await _links(db, table, local, remote, pk) == [1]
+
+
+async def test_concurrent_replaces_never_merge(
+    sign_in: Callable[[], Awaitable[Client]], db: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = await sign_in(), await sign_in()
+    barrier = asyncio.Barrier(2)
+    replace_many = write_module._replace_many
+
+    async def synchronized(*args: Any, **kwargs: Any) -> None:
+        await barrier.wait()
+        await replace_many(*args, **kwargs)
+
+    monkeypatch.setattr(write_module, "_replace_many", synchronized)
+    results = await asyncio.gather(
+        first.patch("/models/posts/items/2", {"tags": [1, 2]}),
+        second.patch("/models/posts/items/2", {"tags": [3]}),
+    )
+    assert all(r.status_code in {200, 409} for r in results), [r.text for r in results]
+    assert any(r.status_code == 200 for r in results)
+    stored = await _links(db, post_tags, "post_id", "tag_id", 2)
+    assert stored in ([1, 2], [3])  # one request's set, never the union
 
 
 # --------------------------------------------------------------------------- bounds
@@ -470,3 +532,29 @@ async def test_ten_thousand_keys_round_trip_in_chunks(
         assert len(row["many_labels"]["tags"]) == 10_000
         assert row["many_labels"]["tags"]["10009"] == "t10009"
         assert row["truncated"] == []
+
+
+# --------------------------------------------------------------------------- key types
+
+
+async def test_string_and_uuid_keys(client: Client, db: AsyncEngine) -> None:
+    upper = str(TOKEN_B).upper()  # any case is accepted for a UUID
+    response = await client.patch(
+        "/models/boards/items/1", {"labels": ["red", "blue"], "tokens": [upper, str(TOKEN_A)]}
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()
+    assert row["data"]["labels"] == ["blue", "red"]
+    assert row["data"]["tokens"] == sorted([str(TOKEN_A), str(TOKEN_B)])
+    assert row["many_labels"] == {
+        "labels": {"blue": "Blue", "red": "Red"},
+        "tokens": {str(TOKEN_A): "alpha", str(TOKEN_B): "beta"},
+    }
+    assert await _links(db, board_labels, "board_id", "label_code", 1) == ["blue", "red"]
+    replaced = await client.patch("/models/boards/items/1", {"labels": ["red"], "tokens": []})
+    assert replaced.json()["data"]["labels"] == ["red"]
+    assert await _links(db, board_tokens, "board_id", "token_uid", 1) == []
+    unknown = await client.patch("/models/boards/items/1", {"labels": ["green"]})
+    assert (["labels"], "foreign_key") in _issues(unknown)
+    not_a_uuid = await client.patch("/models/boards/items/1", {"tokens": ["nope"]})
+    assert unknown.status_code == not_a_uuid.status_code == 422

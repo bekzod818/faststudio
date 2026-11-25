@@ -132,8 +132,9 @@ class PostAdmin(ModelAdmin, model=Post):
   the field is marked truncated and becomes read-only for that record, so a
   partial list is never written back.
 - **Unique pairs.** Give the association table a primary key or unique
-  constraint on the two foreign keys. Registration warns when it has none,
-  because concurrent writes could then store duplicate links. Reads hide
+  constraint on the two foreign keys. FastStudio serializes its own link
+  writes per record, but other code writing the table could still store
+  duplicate links, so registration warns when the table has none. Reads hide
   duplicates either way.
 - **Deleting** a record removes its opted-in links (both directions for
   self-referential fields, and links of other registered models' opted-in

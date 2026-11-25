@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
@@ -30,6 +31,7 @@ from faststudio.auth._guard import (
 )
 from faststudio.auth.backend import AuthenticatedUser
 from faststudio.query._many import (
+    INSERT_CHUNK_SIZE,
     chunks,
     delete_links_statement,
     delete_links_to_statement,
@@ -135,23 +137,18 @@ async def _check_many(
         raise _invalid(issues)
 
 
-async def _check_not_truncated(
-    session: AsyncSession, registered: RegisteredModel, pk: object, many: dict[str, list[Any]]
-) -> None:
-    """Refuse to replace a set that has more links than can be shown (ADR-0010 §4)."""
-    issues: list[ValidationIssue] = []
-    for name in many:
-        field = registered.many_to_many[name]
-        if len(await linked_keys(session, field, pk, field.max_items + 1)) > field.max_items:
-            issues.append(
-                ValidationIssue(
-                    loc=[name],
-                    msg=f"More than {field.max_items} links exist; this field is read-only here.",
-                    type="truncated",
-                )
-            )
-    if issues:
-        raise _invalid(issues)
+async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: object) -> None:
+    """Serialize concurrent link writes to the same record.
+
+    `SELECT ... FOR UPDATE` locks the row on PostgreSQL and MySQL; on SQLite,
+    which ignores it, a write statement that matches nothing takes the
+    database write lock. A concurrent writer then waits and reads the links
+    after the first commits (or gets 409 under snapshot isolation).
+    """
+    first = next(iter(registered.many_to_many.values()))
+    link = first.link
+    await session.execute(select(link.local_pk).where(link.local_pk == pk).with_for_update())
+    await session.execute(delete_links_statement(link, pk, ()))
 
 
 async def _replace_many(
@@ -164,22 +161,42 @@ async def _replace_many(
 ) -> None:
     """Make each field's links exactly the sent keys: delete the removed, insert the added.
 
-    Only keys not already linked are inserted, so a concurrent identical write
-    cannot create a duplicate pair through this path (a unique constraint on the
-    pair turns a lost race into 409).
+    On update the record is locked first, so the current links are read after
+    any concurrent link write committed: two replaces of the same field never
+    merge, and identical concurrent adds never store a duplicate pair. A field
+    with more than `max_items` links (also after a concurrent write) is refused
+    with 422 `truncated`, because a partial list must never be written back.
     """
+    if not many:
+        return
+    if not created:
+        await _lock_record(session, registered, pk)
+    truncated: list[ValidationIssue] = []
     for name, keys in many.items():
         field = registered.many_to_many[name]
         current: set[object] = set()
         if not created:
-            current = set(await linked_keys(session, field, pk, field.max_items + 1))
+            linked = await linked_keys(session, field, pk, field.max_items + 1)
+            if len(linked) > field.max_items:
+                truncated.append(
+                    ValidationIssue(
+                        loc=[name],
+                        msg=f"More than {field.max_items} links exist; this field is "
+                        "read-only here.",
+                        type="truncated",
+                    )
+                )
+                continue
+            current = set(linked)
         wanted = set(keys)
         removed = sorted(current - wanted, key=repr)
         added = [key for key in keys if key not in current]
         for chunk in chunks(removed):
             await session.execute(delete_links_statement(field.link, pk, chunk))
-        for chunk in chunks(added):
+        for chunk in chunks(added, INSERT_CHUNK_SIZE):  # two bound parameters per key
             await session.execute(insert_links_statement(field.link, pk, chunk))
+    if truncated:
+        raise _invalid(truncated)
 
 
 async def _delete_links(
@@ -288,7 +305,6 @@ async def update_item(
     values, many = _split_many(registered, sent)
     await _check_relations(session, registered, values)
     pk_value = getattr(obj, registered.pk_field)
-    await _check_not_truncated(session, registered, pk_value, many)
     await _check_many(session, registered, many)
     if sent:
         async with _writing(session, registered, "update"):

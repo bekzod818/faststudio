@@ -11,8 +11,10 @@ from faststudio.introspection._many import ManyToManyLink
 
 _T = TypeVar("_T")
 
-#: Most bound parameters per IN (...) list: within SQLite's historical limit of 999.
+#: Most keys per statement. IN (...) lists bind one parameter per key, multi-row
+#: inserts two, so both stay within SQLite's historical limit of 999 parameters.
 CHUNK_SIZE = 500
+INSERT_CHUNK_SIZE = CHUNK_SIZE // 2
 
 
 def chunks(values: Sequence[_T], size: int = CHUNK_SIZE) -> Iterator[Sequence[_T]]:

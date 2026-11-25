@@ -215,3 +215,40 @@ def test_unique_constraint_or_index_counts_as_unique_pair() -> None:
 def test_edge_cases_are_not_plain(name: str, reason: str) -> None:
     with pytest.raises(NotPlainError, match=reason):
         plain_many_to_many(_rel(_A, name))
+
+
+# --------------------------------------------------------------------------- inheritance
+
+
+class _Member(_Base):
+    __tablename__ = "edge_members"
+    __mapper_args__ = {"polymorphic_on": "kind", "polymorphic_identity": "member"}  # noqa: RUF012
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))
+
+
+class _Staff(_Member):
+    """Single-table subclass: its rows are filtered by `kind` only when loading."""
+
+    __mapper_args__ = {"polymorphic_identity": "staff"}  # noqa: RUF012
+
+
+_team_staff = Table(
+    "edge_team_staff",
+    _Base.metadata,
+    Column("a_id", ForeignKey("edge_a.id"), primary_key=True),
+    Column("member_id", ForeignKey("edge_members.id"), primary_key=True),
+)
+_A.staff = relationship(_Staff, secondary=_team_staff)
+_A.members = relationship(_Member, secondary=_team_staff, overlaps="staff")
+configure_mappers()
+
+
+def test_single_table_subclass_target_is_not_plain() -> None:
+    """Direct writes would bypass the discriminator filter (any member could be linked)."""
+    with pytest.raises(NotPlainError, match="single-table inheritance"):
+        plain_many_to_many(_rel(_A, "staff"))
+
+
+def test_inheritance_base_target_is_plain() -> None:
+    assert plain_many_to_many(_rel(_A, "members")).target_model is _Member

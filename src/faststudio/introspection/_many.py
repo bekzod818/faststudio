@@ -10,6 +10,7 @@ from sqlalchemy import Column, Integer, Table, UniqueConstraint
 from sqlalchemy.orm import RelationshipDirection, RelationshipProperty
 from sqlalchemy.sql.elements import ColumnElement
 
+from faststudio.exceptions import FastStudioError
 from faststudio.introspection._types import FieldType, value_type
 
 #: Default and largest allowed number of related keys per field (`many_to_many_limits`).
@@ -20,8 +21,11 @@ MAX_RELATED_ITEMS_LIMIT = 10_000
 _KEY_TYPES: frozenset[FieldType] = frozenset({"integer", "string", "uuid"})
 
 
-class NotPlainError(Exception):
-    """The relationship is not a plain many-to-many; `reason` says why."""
+class NotPlainError(FastStudioError):
+    """The relationship is not a plain many-to-many; `reason` says why (internal).
+
+    Registration converts it to `ConfigurationError`; it never reaches users.
+    """
 
     def __init__(self, reason: str) -> None:
         """Create the error with a human-readable reason."""
@@ -117,6 +121,12 @@ def plain_many_to_many(relationship: RelationshipProperty[Any]) -> ManyToManyLin
     target_pk, remote_fk = _single_pair(relationship.secondary_synchronize_pairs or [])
     parent_pk = relationship.parent.primary_key
     target_mapper = relationship.mapper
+    if target_mapper.single:
+        msg = (
+            "its target is a single-table inheritance subclass; FastStudio writes the "
+            "association table directly and would bypass the discriminator filter"
+        )
+        raise NotPlainError(msg)
     if list(parent_pk) != [local_pk] or list(target_mapper.primary_key) != [target_pk]:
         msg = "it must reference the single-column primary keys of both models"
         raise NotPlainError(msg)
