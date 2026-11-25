@@ -52,14 +52,12 @@ def locked_keys_statement(link: ManyToManyLink, pk: object, limit: int) -> Selec
 
 
 def touch_record_statement(link: ManyToManyLink, pk: object) -> Update:
-    """`UPDATE` the record's row without changing it: a write lock on every database.
+    """`UPDATE` the record's row without changing it: SQLite's write lock.
 
-    Setting the primary key (and every column with an `onupdate` default) to
-    itself changes nothing, but it is a real write: concurrent link writes to
-    the same record wait for it, and under snapshot isolation (PostgreSQL
-    REPEATABLE READ) the loser fails with a serialization error (409).
-    Database `ON UPDATE` triggers on the table still fire; link-only writes do
-    not bump SQLAlchemy `onupdate` columns.
+    Used only on SQLite, which has no `SELECT ... FOR UPDATE`. Setting the
+    primary key (and every column with an `onupdate` default) to itself changes
+    nothing, so SQLAlchemy `onupdate` columns are not bumped; SQLite `ON
+    UPDATE` triggers on the table do fire.
     """
     table = link.local_pk.table
     unchanged = {link.local_pk.key: link.local_pk}

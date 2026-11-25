@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
@@ -138,9 +139,24 @@ async def _check_many(
 
 
 async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: object) -> None:
-    """Serialize concurrent link writes to the same record (see `touch_record_statement`)."""
+    """Serialize concurrent link writes to the same record without changing its row.
+
+    PostgreSQL and MySQL/MariaDB: `SELECT ... FOR UPDATE` on the record's row,
+    so host `ON UPDATE` triggers never fire for a links-only write. A second
+    writer waits; it then reads the first writer's links under READ COMMITTED
+    (PostgreSQL's default), InnoDB REPEATABLE READ (locking read) and
+    SERIALIZABLE (aborted with 409). Under PostgreSQL REPEATABLE READ its
+    snapshot stays stale, so concurrent link edits of one record may merge
+    (documented limitation).
+
+    SQLite has no `FOR UPDATE`: a no-change `UPDATE` takes the database write
+    lock (SQLite `ON UPDATE` triggers on the record's table do fire).
+    """
     link = next(iter(registered.many_to_many.values())).link
-    await session.execute(touch_record_statement(link, pk))
+    if session.get_bind().dialect.name == "sqlite":
+        await session.execute(touch_record_statement(link, pk))
+    else:
+        await session.execute(select(link.local_pk).where(link.local_pk == pk).with_for_update())
 
 
 async def _replace_many(

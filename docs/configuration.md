@@ -137,12 +137,22 @@ class PostAdmin(ModelAdmin, model=Post):
   duplicate links, so registration warns when the table has none. Reads hide
   duplicates either way.
 - **Concurrent writes.** Before changing a record's links, FastStudio locks
-  the record with a no-change `UPDATE` of its row and reads the current links
-  with a locking read. Concurrent link writes to the same record are therefore
-  serialized (under snapshot isolation the second gets `409`). Because it is a
-  real `UPDATE`, database `ON UPDATE` triggers on the record's table (audit or
-  `updated_at` triggers) fire even when only links change. SQLAlchemy
-  `onupdate` defaults are not applied.
+  the record's row and reads its current links with a locking read, so
+  concurrent link writes to the same record are serialized:
+  - **PostgreSQL and MySQL/MariaDB:** `SELECT ... FOR UPDATE`. The row is not
+    written, so your `ON UPDATE` triggers (audit, `updated_at`) do not fire
+    when only links change. Under READ COMMITTED (PostgreSQL's default),
+    InnoDB's REPEATABLE READ and SERIALIZABLE (the second writer gets `409`),
+    concurrent link edits of one record never merge.
+  - **PostgreSQL REPEATABLE READ:** the second writer keeps its earlier
+    snapshot and no error is raised, so two concurrent link edits of the same
+    record may merge (and, without a unique pair, store a duplicate row that
+    reads hide). Use READ COMMITTED or SERIALIZABLE for the admin's engine if
+    that matters.
+  - **SQLite** has no `FOR UPDATE`: FastStudio takes the database write lock
+    with a no-change `UPDATE` of the record's row, so SQLite `ON UPDATE`
+    triggers on that table **do** fire when only links change. SQLAlchemy
+    `onupdate` defaults are not applied.
 - **Deleting** a record removes its opted-in links (both directions for
   self-referential fields, and links of other registered models' opted-in
   fields pointing at it) instead of refusing with `409`. Relationships that
