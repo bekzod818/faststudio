@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import Column, Table, delete, insert, select, update
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -102,7 +103,10 @@ def _insert_ignoring_duplicates(table: Table, codename: Column[Any], dialect: st
     if dialect == "postgresql":
         return postgresql_insert(table).on_conflict_do_nothing(index_elements=[codename])
     if dialect in {"mysql", "mariadb"}:
-        return insert(table).prefix_with("IGNORE")
+        # Not INSERT IGNORE: that would also turn data errors (e.g. a codename
+        # truncated to fit a short column) into warnings and store another codename.
+        statement = mysql_insert(table)
+        return statement.on_duplicate_key_update({codename.name: statement.inserted[codename.name]})
     return insert(table)
 
 
@@ -119,8 +123,9 @@ async def apply_sync(
     """Create missing permissions, update names, and (with `prune`) delete stale ones.
 
     Runs in the caller's transaction. A codename created meanwhile by another
-    worker is skipped (``ON CONFLICT DO NOTHING`` / ``INSERT IGNORE``; a
-    savepoint per insert on other databases).
+    worker is skipped (``ON CONFLICT DO NOTHING``; on MySQL/MariaDB ``ON
+    DUPLICATE KEY UPDATE`` with an unchanged value, which still raises on
+    data errors; a savepoint per insert on other databases).
     """
     model = rules.models["permission"]
     bind = bind_to(model)

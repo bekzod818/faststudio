@@ -627,6 +627,8 @@ def test_insert_statements_per_dialect() -> None:
 
     table = AUTH.permission.__table__  # type: ignore[attr-defined]
     statement = _insert_ignoring_duplicates(table, table.c.codename, "mysql")
-    assert "INSERT IGNORE" in str(statement.compile(dialect=mysql.dialect()))
+    sql = str(statement.compile(dialect=mysql.dialect()))
+    assert "ON DUPLICATE KEY UPDATE" in sql
+    assert "IGNORE" not in sql  # data errors (truncation) must still raise
     plain = _insert_ignoring_duplicates(table, table.c.codename, "oracle")
     assert "IGNORE" not in str(plain)
