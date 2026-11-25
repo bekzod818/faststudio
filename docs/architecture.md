@@ -46,6 +46,7 @@ FastStudio is two halves joined by a versioned JSON contract:
 | `schemas/` | Pydantic API contract `contract.py` (exported to JSON Schema / TypeScript) and `_meta.py` (registered model → `ModelMeta`) |
 | `query/` | strict parameter parsing (`_params.py`) and statement building (`_list.py`); the only place request input meets SQL |
 | `api/` | sub-app factory (`_app.py`), shared deps, routers `auth.py` (login/logout/me), `models.py` (meta, list, retrieve, choices, link counts) and `write.py` (create, update, delete), authorization (`_authz.py`) and escalation rules (`_escalation.py`), serialization, error handling |
+| `contrib/auth/` | optional: `AuthModels`, `DatabaseAuthBackend`, default admins (core never imports it) |
 | `auth/` | `AuthBackend` protocol, `ModelUserBackend`, passwords, session, CSRF; backend capabilities (`capabilities.py`), the account guard (`guard.py`, ADR-0009/0011) and `has_perm` (`permissions.py`) |
 | `security/` | security headers, same-origin API guard, secret validation, rate limiting |
 | `_spa.py` | index.html rendering, runtime config injection, history fallback |

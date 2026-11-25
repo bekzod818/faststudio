@@ -153,6 +153,9 @@ class Admin:
             )
         )
         app.mount(base_url, wrap_admin_app(self._sub_app, context), name="faststudio")
+        if self._capabilities.register_admins is not None:
+            # The backend's own models (e.g. contrib.auth users and groups).
+            self._capabilities.register_admins(self)
 
     def register(self, model_admin: _A) -> _A:
         """Validate and register a :class:`ModelAdmin` subclass.
@@ -172,6 +175,15 @@ class Admin:
         guard = self._capabilities.account_guard
         if guard is not None:
             guard.check_model(registered.model)
+            exposed = [
+                name for name in guard.secret_fields(registered.model) if name in registered.fields
+            ]
+            if exposed:
+                msg = (
+                    f"{model_admin.__name__}: {', '.join(exposed)} must be in `exclude`: the "
+                    "auth backend marks them secret (e.g. password hashes)."
+                )
+                raise ConfigurationError(msg)
         if self._escalation is not None:
             self._escalation.check_model(registered)
         self._registry.add(registered)
@@ -260,7 +272,7 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
         capabilities.account_guard,
         AccountGuard,
         "account_guard",
-        sync=("guards", "check_model", "protected_fields", "admin_flag"),
+        sync=("guards", "check_model", "protected_fields", "admin_flag", "secret_fields"),
         coroutines=("before_write",),
     )
     _check_protocol(
@@ -281,6 +293,10 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
     endpoints: object = capabilities.password_endpoints
     if not isinstance(endpoints, bool):
         msg = "BackendCapabilities.password_endpoints must be a bool."
+        raise ConfigurationError(msg)
+    register: object = capabilities.register_admins
+    if register is not None and not callable(register):
+        msg = "BackendCapabilities.register_admins must be a callable taking the Admin."
         raise ConfigurationError(msg)
     if endpoints and (capabilities.accounts is None or capabilities.account_guard is None):
         msg = "BackendCapabilities.password_endpoints needs accounts and an account_guard."

@@ -46,6 +46,13 @@ listed under **Changed** or **Removed** with migration notes.
   permission may change the superuser-like flag or touch such accounts.
 - API contract (additive): `PermissionsMeta.view`, `AccountMeta.admin_flag`.
 - Admin UI: a "Not found or no access" page.
+- `faststudio.contrib.auth`: `AuthModels(Base)` (users, groups,
+  permissions on your declarative base), `DatabaseAuthBackend` (sign-in,
+  superusers, per-user and group permissions, escalation rules, passwords),
+  and the users/groups/permissions admins (`user_admin`, `group_admin`,
+  `permission_admin` to customize). For admin staff accounts only.
+- `AccountGuard.secret_fields` (enforced at `register()`) and
+  `BackendCapabilities.register_admins`.
 - Passwords (ADR-0011, ADR-0013):
   - validators in `faststudio.auth.validators` (`DEFAULT_VALIDATORS`:
     length, similarity to name and email, not only digits;

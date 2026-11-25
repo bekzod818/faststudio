@@ -11,7 +11,7 @@ the CLI can call them too.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, final, runtime_checkable
 
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from faststudio.auth.backend import AuthenticatedUser
 
 if TYPE_CHECKING:
+    from faststudio.admin import Admin
     from faststudio.auth.guard import AccountGuard
     from faststudio.auth.validators import PasswordValidator
 
@@ -185,6 +186,9 @@ class BackendCapabilities:
             core can enforce the escalation rules on writes to them. Needs
             `permissions`, and an `account_guard` that covers its user model.
         accounts: Sets and checks account passwords (CLI, password endpoints).
+        register_admins: Called with the `Admin` at the end of its
+            construction, to register the backend's own models (e.g. users
+            and groups of `faststudio.contrib.auth`).
         password_endpoints: Offer the HTTP password endpoints (needs
             `accounts` and an `account_guard`). Off by default: with
             `ModelUserBackend` every admin holds `ALL`, so any admin could
@@ -200,3 +204,4 @@ class BackendCapabilities:
     permission_schema: PermissionSchema | None = None
     accounts: AccountManager | None = None
     password_endpoints: bool = False
+    register_admins: Callable[[Admin], None] | None = None
