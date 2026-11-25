@@ -60,6 +60,7 @@ def test_no_schema_means_no_rules() -> None:
         ({"user_permissions": "nope"}, "has no relationship 'nope'"),
         ({"user_permissions": "groups"}, "targets AuthGroup, not AuthPermission"),
         ({"codename_field": "label"}, "'label' is not a column"),
+        ({"name_field": "title"}, "name_field 'title' is not a column"),
         ({"user_model": object}, "not a mapped SQLAlchemy class"),
         (
             {

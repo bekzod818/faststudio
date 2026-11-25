@@ -80,6 +80,8 @@ class EscalationRules:
     codename: Column[Any]
     #: Mapped attribute holding the codename (may differ from the column name).
     codename_attr: str = ""
+    #: Column holding the permission's name (`PermissionSchema.name_field`), if any.
+    name_column: Column[Any] | None = None
     #: Association tables of the declared relationships (never registrable).
     tables: frozenset[Any] = field(default_factory=frozenset)
 
@@ -132,6 +134,15 @@ class EscalationRules:
                 "permission_groups (read to compute what a group grants)."
             )
             raise ConfigurationError(msg)
+        if (
+            schema.name_field is not None
+            and schema.name_field not in _mapper(models["permission"]).columns
+        ):
+            msg = (
+                f"PermissionSchema.name_field {schema.name_field!r} is not a column of "
+                f"{models['permission'].__name__}."
+            )
+            raise ConfigurationError(msg)
         codename = _mapper(models["permission"]).columns.get(schema.codename_field)
         if codename is None:
             msg = (
@@ -152,6 +163,11 @@ class EscalationRules:
             links=links,
             codename=codename,
             codename_attr=schema.codename_field,
+            name_column=(
+                None
+                if schema.name_field is None
+                else _mapper(models["permission"]).columns[schema.name_field]
+            ),
             tables=frozenset(tables),
         )
 

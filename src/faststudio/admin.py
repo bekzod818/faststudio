@@ -12,13 +12,19 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.routing import Route
-from starlette.types import Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
 from faststudio.api._escalation import EscalationRules
+from faststudio.api._startup_sync import StartupPermissionSync
 from faststudio.auth.backend import AuthBackend
-from faststudio.auth.capabilities import AccountManager, BackendCapabilities, PermissionBackend
+from faststudio.auth.capabilities import (
+    AccountManager,
+    BackendCapabilities,
+    PermissionBackend,
+    UsernameAudit,
+)
 from faststudio.auth.csrf import CsrfTokens
 from faststudio.auth.guard import AccountGuard
 from faststudio.auth.session import SessionManager
@@ -67,6 +73,7 @@ class Admin:
         max_list_offset: int = DEFAULT_MAX_LIST_OFFSET,
         rate_limiter: RateLimiter | None = None,
         show_powered_by: bool = True,
+        sync_permissions_on_startup: bool = False,
     ) -> None:
         """Configure FastStudio for ``app``.
 
@@ -91,6 +98,10 @@ class Admin:
                 scan every skipped row; raise it only if your database can
                 afford that, otherwise narrow results with search, filters or
                 sorting. 1 to 10 000 000.
+            sync_permissions_on_startup: Create missing permissions (as
+                ``faststudio syncpermissions`` does, never deleting) on the
+                first admin request. Needs a backend with a permission
+                schema, such as `contrib.auth`.
             rate_limiter: Login throttling; defaults to `InMemoryRateLimiter()`
                 (5 attempts per 15 minutes per client IP and username, per process).
             show_powered_by: Show the "Powered by FastStudio" footer.
@@ -152,7 +163,25 @@ class Admin:
                 include_in_schema=False,
             )
         )
-        app.mount(base_url, wrap_admin_app(self._sub_app, context), name="faststudio")
+        mounted: ASGIApp = wrap_admin_app(self._sub_app, context)
+        sync: object = sync_permissions_on_startup  # untyped callers
+        if not isinstance(sync, bool):
+            msg = "sync_permissions_on_startup must be a bool."
+            raise ConfigurationError(msg)
+        if sync:
+            if self._escalation is None:
+                msg = (
+                    "sync_permissions_on_startup needs an auth backend with a permission "
+                    "schema (BackendCapabilities.permission_schema), e.g. contrib.auth."
+                )
+                raise ConfigurationError(msg)
+            mounted = StartupPermissionSync(
+                mounted,
+                rules=self._escalation,
+                registry=self._registry,
+                session_maker=self._session_maker,
+            )
+        app.mount(base_url, mounted, name="faststudio")
         if self._capabilities.register_admins is not None:
             # The backend's own models (e.g. contrib.auth users and groups).
             self._capabilities.register_admins(self)
@@ -279,8 +308,21 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
         capabilities.accounts,
         AccountManager,
         "accounts",
+        sync=("required_fields",),
+        coroutines=(
+            "user_inputs",
+            "check_password",
+            "set_password",
+            "find_account",
+            "create_admin",
+        ),
+    )
+    _check_protocol(
+        capabilities.username_audit,
+        UsernameAudit,
+        "username_audit",
         sync=(),
-        coroutines=("user_inputs", "check_password", "set_password"),
+        coroutines=("audit", "fix"),
     )
     if capabilities.accounts is not None:
         validators: object = capabilities.accounts.password_validators

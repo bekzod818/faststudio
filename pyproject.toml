@@ -49,6 +49,9 @@ dependencies = [
   "argon2-cffi>=23.1",
 ]
 
+[project.scripts]
+faststudio = "faststudio.cli:console_main"
+
 [project.urls]
 Homepage = "https://github.com/bekzod818/faststudio"
 Repository = "https://github.com/bekzod818/faststudio"

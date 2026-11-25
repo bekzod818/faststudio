@@ -51,6 +51,17 @@ listed under **Changed** or **Removed** with migration notes.
   superusers, per-user and group permissions, escalation rules, passwords),
   and the users/groups/permissions admins (`user_admin`, `group_admin`,
   `permission_admin` to customize). For admin staff accounts only.
+- The `faststudio` command line (ADR-0012): `createadmin`,
+  `changepassword`, `syncpermissions` (`--dry-run`, `--prune`, `--yes`) and
+  `checkusers` (`--fix`). Passwords are only read interactively, twice.
+- `Admin(sync_permissions_on_startup=True)`.
+- `AccountManager.find_account`, `required_fields` and `create_admin`;
+  `BackendCapabilities.username_audit` (`UsernameAudit`, `AuditedAccount`);
+  `PermissionSchema.name_field`.
+- Public password helpers in `faststudio.auth.passwords` for custom
+  backends: `hash_password_async`, `verify_password_async`,
+  `dummy_verify_async`, `prepare_dummy_hash`, `is_password_hash` (with the
+  existing `hash_password`).
 - `AccountGuard.secret_fields` (enforced at `register()`; a required member
   of the not yet released `AccountGuard` protocol, so custom guards written
   against earlier development builds must add it) and
@@ -69,6 +80,9 @@ listed under **Changed** or **Removed** with migration notes.
 
 ### Changed
 
+- The README and getting-started create the first admin with
+  `faststudio createadmin`; the v0.1 `create_admin.py` script is kept under
+  "Without the CLI".
 - Auth backends that still implement 0.1.1's private account-guard methods
   without `faststudio_capabilities` fail at startup instead of silently
   losing their guard. `ModelUserBackend` provides its guard through

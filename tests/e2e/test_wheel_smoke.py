@@ -40,6 +40,19 @@ def test_spa_is_bundled() -> None:
     assert any(p.name.endswith(".js") for p in (static / "assets").iterdir())
 
 
+def test_console_script_is_installed() -> None:
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    script = shutil.which("faststudio", path=str(Path(sys.executable).parent))
+    assert script is not None
+    result = subprocess.run(
+        [script, "--help"], capture_output=True, text=True, check=False, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    assert "syncpermissions" in result.stdout
+
+
 def test_typed_marker_is_bundled() -> None:
     assert (resources.files("faststudio") / "py.typed").is_file()
 

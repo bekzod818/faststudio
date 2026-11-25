@@ -82,48 +82,21 @@ class UserAdmin(ModelAdmin, model=User):
     search_fields = ["username", "email"]
     list_filter = ["is_active", "is_admin"]
     exclude = ["password_hash"]  # never show or accept credentials
-    can_create = False  # accounts are created in code (see create_admin.py)
+    can_create = False  # accounts are created with `faststudio createadmin`
+
+
+async def create_tables() -> None:  # in a real project, use your migrations
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await engine.dispose()
 ```
 
-Save as `create_admin.py` (creates the table and your first admin; run it once
-per account, since usernames are unique):
-
-```python
-import asyncio
-import getpass
-
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
-from faststudio import hash_password
-from main import Base, User, engine
-
-
-async def create_admin() -> None:
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        async with async_sessionmaker(engine)() as session:
-            session.add(
-                User(
-                    username=input("Username: "),
-                    email=input("Email: "),
-                    password_hash=hash_password(getpass.getpass("Password: ")),
-                    is_admin=True,
-                )
-            )
-            await session.commit()
-    finally:
-        await engine.dispose()
-
-
-asyncio.run(create_admin())
-```
-
-Then:
+Then create the table and your first admin, and start the app:
 
 ```bash
 export FASTSTUDIO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-python create_admin.py
+python -c "import asyncio, main; asyncio.run(main.create_tables())"
+faststudio createadmin --app main:admin   # asks for the username, email and password
 uvicorn main:app
 # open http://127.0.0.1:8000/admin
 ```
@@ -150,6 +123,7 @@ app covering every field type:
 | `max_list_offset` | – | `10_000` | Lists stop paging after this many rows (deep `OFFSET`s are slow); search, filter or sort to reach older rows. |
 | `rate_limiter` | – | in-memory | Use a shared limiter when running several workers. |
 | `show_powered_by` | – | `True` | "Powered by FastStudio" footer. |
+| `sync_permissions_on_startup` | – | `False` | Create missing permissions on the first admin request (backends with a permission schema, e.g. `contrib.auth`); never deletes. |
 
 Full reference: [docs/configuration.md](https://github.com/bekzod818/faststudio/blob/main/docs/configuration.md).
 

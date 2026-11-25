@@ -183,6 +183,22 @@ class PermAccounts:
             raise LookupError(account_id)
         row.password_hash = hash_password(password)
 
+    async def find_account(self, session: AsyncSession, username: str) -> str | None:
+        found = await session.scalar(select(AuthUser.id).where(AuthUser.username == username))
+        return None if found is None else str(found)
+
+    def required_fields(self) -> tuple[str, ...]:
+        return ()
+
+    async def create_admin(
+        self, session: AsyncSession, *, username: str, password: str, fields: Mapping[str, str]
+    ) -> str:
+        del fields
+        row = AuthUser(username=username, password_hash=hash_password(password), is_superuser=True)
+        session.add(row)
+        await session.flush()
+        return str(row.id)
+
 
 class PermBackend:
     """Auth backend with users, groups and permissions (a test stand-in for contrib)."""

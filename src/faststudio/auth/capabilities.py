@@ -28,10 +28,12 @@ __all__ = [
     "ALL",
     "AccountManager",
     "AllPermissions",
+    "AuditedAccount",
     "BackendCapabilities",
     "PermissionBackend",
     "PermissionSchema",
     "Permissions",
+    "UsernameAudit",
 ]
 
 #: The four model actions. Codenames are ``"<identity>.<action>"``.
@@ -145,6 +147,57 @@ class AccountManager(Protocol):
         """
         ...
 
+    async def find_account(self, session: AsyncSession, username: str) -> str | None:
+        """Return the `account_id` of the account signing in as `username`, or None.
+
+        Match the way sign-in does (e.g. normalized). Return None when no
+        single account matches.
+        """
+        ...
+
+    def required_fields(self) -> Sequence[str]:
+        """Return text fields `create_admin` needs besides username and password."""
+        ...
+
+    async def create_admin(
+        self, session: AsyncSession, *, username: str, password: str, fields: Mapping[str, str]
+    ) -> str:
+        """Create an account with every permission and return its `account_id`.
+
+        `password` was validated by the caller; hash it. Use the ORM, so
+        model-level hooks run. The caller commits.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AuditedAccount:
+    """One account as `UsernameAudit` sees it."""
+
+    account_id: str
+    username: str
+    #: The stored sign-in key.
+    stored: str
+    #: What it should be for `username`.
+    expected: str
+
+
+@runtime_checkable
+class UsernameAudit(Protocol):
+    """Capability: find and repair drift of a stored, normalized sign-in key.
+
+    Used by ``faststudio checkusers``. Backends that sign in by the
+    username itself need not provide it.
+    """
+
+    async def audit(self, session: AsyncSession) -> Sequence[AuditedAccount]:
+        """Return every account with its stored and expected sign-in key."""
+        ...
+
+    async def fix(self, session: AsyncSession, account_ids: Sequence[str]) -> None:
+        """Set the stored key to the expected one for `account_ids` (caller commits)."""
+        ...
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PermissionSchema:
@@ -161,6 +214,8 @@ class PermissionSchema:
     permission_model: type[Any]
     #: Column of `permission_model` holding the codename.
     codename_field: str
+    #: Column holding a human-readable name, written by ``syncpermissions``.
+    name_field: str | None = None
     #: ``user.permissions`` (direct grants).
     user_permissions: str | None
     group_model: type[Any] | None = None
@@ -189,6 +244,8 @@ class BackendCapabilities:
         register_admins: Called with the `Admin` at the end of its
             construction, to register the backend's own models (e.g. users
             and groups of `faststudio.contrib.auth`).
+        username_audit: Finds and repairs a drifted sign-in key
+            (``faststudio checkusers``).
         password_endpoints: Offer the HTTP password endpoints (needs
             `accounts` and an `account_guard`). Off by default: with
             `ModelUserBackend` every admin holds `ALL`, so any admin could
@@ -203,5 +260,6 @@ class BackendCapabilities:
     permissions: PermissionBackend | None = None
     permission_schema: PermissionSchema | None = None
     accounts: AccountManager | None = None
+    username_audit: UsernameAudit | None = None
     password_endpoints: bool = False
     register_admins: Callable[[Admin], None] | None = None
