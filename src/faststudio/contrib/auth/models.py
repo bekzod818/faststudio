@@ -222,6 +222,6 @@ class AuthModels:
             )
         # The sign-in key always follows `username`, whatever was assigned to it
         # (an admin exposing the column, a stale value): recomputed on every flush.
-        event.listen(user, "before_insert", _sync_username)
-        event.listen(user, "before_update", _sync_username)
+        event.listen(user, "before_insert", _sync_username, propagate=True)
+        event.listen(user, "before_update", _sync_username, propagate=True)
         _USED.add(base)
