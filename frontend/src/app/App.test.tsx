@@ -58,6 +58,29 @@ describe("App", () => {
     expect(screen.queryByText(/session has ended/i)).toBeNull();
   });
 
+  it.each([true, false])(
+    "links to the password page only when the backend offers it (%s)",
+    async (offered) => {
+      routes["/auth/me"] = () => json(200, ME);
+      routes["/meta"] = () =>
+        json(200, {
+          schema_version: "1",
+          version: "0",
+          title: "Test Admin",
+          show_powered_by: true,
+          user: ME.user,
+          models: [],
+          capabilities: { change_password: offered, sign_out_everywhere: false },
+        });
+      window.history.replaceState(null, "", "/admin/");
+      render(<App config={CONFIG} />);
+      expect(await screen.findByRole("button", { name: "Sign out" })).toBeVisible();
+      await waitFor(() => {
+        expect(screen.queryByRole("link", { name: "Change password" }) !== null).toBe(offered);
+      });
+    },
+  );
+
   it("returns an expired session to login with the in-app path", async () => {
     routes["/auth/me"] = () => json(200, ME);
     routes["/meta"] = () => json(401, NOT_AUTHENTICATED);

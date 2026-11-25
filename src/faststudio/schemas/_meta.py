@@ -25,6 +25,7 @@ def build_models_meta(
     *,
     guard: AccountGuard | None = None,
     permissions: Mapping[str, PermissionsMeta] | None = None,
+    set_password: bool = False,
 ) -> list[ModelMeta]:
     """Describe the registered models the admin may view, in registration order.
 
@@ -39,13 +40,16 @@ def build_models_meta(
             guard=guard,
             permissions=None if permissions is None else permissions[registered.identity],
             visible=visible,
+            set_password=set_password,
         )
         for registered in registry
         if visible is None or registered.identity in visible
     ]
 
 
-def _account_meta(registered: RegisteredModel, guard: AccountGuard | None) -> AccountMeta | None:
+def _account_meta(
+    registered: RegisteredModel, guard: AccountGuard | None, *, set_password: bool
+) -> AccountMeta | None:
     """List the guard's protected fields the form can show and send (ADR-0009)."""
     if guard is None or not guard.guards(registered.model):
         return None
@@ -61,6 +65,7 @@ def _account_meta(registered: RegisteredModel, guard: AccountGuard | None) -> Ac
         admin_flag=flag
         if flag is not None and flag in specs and not specs[flag].readonly
         else None,
+        set_password=set_password,
     )
 
 
@@ -71,6 +76,7 @@ def build_model_meta(
     guard: AccountGuard | None = None,
     permissions: PermissionsMeta | None = None,
     visible: frozenset[str] | None = None,
+    set_password: bool = False,
 ) -> ModelMeta:
     """Describe one registered model for the SPA.
 
@@ -101,7 +107,12 @@ def build_model_meta(
             *(_field_meta(spec, registry, visible) for spec in specs.values()),
             *(_many_meta(field, registry, visible) for field in registered.many_to_many.values()),
         ],
-        account=_account_meta(registered, guard),
+        account=_account_meta(
+            registered,
+            guard,
+            set_password=set_password
+            and (permissions.edit if permissions is not None else registered.can_edit),
+        ),
     )
 
 

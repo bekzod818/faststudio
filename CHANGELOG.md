@@ -46,6 +46,17 @@ listed under **Changed** or **Removed** with migration notes.
   permission may change the superuser-like flag or touch such accounts.
 - API contract (additive): `PermissionsMeta.view`, `AccountMeta.admin_flag`.
 - Admin UI: a "Not found or no access" page.
+- Passwords (ADR-0011, ADR-0013):
+  - validators in `faststudio.auth.validators` (`DEFAULT_VALIDATORS`:
+    length, similarity to name and email, not only digits;
+    `CommonPasswordValidator` for a list you provide; FastStudio bundles
+    none);
+  - the `accounts` capability (`AccountManager`) and `password_endpoints`;
+  - `ModelUserBackend(password_validators=..., password_endpoints=False)`;
+  - `POST /auth/password` and `POST /models/{identity}/items/{pk}/password`;
+  - "Change password" and "Set password" in the UI;
+  - contract (additive): `MetaResponse.capabilities`,
+    `AccountMeta.set_password`.
 
 ### Changed
 

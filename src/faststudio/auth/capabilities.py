@@ -21,9 +21,11 @@ from faststudio.auth.backend import AuthenticatedUser
 
 if TYPE_CHECKING:
     from faststudio.auth.guard import AccountGuard
+    from faststudio.auth.validators import PasswordValidator
 
 __all__ = [
     "ALL",
+    "AccountManager",
     "AllPermissions",
     "BackendCapabilities",
     "PermissionBackend",
@@ -94,13 +96,51 @@ class PermissionBackend(Protocol):
     ) -> Mapping[object, Permissions]:
         """Return the current permissions of the accounts with primary keys `keys`.
 
-        `keys` are primary keys of the model the account guard covers (the
-        user model). Used by the escalation rules to check the accounts a
-        write affects, including "the target holds `ALL`". Return an entry
-        (possibly an empty frozenset) for **every requested key that exists**,
+        `keys` are native primary keys of the model the account guard covers
+        (the user model), unlike `AccountManager`, which takes string ids.
+        Used by the escalation rules to check the accounts a write affects,
+        including "the target holds `ALL`". Return an entry (possibly an
+        empty frozenset) for **every requested key that exists**,
         keyed by the same values: an account left out is treated as possibly
         holding `ALL` when it is the target of a write (refused), and as
         holding nothing when it would gain permissions.
+        """
+        ...
+
+
+@runtime_checkable
+class AccountManager(Protocol):
+    """Capability: manage the passwords of admin accounts (ADR-0011, ADR-0013).
+
+    Used by the password endpoints and the CLI. `account_id` identifies a
+    row of the model the `account_guard` covers, as the same string as
+    `AuthenticatedUser.id` (unlike `PermissionBackend.resolve_accounts`,
+    which takes native primary keys); an id that does not parse or match is
+    a missing account. Methods run in the
+    caller's transaction; the caller commits.
+    """
+
+    @property
+    def password_validators(self) -> Sequence[PasswordValidator]:
+        """Checked, after FastStudio's hard limits, for every new password."""
+        ...
+
+    async def user_inputs(self, session: AsyncSession, account_id: str) -> Sequence[str]:
+        """Return the account's name, email and similar values (for similarity checks)."""
+        ...
+
+    async def check_password(self, session: AsyncSession, account_id: str, password: str) -> bool:
+        """Return True if `password` is the account's password.
+
+        Take the same time whether or not the account exists or has a usable
+        password (verify against a dummy hash), so the answer reveals nothing.
+        """
+        ...
+
+    async def set_password(self, session: AsyncSession, account_id: str, password: str) -> None:
+        """Store `password` (hashed with `faststudio.hash_password`) for the account.
+
+        Raise `LookupError` if the account does not exist.
         """
         ...
 
@@ -144,6 +184,11 @@ class BackendCapabilities:
         permission_schema: Where users, groups and permissions are stored, so
             core can enforce the escalation rules on writes to them. Needs
             `permissions`, and an `account_guard` that covers its user model.
+        accounts: Sets and checks account passwords (CLI, password endpoints).
+        password_endpoints: Offer the HTTP password endpoints (needs
+            `accounts` and an `account_guard`). Off by default: with
+            `ModelUserBackend` every admin holds `ALL`, so any admin could
+            reset another admin's password.
 
     New capabilities arrive as new optional fields (ADR-0011): the protocols
     above are frozen once released.
@@ -153,3 +198,5 @@ class BackendCapabilities:
     account_guard: AccountGuard | None = None
     permissions: PermissionBackend | None = None
     permission_schema: PermissionSchema | None = None
+    accounts: AccountManager | None = None
+    password_endpoints: bool = False

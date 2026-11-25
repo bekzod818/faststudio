@@ -220,7 +220,11 @@ async def test_meta_marks_the_user_model_as_accounts(
     meta = (await alice.http.get("/admin/api/v1/meta")).json()
     accounts = {m["identity"]: m["account"] for m in meta["models"]}
     assert accounts == {
-        "admin_users": {"protected_fields": ["is_active", "is_admin"], "admin_flag": "is_admin"},
+        "admin_users": {
+            "protected_fields": ["is_active", "is_admin"],
+            "admin_flag": "is_admin",
+            "set_password": False,  # ModelUserBackend: password endpoints are opt-in
+        },
         "teams": None,
     }
     assert meta["user"]["id"] == "1"

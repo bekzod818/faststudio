@@ -15,6 +15,7 @@ import {
 } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { SetPasswordButton } from "@/features/account/SetPasswordDialog";
 import { RecordForm } from "@/features/form/RecordForm";
 import { isOwnAccount, withProtectedFields } from "@/features/record/account";
 import { ModelGate } from "@/features/model/ModelGate";
@@ -141,6 +142,8 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
   // The server refuses these changes on one's own account (409 self_lockout).
   const own = isOwnAccount(model, item.data, userId);
   const canDelete = model.permissions.delete && !own;
+  // Never on one's own record: that goes through "Change password".
+  const canSetPassword = model.account?.set_password === true && !own;
   const lockedFields = model.permissions.edit && (model.account?.protected_fields.length ?? 0) > 0;
   const ownHint = !own
     ? null
@@ -189,18 +192,25 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
           toast.success("Changes saved.");
         }}
         actions={
-          canDelete ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="ml-auto text-destructive"
-              onClick={() => {
-                setConfirming(true);
-              }}
-            >
-              <Trash2 aria-hidden className="size-4" />
-              Delete
-            </Button>
+          canDelete || canSetPassword ? (
+            <>
+              {canSetPassword && (
+                <SetPasswordButton identity={model.identity} pk={pk} title={title} />
+              )}
+              {canDelete && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="ml-auto text-destructive"
+                  onClick={() => {
+                    setConfirming(true);
+                  }}
+                >
+                  <Trash2 aria-hidden className="size-4" />
+                  Delete
+                </Button>
+              )}
+            </>
           ) : undefined
         }
       />

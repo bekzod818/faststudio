@@ -16,6 +16,8 @@ from faststudio.introspection._types import FieldType
 
 __all__ = [
     "SCHEMA_VERSION",
+    "CapabilitiesMeta",
+    "ChangePasswordRequest",
     "ChoiceMeta",
     "ChoicesResponse",
     "ErrorBody",
@@ -33,6 +35,7 @@ __all__ = [
     "PermissionsMeta",
     "RelationMeta",
     "Row",
+    "SetPasswordRequest",
     "SpaConfig",
     "UserMeta",
     "UserResponse",
@@ -152,6 +155,9 @@ class AccountMeta(_Contract):
     #: The superuser-like flag (e.g. ``is_admin``) only an admin holding every
     #: permission may change, when the form shows it; null otherwise.
     admin_flag: str | None
+    #: `POST /models/{identity}/items/{pk}/password` is available to this admin
+    #: (it needs every permission; never for their own record).
+    set_password: bool
 
 
 class ModelMeta(_Contract):
@@ -188,6 +194,15 @@ class UserResponse(_Contract):
     user: UserMeta
 
 
+class CapabilitiesMeta(_Contract):
+    """Optional features the signed-in admin may use (ADR-0011, ADR-0013)."""
+
+    #: `POST /auth/password` (change one's own password).
+    change_password: bool
+    #: `POST /auth/sign-out-everywhere` (v0.2, M20).
+    sign_out_everywhere: bool
+
+
 class MetaResponse(_Contract):
     """`GET /meta`."""
 
@@ -197,6 +212,7 @@ class MetaResponse(_Contract):
     show_powered_by: bool
     user: UserMeta
     models: list[ModelMeta]
+    capabilities: CapabilitiesMeta
 
 
 class Row(_Contract):
@@ -265,6 +281,23 @@ class LoginRequest(_Contract):
 
     username: str = Field(min_length=1, max_length=MAX_USERNAME_LENGTH, pattern=USERNAME_PATTERN)
     password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH, repr=False)
+
+
+class ChangePasswordRequest(_Contract):
+    """`POST /auth/password` body. Passwords never appear in repr or errors."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    current_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH, repr=False)
+    new_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH, repr=False)
+
+
+class SetPasswordRequest(_Contract):
+    """`POST /models/{identity}/items/{pk}/password` body."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    new_password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH, repr=False)
 
 
 class ValidationIssue(_Contract):

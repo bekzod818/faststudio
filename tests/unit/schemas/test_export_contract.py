@@ -36,6 +36,7 @@ def test_output_is_deterministic(exporter: ModuleType) -> None:
 def test_schema_exposes_every_top_level_shape(exporter: ModuleType) -> None:
     schema = exporter.build_schema()
     assert set(schema["properties"]) == {
+        "ChangePasswordRequest",
         "ChoicesResponse",
         "ErrorResponse",
         "ListResponse",
@@ -43,6 +44,7 @@ def test_schema_exposes_every_top_level_shape(exporter: ModuleType) -> None:
         "LoginRequest",
         "MetaResponse",
         "Row",
+        "SetPasswordRequest",
         "SpaConfig",
         "UserResponse",
     }

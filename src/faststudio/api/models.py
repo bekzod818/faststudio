@@ -12,11 +12,13 @@ from faststudio.api._records import detail_row, load_or_404
 from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError
+from faststudio.auth.capabilities import ALL
 from faststudio.query._list import choices_statements, list_statements
 from faststudio.query._params import parse_choices_params, parse_list_params
 from faststudio.schemas._meta import build_models_meta
 from faststudio.schemas.contract import (
     SCHEMA_VERSION,
+    CapabilitiesMeta,
     ChoiceMeta,
     ChoicesResponse,
     LinkCountsResponse,
@@ -39,9 +41,9 @@ async def meta(request: Request, user: CurrentUser, perms: Perms) -> MetaRespons
     # Imported here: `faststudio/__init__.py` (the version's single source) imports the app.
     from faststudio import __version__  # noqa: PLC0415
 
-    del perms  # resolved: the hooks read it
     context = get_context(request)
     guard = context.capabilities.account_guard
+    password_endpoints = context.capabilities.password_endpoints
     permissions = {
         registered.identity: PermissionsMeta(
             view=True,
@@ -58,7 +60,15 @@ async def meta(request: Request, user: CurrentUser, perms: Perms) -> MetaRespons
         title=context.settings.title,
         show_powered_by=context.settings.show_powered_by,
         user=UserMeta(id=user.id, username=user.username),
-        models=build_models_meta(context.registry, guard=guard, permissions=permissions),
+        models=build_models_meta(
+            context.registry,
+            guard=guard,
+            permissions=permissions,
+            set_password=password_endpoints and perms is ALL,
+        ),
+        capabilities=CapabilitiesMeta(
+            change_password=password_endpoints, sign_out_everywhere=False
+        ),
     )
 
 

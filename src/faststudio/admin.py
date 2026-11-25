@@ -18,10 +18,11 @@ from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
 from faststudio.api._escalation import EscalationRules
 from faststudio.auth.backend import AuthBackend
-from faststudio.auth.capabilities import BackendCapabilities, PermissionBackend
+from faststudio.auth.capabilities import AccountManager, BackendCapabilities, PermissionBackend
 from faststudio.auth.csrf import CsrfTokens
 from faststudio.auth.guard import AccountGuard
 from faststudio.auth.session import SessionManager
+from faststudio.auth.validators import PasswordValidator
 from faststudio.config import DEFAULT_MAX_LIST_OFFSET, Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
 from faststudio.model_admin import ModelAdmin
@@ -262,6 +263,28 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
         sync=("guards", "check_model", "protected_fields", "admin_flag"),
         coroutines=("before_write",),
     )
+    _check_protocol(
+        capabilities.accounts,
+        AccountManager,
+        "accounts",
+        sync=(),
+        coroutines=("user_inputs", "check_password", "set_password"),
+    )
+    if capabilities.accounts is not None:
+        validators: object = capabilities.accounts.password_validators
+        if isinstance(validators, str) or not (
+            isinstance(validators, (list, tuple))
+            and all(isinstance(v, PasswordValidator) for v in validators)
+        ):
+            msg = "AccountManager.password_validators must be a sequence of PasswordValidator."
+            raise ConfigurationError(msg)
+    endpoints: object = capabilities.password_endpoints
+    if not isinstance(endpoints, bool):
+        msg = "BackendCapabilities.password_endpoints must be a bool."
+        raise ConfigurationError(msg)
+    if endpoints and (capabilities.accounts is None or capabilities.account_guard is None):
+        msg = "BackendCapabilities.password_endpoints needs accounts and an account_guard."
+        raise ConfigurationError(msg)
     _check_protocol(
         capabilities.permissions,
         PermissionBackend,

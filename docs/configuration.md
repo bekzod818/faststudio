@@ -43,13 +43,62 @@ to the host, so your error monitoring sees them.
 
 `ModelUserBackend(model, *, username_field="username",
 password_field="password_hash", is_active_field="is_active",
-is_admin_field="is_admin")` reads admins from your own SQLAlchemy model.
+is_admin_field="is_admin", password_validators=DEFAULT_VALIDATORS,
+password_endpoints=False)` reads admins from your own SQLAlchemy model.
 Column names are checked at startup. Only active admins can sign in; pass
 `is_admin_field=None` only if every row of that table is an administrator.
 Store passwords with `faststudio.hash_password()` (argon2id); rows without a
 usable argon2 hash (NULL, other algorithms) cannot sign in. Declare the
 username column unique: if several rows match a username, the login is
 refused (FastStudio logs a warning at startup when it is not unique).
+
+### Passwords
+
+New passwords set through FastStudio (the HTTP endpoints below, and the CLI
+in v0.2) are checked by the backend's validators, after the hard limits (not
+empty, at most 1024 characters, no NUL):
+
+```python
+from faststudio import ModelUserBackend
+from faststudio.auth.validators import (
+    CommonPasswordValidator,
+    MinimumLengthValidator,
+    NumericPasswordValidator,
+    UserAttributeSimilarityValidator,
+)
+
+backend = ModelUserBackend(
+    User,
+    password_validators=[
+        MinimumLengthValidator(14),
+        UserAttributeSimilarityValidator(),  # username and email
+        NumericPasswordValidator(),
+        CommonPasswordValidator("common-passwords.txt.gz"),  # your own list
+    ],
+    password_endpoints=True,  # see the warning below
+)
+```
+
+The default is `DEFAULT_VALIDATORS`: at least 12 characters, not similar to
+the username or email, not only digits. **FastStudio ships no list of common
+passwords**: we found none whose licence clearly allows redistribution.
+`CommonPasswordValidator` reads a file you provide (one password per line,
+UTF-8, optionally gzip-compressed; compared case-insensitively). Make sure
+you may use the list you choose.
+
+**HTTP password endpoints** are off for `ModelUserBackend` unless
+`password_endpoints=True`:
+
+- `POST /auth/password` lets every admin change their own password (the
+  current password is required; wrong guesses count against the login rate
+  limit). The admin's other sessions are signed out.
+- `POST /models/{identity}/items/{pk}/password` sets another account's
+  password. It needs every permission. **With `ModelUserBackend` every admin
+  holds every permission, so enabling the endpoints lets any admin reset any
+  other admin's password.** Enable them only if that is acceptable.
+
+The UI shows "Change password" in the header and "Set password" on account
+records when the endpoints are available.
 
 Sessions are signed cookies (`faststudio_session`, HttpOnly, `SameSite=Lax`,
 Secure unless `secure_cookies=False`) scoped to the admin path. Changing a

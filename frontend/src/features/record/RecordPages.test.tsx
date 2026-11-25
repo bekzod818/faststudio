@@ -53,6 +53,7 @@ function setup(
     title: "Admin",
     show_powered_by: true,
     user: { id: "1", username: "admin" },
+    capabilities: { change_password: false, sign_out_everywhere: false },
     models: [options.meta ?? model(), ...(options.others ?? [])],
   };
   const get = vi.fn((url: string) => {
@@ -176,6 +177,7 @@ describe("edit", () => {
                 title: "Admin",
                 show_powered_by: true,
                 user: { id: "1", username: "admin" },
+                capabilities: { change_password: false, sign_out_everywhere: false },
                 models: [model()],
               })
             : Promise.reject(new ApiError(403, "forbidden", "Forbidden.")),
@@ -321,7 +323,8 @@ describe("list integration", () => {
 describe("own account (ADR-0009)", () => {
   // The signed-in admin is user "1" (see setup's /meta).
   const OWN: Row = { ...ROW, pk: "1", data: { ...ROW.data, id: 1 } };
-  const accounts = () => model({ account: { protected_fields: ["is_active"], admin_flag: null } });
+  const accounts = () =>
+    model({ account: { protected_fields: ["is_active"], admin_flag: null, set_password: false } });
 
   it("locks the protected fields and hides delete on the admin's own record", async () => {
     const patch = vi.fn().mockResolvedValue(OWN);
@@ -341,9 +344,9 @@ describe("own account (ADR-0009)", () => {
 
   it("only explains the hidden delete when no field is protected or editing is off", async () => {
     const cases = [
-      model({ account: { protected_fields: [], admin_flag: null } }),
+      model({ account: { protected_fields: [], admin_flag: null, set_password: false } }),
       model({
-        account: { protected_fields: ["is_active"], admin_flag: null },
+        account: { protected_fields: ["is_active"], admin_flag: null, set_password: false },
         permissions: { view: true, create: true, edit: false, delete: true },
       }),
     ];
@@ -360,7 +363,7 @@ describe("own account (ADR-0009)", () => {
 
   it("shows no hint when the record cannot be edited or deleted anyway", async () => {
     const meta = model({
-      account: { protected_fields: ["is_active"], admin_flag: null },
+      account: { protected_fields: ["is_active"], admin_flag: null, set_password: false },
       permissions: { view: true, create: true, edit: false, delete: false },
     });
     setup("/models/users/items/1", { meta, row: OWN });
@@ -542,6 +545,7 @@ describe("many-to-many fields", () => {
                   title: "Admin",
                   show_powered_by: true,
                   user: { id: "1", username: "admin" },
+                  capabilities: { change_password: false, sign_out_everywhere: false },
                   models: [withGroups()],
                 })
               : Promise.resolve(row),

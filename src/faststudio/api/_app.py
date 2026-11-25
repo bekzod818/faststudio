@@ -11,6 +11,8 @@ from faststudio.api._context import AdminContext
 from faststudio.api.auth import protected_router, public_router
 from faststudio.api.errors import install_error_handlers
 from faststudio.api.models import router as models_router
+from faststudio.api.passwords import own_router as own_password_router
+from faststudio.api.passwords import router as password_router
 from faststudio.api.write import router as write_router
 from faststudio.security.csrf import CsrfMiddleware
 from faststudio.security.headers import SecurityHeadersMiddleware
@@ -36,6 +38,8 @@ def create_admin_app(context: AdminContext) -> FastAPI:
     app.include_router(protected_router)
     app.include_router(models_router)
     app.include_router(write_router)
+    app.include_router(own_password_router)
+    app.include_router(password_router)
     app.mount(
         "/assets",
         StaticFiles(directory=context.static_dir / "assets", check_dir=False),
