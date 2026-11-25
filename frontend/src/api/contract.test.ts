@@ -78,7 +78,7 @@ const meta: MetaResponse = {
       sortable_fields: ["id", "team_id"],
       account: null,
       page_size: 25,
-      permissions: { create: true, edit: true, delete: false },
+      permissions: { view: true, create: true, edit: true, delete: false },
       fields: [field],
     },
   ],

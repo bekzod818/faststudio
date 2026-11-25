@@ -15,9 +15,10 @@ from starlette.types import Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
-from faststudio.auth._guard import AccountGuard
 from faststudio.auth.backend import AuthBackend
+from faststudio.auth.capabilities import BackendCapabilities, PermissionBackend
 from faststudio.auth.csrf import CsrfTokens
+from faststudio.auth.guard import AccountGuard
 from faststudio.auth.session import SessionManager
 from faststudio.config import DEFAULT_MAX_LIST_OFFSET, Settings, resolve_settings
 from faststudio.exceptions import ConfigurationError
@@ -99,6 +100,7 @@ class Admin:
         )
         self._session_maker = _resolve_session_maker(engine, session_maker)
         self._auth_backend = _validate_auth_backend(auth_backend)
+        self._capabilities = _resolve_capabilities(self._auth_backend)
         self._settings: Settings = resolve_settings(
             secret_key=secret_key,
             title=title,
@@ -116,6 +118,7 @@ class Admin:
             registry=self._registry,
             session_maker=self._session_maker,
             auth_backend=self._auth_backend,
+            capabilities=self._capabilities,
             static_dir=_STATIC_DIR,
             sessions=SessionManager(
                 self._settings.secret_key,
@@ -153,8 +156,9 @@ class Admin:
 
         """
         registered = resolve_model_admin(model_admin, max_page_size=self._settings.max_page_size)
-        if isinstance(self._auth_backend, AccountGuard):
-            self._auth_backend.check_model(registered.model)
+        guard = self._capabilities.account_guard
+        if guard is not None:
+            guard.check_model(registered.model)
         self._registry.add(registered)
         return model_admin
 
@@ -200,6 +204,70 @@ def _validate_auth_backend(backend: AuthBackend) -> AuthBackend:
     ):
         raise ConfigurationError(msg)
     return backend
+
+
+#: 0.1.1's private guard protocol (ADR-0009); now `BackendCapabilities.account_guard`.
+_LEGACY_GUARD_METHODS = ("guards", "before_write", "check_model")
+
+
+def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
+    """Validate the backend's optional `faststudio_capabilities` (ADR-0011 §1).
+
+    Nothing else on the backend is inspected, except that a backend which still
+    implements 0.1.1's private guard methods must migrate: silently ignoring
+    them would drop its account guard (fail open).
+    """
+    capabilities: object = getattr(backend, "faststudio_capabilities", None)
+    if capabilities is None:
+        if all(callable(getattr(backend, name, None)) for name in _LEGACY_GUARD_METHODS):
+            msg = (
+                f"{type(backend).__name__} implements the 0.1.1 account guard methods "
+                "(guards, before_write, check_model) but no faststudio_capabilities. "
+                "Return BackendCapabilities(account_guard=...) from a "
+                "faststudio_capabilities property; see FlagAccountGuard (ADR-0011)."
+            )
+            raise ConfigurationError(msg)
+        return BackendCapabilities()
+    if not isinstance(capabilities, BackendCapabilities):
+        msg = "faststudio_capabilities must be a faststudio.BackendCapabilities instance."
+        raise ConfigurationError(msg)
+    _check_protocol(
+        capabilities.account_guard,
+        AccountGuard,
+        "account_guard",
+        sync=("guards", "check_model", "protected_fields", "admin_flag", "permission_schema"),
+        coroutines=("before_write",),
+    )
+    _check_protocol(
+        capabilities.permissions,
+        PermissionBackend,
+        "permissions",
+        sync=(),
+        coroutines=("resolve", "resolve_accounts"),
+    )
+    return capabilities
+
+
+def _check_protocol(
+    value: object,
+    protocol: type,
+    name: str,
+    *,
+    sync: tuple[str, ...],
+    coroutines: tuple[str, ...],
+) -> None:
+    if value is None:
+        return
+    ok = (
+        not isinstance(value, type)
+        and isinstance(value, protocol)
+        and all(callable(getattr(value, method)) for method in sync)
+        and all(inspect.iscoroutinefunction(getattr(value, method)) for method in coroutines)
+    )
+    if not ok:
+        methods = ", ".join([*sync, *(f"async {m}" for m in coroutines)])
+        msg = f"BackendCapabilities.{name} must implement {protocol.__name__} ({methods})."
+        raise ConfigurationError(msg)
 
 
 def _validate_rate_limiter(limiter: RateLimiter | None) -> RateLimiter:

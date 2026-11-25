@@ -8,6 +8,7 @@ closed: anything ambiguous is a ``ConfigurationError`` at startup.
 from __future__ import annotations
 
 import difflib
+import inspect
 import logging
 import re
 import unicodedata
@@ -21,6 +22,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import NoReferenceError
 from sqlalchemy.orm import Mapper
 
+from faststudio.auth.capabilities import ACTIONS
 from faststudio.exceptions import ConfigurationError
 from faststudio.introspection._columns import (
     canonical_column,
@@ -44,7 +46,7 @@ from faststudio.introspection._many import (
     plain_many_to_many,
 )
 from faststudio.introspection._types import FieldType
-from faststudio.model_admin import OPTION_NAMES, ModelAdmin
+from faststudio.model_admin import OPTION_NAMES, PERMISSION_HOOKS, ModelAdmin
 from faststudio.schemas._dynamic import ManyKeys, WriteSchema, build_write_schemas
 
 logger = logging.getLogger("faststudio.registry")
@@ -53,6 +55,9 @@ _IDENTITY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _ICON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _MAX_ICON_LENGTH = 64
 _MAX_NAME_LENGTH = 100
+_PERMISSION_KEY = re.compile(r"[a-z][a-z0-9_]{0,40}")
+#: Longest permission codename, ``"<identity>.<key>"`` (ADR-0011 §2).
+MAX_CODENAME_LENGTH = 100
 _DEFAULT_LIST_COLUMNS = 4
 # Option names from Django Admin / SQLAdmin that users commonly carry over.
 _OPTION_ALIASES: dict[str, str] = {
@@ -111,6 +116,8 @@ class RegisteredModel:
     #: Kept apart from `fields`, which holds columns only.
     many_to_many: Mapping[str, ManyToManyField]
     page_size: int
+    #: Custom permission keys (`ModelAdmin.extra_permissions`) -> description.
+    extra_permissions: Mapping[str, str]
     can_create: bool
     can_edit: bool
     can_delete: bool
@@ -147,6 +154,27 @@ class Registry:
     def get(self, identity: str) -> RegisteredModel:
         """Return the model registered under ``identity`` or raise ``KeyError``."""
         return self._by_identity[identity]
+
+    def for_admin_class(self, admin_class: type[Any]) -> RegisteredModel:
+        """Return the registration of a ModelAdmin class.
+
+        Raises:
+            ConfigurationError: if the class is not registered.
+
+        """
+        for registered in self:
+            if registered.admin_class is admin_class:
+                return registered
+        msg = f"{admin_class.__name__} is not registered with this Admin."
+        raise ConfigurationError(msg)
+
+    def codenames(self) -> list[str]:
+        """Every permission codename of the registered models, in registration order."""
+        return [
+            f"{registered.identity}.{key}"
+            for registered in self
+            for key in (*ACTIONS, *registered.extra_permissions)
+        ]
 
     def target_of(self, target: Column[Any]) -> RegisteredModel | None:
         """Return the registered model whose primary key is `target`.
@@ -190,6 +218,7 @@ class _Validator:
 
     # ------------------------------------------------------------------ entry
     def resolve(self) -> RegisteredModel:
+        self._check_hooks()
         self._check_unknown_options()
         pk_field = self._pk_field()
 
@@ -242,6 +271,7 @@ class _Validator:
             self._warn_create_blocked(field_specs)
 
         name = self._name()
+        identity = self._identity()
         ordering = self._ordering()
         writable_many = [
             ManyKeys(
@@ -256,7 +286,7 @@ class _Validator:
         return RegisteredModel(
             admin_class=self.cls,
             model=self.mapper.class_,
-            identity=self._identity(),
+            identity=identity,
             name=name,
             name_plural=self._name_plural(name),
             icon=self._icon(),
@@ -273,6 +303,7 @@ class _Validator:
             column_labels=column_labels,
             many_to_many=MappingProxyType(many_to_many),
             page_size=self._page_size(),
+            extra_permissions=self._extra_permissions(identity),
             can_create=can_create,
             can_edit=self._flag("can_edit"),
             can_delete=self._flag("can_delete"),
@@ -390,6 +421,41 @@ class _Validator:
             )
 
     # ------------------------------------------------------------------ options
+    def _check_hooks(self) -> None:
+        for hook in PERMISSION_HOOKS:
+            bound: object = getattr(self.cls, hook)
+            if not (
+                inspect.ismethod(bound)
+                and bound.__self__ is self.cls
+                and inspect.iscoroutinefunction(bound)
+            ):
+                raise self.fail(
+                    f"{hook} must be an async classmethod: "
+                    f"`@classmethod async def {hook}(cls, request, ...) -> bool`."
+                )
+
+    def _extra_permissions(self, identity: str) -> Mapping[str, str]:
+        value: object = self.cls.extra_permissions
+        if not isinstance(value, Mapping):
+            raise self.fail("extra_permissions must be a mapping of key to description.")
+        result: dict[str, str] = {}
+        for key, description in value.items():
+            if not isinstance(key, str) or not _PERMISSION_KEY.fullmatch(key):
+                raise self.fail(f"extra_permissions: {key!r} must match [a-z][a-z0-9_]{{0,40}}.")
+            if key in ACTIONS:
+                raise self.fail(
+                    f"extra_permissions: {key!r} is one of the built-in actions {ACTIONS}."
+                )
+            if len(f"{identity}.{key}") > MAX_CODENAME_LENGTH:
+                raise self.fail(
+                    f"extra_permissions: the codename {identity}.{key} is longer than "
+                    f"{MAX_CODENAME_LENGTH} characters."
+                )
+            if not isinstance(description, str):
+                raise self.fail(f"extra_permissions[{key!r}] must be a description (str).")
+            result[key] = description
+        return MappingProxyType(result)
+
     def _check_unknown_options(self) -> None:
         known = sorted(OPTION_NAMES)
         for klass in self.cls.__mro__:

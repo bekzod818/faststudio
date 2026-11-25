@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from faststudio import AuthenticatedUser, ModelUserBackend
-from faststudio.auth._guard import AccountGuard, WriteAction, WriteIntent, WriteRefused
+from faststudio.auth.guard import AccountGuard, WriteAction, WriteIntent, WriteRefused
+from tests._guards import guard_of
 from tests.factories.models import AdminUser, Base, Team
 
 HASH = "not-a-password-hash"  # the guard never verifies passwords
@@ -60,7 +61,7 @@ async def _write(
         obj = await session.get(AdminUser, pk)
         assert obj is not None
         intent = WriteIntent(model=AdminUser, obj=obj, action=action, changes=changes or {})
-        check = await backend.before_write(session, user, intent)
+        check = await guard_of(backend).before_write(session, user, intent)
         if action == "delete":
             await session.delete(obj)
         else:
@@ -78,11 +79,18 @@ async def _admins(db: AsyncEngine) -> dict[int, tuple[bool, bool]]:
     return {row.id: (row.is_active, row.is_admin) for row in rows}
 
 
-def test_model_user_backend_is_an_account_guard() -> None:
+def test_model_user_backend_provides_a_flag_account_guard() -> None:
     backend = ModelUserBackend(AdminUser)
-    assert isinstance(backend, AccountGuard)
-    assert backend.guards(AdminUser)
-    assert not backend.guards(Team)
+    assert not isinstance(backend, AccountGuard)  # a capability now, not duck-typed methods
+    assert backend.faststudio_capabilities.permissions is None  # every admin holds ALL
+    guard = guard_of(backend)
+    assert isinstance(guard, AccountGuard)
+    assert guard.guards(AdminUser)
+    assert not guard.guards(Team)
+    assert guard.admin_flag(AdminUser) == "is_admin"
+    assert guard.admin_flag(Team) is None
+    assert guard.permission_schema() is None
+    assert guard_of(ModelUserBackend(AdminUser, is_admin_field=None)).admin_flag(AdminUser) is None
 
 
 # ------------------------------------------------------------------ own account
@@ -156,7 +164,10 @@ async def test_writes_that_cannot_remove_an_admin_skip_the_check(
     async with AsyncSession(db) as session:
         obj = await session.get(AdminUser, 2)
         intent = WriteIntent(model=AdminUser, obj=obj, action="update", changes=changes)
-        assert await ModelUserBackend(AdminUser).before_write(session, _user(1), intent) is None
+        assert (
+            await guard_of(ModelUserBackend(AdminUser)).before_write(session, _user(1), intent)
+            is None
+        )
 
 
 @pytest.mark.parametrize(("action", "changes"), [("update", {"is_admin": False}), ("delete", None)])
@@ -168,7 +179,7 @@ async def test_removals_are_checked_whatever_the_loaded_state(
     async with AsyncSession(db) as session:
         obj = await session.get(AdminUser, 2)
         intent = WriteIntent(model=AdminUser, obj=obj, action=action, changes=changes or {})
-        check = await ModelUserBackend(AdminUser).before_write(session, _user(1), intent)
+        check = await guard_of(ModelUserBackend(AdminUser)).before_write(session, _user(1), intent)
         assert check is not None
         await check()  # admin 1 remains
 
@@ -186,7 +197,7 @@ async def test_stale_loaded_row_cannot_remove_the_last_admin(db: AsyncEngine) ->
         intent = WriteIntent(
             model=AdminUser, obj=stale_y, action="update", changes={"is_admin": False}
         )
-        check = await backend.before_write(session, _user(99), intent)
+        check = await guard_of(backend).before_write(session, _user(99), intent)
         assert check is not None
         stale_y.is_admin = False
         await session.flush()
@@ -221,4 +232,4 @@ async def test_unknown_actions_are_refused(db: AsyncEngine) -> None:
         obj = await session.get(AdminUser, 2)
         intent = WriteIntent(model=AdminUser, obj=obj, action="bulk_update", changes={})  # type: ignore[arg-type]  # a future action
         with pytest.raises(AssertionError):
-            await ModelUserBackend(AdminUser).before_write(session, _user(1), intent)
+            await guard_of(ModelUserBackend(AdminUser)).before_write(session, _user(1), intent)

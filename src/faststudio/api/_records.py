@@ -21,12 +21,17 @@ async def load_or_404(session: AsyncSession, registered: RegisteredModel, pk: st
 
 
 async def detail_row(
-    session: AsyncSession, registry: Registry, registered: RegisteredModel, obj: object
+    session: AsyncSession,
+    registry: Registry,
+    registered: RegisteredModel,
+    obj: object,
+    visible: frozenset[str] | None = None,
 ) -> Row:
-    """`Row` with every visible field and relation labels."""
+    """`Row` with every visible field and relation labels (keys for hidden targets)."""
     fields = list(registered.fields)
-    (labels,) = await relation_labels(session, registry, registered, [obj], fields)
-    many = await many_values(session, registry, registered, getattr(obj, registered.pk_field))
+    (labels,) = await relation_labels(session, registry, registered, [obj], fields, visible=visible)
+    pk = getattr(obj, registered.pk_field)
+    many = await many_values(session, registry, registered, pk, visible)
     return to_row(
         registered,
         obj,

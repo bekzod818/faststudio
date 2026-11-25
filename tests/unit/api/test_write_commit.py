@@ -10,7 +10,7 @@ from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 
 from faststudio.api.errors import ApiError
 from faststudio.api.write import _writing
-from faststudio.auth._guard import WriteRefused
+from faststudio.auth.guard import WriteRefused
 
 
 class _FailingSession:

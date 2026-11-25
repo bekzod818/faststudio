@@ -44,13 +44,18 @@ async def linked_keys(
 
 
 async def many_values(
-    session: AsyncSession, registry: Registry, registered: RegisteredModel, pk: object
+    session: AsyncSession,
+    registry: Registry,
+    registered: RegisteredModel,
+    pk: object,
+    visible: frozenset[str] | None = None,
 ) -> ManyValues:
     """Load every many-to-many field of the record `pk`.
 
     Each field reads at most `max_items + 1` keys: one more than allowed marks
     the field as truncated (and only `max_items` keys are returned). Labels
-    come from the target model when it is registered, else they are the keys.
+    come from the target model when it is registered and in `visible` (the
+    models the admin may view; ``None``: all), else they are the keys (A1).
     """
     result = ManyValues()
     for name, many in registered.many_to_many.items():
@@ -61,7 +66,7 @@ async def many_values(
         result.keys[name] = [encode_value(many.link.value_type, key) for key in keys]
         labels = {encode_pk(key): encode_pk(key) for key in keys}
         target = registry.target_of(many.link.target_pk)
-        if target is not None:
+        if target is not None and (visible is None or target.identity in visible):
             for chunk in chunks(keys):
                 rows = await session.execute(label_statement(target, chunk))
                 for key, label in rows.all():
@@ -114,11 +119,21 @@ def affected_fields(registry: Registry, registered: RegisteredModel) -> list[Aff
 
 
 async def link_counts(
-    session: AsyncSession, registry: Registry, registered: RegisteredModel, pk: object
+    session: AsyncSession,
+    registry: Registry,
+    registered: RegisteredModel,
+    pk: object,
+    visible: frozenset[str] | None = None,
 ) -> list[LinkCount]:
-    """How many links each affected field loses when the record `pk` is deleted."""
+    """How many links each affected field loses when the record `pk` is deleted.
+
+    Fields of models outside `visible` are left out (the delete still removes
+    their links: it needs only the delete permission on this model).
+    """
     counts = []
     for item in affected_fields(registry, registered):
+        if visible is not None and item.owner.identity not in visible:
+            continue
         statement = count_links_statement(item.many.link, pk, own=item.own, pointing=item.pointing)
         count = await session.execute(statement, bind_arguments=bind_to(item.owner.model))
         counts.append(

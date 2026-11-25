@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from faststudio.api._authz import Perms, allowed, require, resolve_permissions, viewable
 from faststudio.api._deps import DbSession, ModelDep
 from faststudio.api._many import link_counts
 from faststudio.api._paths import API_PREFIX
@@ -11,7 +12,6 @@ from faststudio.api._records import detail_row, load_or_404
 from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError
-from faststudio.auth._guard import AccountGuard
 from faststudio.query._list import choices_statements, list_statements
 from faststudio.query._params import parse_choices_params, parse_list_params
 from faststudio.schemas._meta import build_models_meta
@@ -22,35 +22,50 @@ from faststudio.schemas.contract import (
     LinkCountsResponse,
     ListResponse,
     MetaResponse,
+    PermissionsMeta,
     Row,
     UserMeta,
 )
 
-router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(current_user)])
+# Every route resolves the admin's permissions first (ADR-0011 §5; route test).
+router = APIRouter(
+    prefix=API_PREFIX, dependencies=[Depends(current_user), Depends(resolve_permissions)]
+)
 
 
 @router.get("/meta", response_model=MetaResponse)
-async def meta(request: Request, user: CurrentUser) -> MetaResponse:
-    """Describe every registered model for the SPA."""
+async def meta(request: Request, user: CurrentUser, perms: Perms) -> MetaResponse:
+    """Describe the models the admin may view, with their permissions on each."""
     # Imported here: `faststudio/__init__.py` (the version's single source) imports the app.
     from faststudio import __version__  # noqa: PLC0415
 
+    del perms  # resolved: the hooks read it
     context = get_context(request)
-    backend = context.auth_backend
-    guard = backend if isinstance(backend, AccountGuard) else None
+    guard = context.capabilities.account_guard
+    permissions = {
+        registered.identity: PermissionsMeta(
+            view=True,
+            create=await allowed(request, registered, "create"),
+            edit=await allowed(request, registered, "edit"),
+            delete=await allowed(request, registered, "delete"),
+        )
+        for registered in context.registry
+        if registered.identity in await viewable(request)
+    }
     return MetaResponse(
         schema_version=SCHEMA_VERSION,
         version=__version__,
         title=context.settings.title,
         show_powered_by=context.settings.show_powered_by,
         user=UserMeta(id=user.id, username=user.username),
-        models=build_models_meta(context.registry, guard=guard),
+        models=build_models_meta(context.registry, guard=guard, permissions=permissions),
     )
 
 
 @router.get("/models/{identity}/items", response_model=ListResponse)
 async def list_items(request: Request, registered: ModelDep, session: DbSession) -> ListResponse:
     """Return a page of records with search, filters and sorting from the allowlists."""
+    await require(request, registered, "view")
     context = get_context(request)
     settings = context.settings
     params = parse_list_params(
@@ -63,7 +78,9 @@ async def list_items(request: Request, registered: ModelDep, session: DbSession)
     rows = (await session.execute(page_query)).scalars().all()
     total = (await session.execute(count_query)).scalar_one()
     fields = registered.list_display
-    labels = await relation_labels(session, context.registry, registered, rows, fields)
+    labels = await relation_labels(
+        session, context.registry, registered, rows, fields, visible=await viewable(request)
+    )
     return ListResponse(
         items=[
             to_row(registered, row, fields, label) for row, label in zip(rows, labels, strict=True)
@@ -76,9 +93,16 @@ async def list_items(request: Request, registered: ModelDep, session: DbSession)
 
 @router.get("/models/{identity}/items/{pk}", response_model=Row)
 async def retrieve_item(request: Request, registered: ModelDep, pk: str, session: DbSession) -> Row:
-    """Return one record with all visible fields."""
+    """Return one record with all visible fields.
+
+    A record the view hook refuses is a 404, like a missing one (no oracle).
+    """
+    await require(request, registered, "view")
     obj = await load_or_404(session, registered, pk)
-    return await detail_row(session, get_context(request).registry, registered, obj)
+    if not await allowed(request, registered, "view", obj):
+        raise ApiError(404, "not_found")
+    registry = get_context(request).registry
+    return await detail_row(session, registry, registered, obj, await viewable(request))
 
 
 @router.get("/models/{identity}/items/{pk}/links", response_model=LinkCountsResponse)
@@ -87,14 +111,16 @@ async def item_links(
 ) -> LinkCountsResponse:
     """Count the many-to-many links deleting this record would remove (ADR-0010 §6).
 
-    For the delete confirmation, so it needs the delete permission. Lists every
-    affected opted-in field, also those with no links.
+    For the delete confirmation, so it needs the delete permission (on the
+    record too). Lists every affected opted-in field, also those with no links,
+    except fields of models the admin may not view.
     """
-    if not registered.can_delete:
-        raise ApiError(403, "forbidden")
+    await require(request, registered, "delete")
     obj = await load_or_404(session, registered, pk)
+    await require(request, registered, "delete", obj)
     registry = get_context(request).registry
-    counts = await link_counts(session, registry, registered, getattr(obj, registered.pk_field))
+    pk_value = getattr(obj, registered.pk_field)
+    counts = await link_counts(session, registry, registered, pk_value, await viewable(request))
     return LinkCountsResponse(items=counts)
 
 
@@ -102,7 +128,15 @@ async def item_links(
 async def choices(
     request: Request, registered: ModelDep, field: str, session: DbSession
 ) -> ChoicesResponse:
-    """Return options for a foreign-key field whose target model is registered."""
+    """Return options for a relation field whose target model is registered.
+
+    Choices are for forms: they need create or edit on this model, and view on
+    the target (else 403; A1).
+    """
+    if not (
+        await allowed(request, registered, "create") or await allowed(request, registered, "edit")
+    ):
+        raise ApiError(403, "forbidden")
     registry = get_context(request).registry
     spec = registered.field_specs.get(field)
     many = registered.many_to_many.get(field)
@@ -114,6 +148,8 @@ async def choices(
         target = None
     if target is None:
         raise ApiError(404, "not_found")
+    if target.identity not in await viewable(request):
+        raise ApiError(403, "forbidden")
     page, q = parse_choices_params(
         request.query_params.multi_items(),
         max_list_offset=get_context(request).settings.max_list_offset,

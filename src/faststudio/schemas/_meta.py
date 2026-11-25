@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from faststudio.auth._guard import AccountGuard
+from collections.abc import Mapping
+
+from faststudio.auth.guard import AccountGuard
 from faststudio.introspection._fields import FieldSpec, JsonValue, Relation
 from faststudio.introspection._many import ManyToManyField
 from faststudio.registry import RegisteredModel, Registry
@@ -18,9 +20,29 @@ from faststudio.schemas.contract import (
 )
 
 
-def build_models_meta(registry: Registry, *, guard: AccountGuard | None = None) -> list[ModelMeta]:
-    """Describe every registered model, in registration order."""
-    return [build_model_meta(registered, registry, guard=guard) for registered in registry]
+def build_models_meta(
+    registry: Registry,
+    *,
+    guard: AccountGuard | None = None,
+    permissions: Mapping[str, PermissionsMeta] | None = None,
+) -> list[ModelMeta]:
+    """Describe the registered models the admin may view, in registration order.
+
+    `permissions` maps each viewable identity to the admin's permissions on it
+    (ADR-0011 §5); ``None`` describes every model with its static flags.
+    """
+    visible = None if permissions is None else frozenset(permissions)
+    return [
+        build_model_meta(
+            registered,
+            registry,
+            guard=guard,
+            permissions=None if permissions is None else permissions[registered.identity],
+            visible=visible,
+        )
+        for registered in registry
+        if visible is None or registered.identity in visible
+    ]
 
 
 def _account_meta(registered: RegisteredModel, guard: AccountGuard | None) -> AccountMeta | None:
@@ -33,13 +55,28 @@ def _account_meta(registered: RegisteredModel, guard: AccountGuard | None) -> Ac
         for name in guard.protected_fields(registered.model)
         if name in specs and not specs[name].readonly
     ]
-    return AccountMeta(protected_fields=protected)
+    flag = guard.admin_flag(registered.model)
+    return AccountMeta(
+        protected_fields=protected,
+        admin_flag=flag
+        if flag is not None and flag in specs and not specs[flag].readonly
+        else None,
+    )
 
 
 def build_model_meta(
-    registered: RegisteredModel, registry: Registry, *, guard: AccountGuard | None = None
+    registered: RegisteredModel,
+    registry: Registry,
+    *,
+    guard: AccountGuard | None = None,
+    permissions: PermissionsMeta | None = None,
+    visible: frozenset[str] | None = None,
 ) -> ModelMeta:
-    """Describe one registered model for the SPA."""
+    """Describe one registered model for the SPA.
+
+    Relations to models outside `visible` have no target and are readonly for
+    this admin (A1): the existence check could otherwise probe a hidden model.
+    """
     specs = registered.field_specs
     return ModelMeta(
         identity=registered.identity,
@@ -53,12 +90,16 @@ def build_model_meta(
         ordering=[f"-{f}" if desc else f for f, desc in registered.ordering],
         sortable_fields=list(registered.sortable_fields),
         page_size=registered.page_size,
-        permissions=PermissionsMeta(
-            create=registered.can_create, edit=registered.can_edit, delete=registered.can_delete
+        permissions=permissions
+        or PermissionsMeta(
+            view=True,
+            create=registered.can_create,
+            edit=registered.can_edit,
+            delete=registered.can_delete,
         ),
         fields=[
-            *(_field_meta(spec, registry) for spec in specs.values()),
-            *(_many_meta(field, registry) for field in registered.many_to_many.values()),
+            *(_field_meta(spec, registry, visible) for spec in specs.values()),
+            *(_many_meta(field, registry, visible) for field in registered.many_to_many.values()),
         ],
         account=_account_meta(registered, guard),
     )
@@ -76,10 +117,18 @@ def _filter_meta(field: str, spec: FieldSpec) -> FilterMeta:
     return FilterMeta(field=field, kind="choice", choices=_choices(spec) or [])
 
 
-def _relation_meta(relation: Relation, registry: Registry) -> RelationMeta:
+def hidden_target(relation: Relation, registry: Registry, visible: frozenset[str] | None) -> bool:
+    """Return True if the relation's target is registered but not viewable."""
+    target = registry.target_of(relation.target)
+    return target is not None and visible is not None and target.identity not in visible
+
+
+def _relation_meta(
+    relation: Relation, registry: Registry, visible: frozenset[str] | None
+) -> RelationMeta:
     """Resolve the target model now: it may have been registered after the source."""
     target = registry.target_of(relation.target)
-    if target is None:
+    if target is None or hidden_target(relation, registry, visible):
         return RelationMeta(target_identity=None, target_field=None, value_type=relation.value_type)
     return RelationMeta(
         target_identity=target.identity,
@@ -99,14 +148,15 @@ def _safe_int(value: int | None) -> int | None:
     return value if value is not None and abs(value) <= MAX_SAFE_INTEGER else None
 
 
-def _field_meta(spec: FieldSpec, registry: Registry) -> FieldMeta:
+def _field_meta(spec: FieldSpec, registry: Registry, visible: frozenset[str] | None) -> FieldMeta:
+    hidden = spec.relation is not None and hidden_target(spec.relation, registry, visible)
     return FieldMeta(
         name=spec.name,
         label=spec.label,
         type=spec.type,
         nullable=spec.nullable,
         required=spec.required,
-        readonly=spec.readonly,
+        readonly=spec.readonly or hidden,
         create_only=spec.create_only,
         primary_key=spec.primary_key,
         default=_safe_default(spec.default),
@@ -115,7 +165,7 @@ def _field_meta(spec: FieldSpec, registry: Registry) -> FieldMeta:
         min_value=_safe_int(spec.min_value),
         max_value=_safe_int(spec.max_value),
         choices=_choices(spec),
-        relation=_relation_meta(spec.relation, registry) if spec.relation else None,
+        relation=_relation_meta(spec.relation, registry, visible) if spec.relation else None,
         timezone=spec.timezone,
         precision=spec.precision,
         scale=spec.scale,
@@ -124,16 +174,19 @@ def _field_meta(spec: FieldSpec, registry: Registry) -> FieldMeta:
     )
 
 
-def _many_meta(field: ManyToManyField, registry: Registry) -> FieldMeta:
+def _many_meta(
+    field: ManyToManyField, registry: Registry, visible: frozenset[str] | None
+) -> FieldMeta:
     """Describe an opted-in many-to-many field (ADR-0010): a list of target keys."""
     link = field.link
+    relation = Relation(link.target_pk, link.value_type)
     return FieldMeta(
         name=field.name,
         label=field.label,
         type="many_to_many",
         nullable=False,
         required=False,
-        readonly=field.readonly,
+        readonly=field.readonly or hidden_target(relation, registry, visible),
         create_only=False,
         primary_key=False,
         default=[],
@@ -142,7 +195,7 @@ def _many_meta(field: ManyToManyField, registry: Registry) -> FieldMeta:
         min_value=None,
         max_value=None,
         choices=None,
-        relation=_relation_meta(Relation(link.target_pk, link.value_type), registry),
+        relation=_relation_meta(relation, registry, visible),
         timezone=None,
         precision=None,
         scale=None,

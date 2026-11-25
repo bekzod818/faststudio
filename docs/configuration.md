@@ -253,7 +253,8 @@ read-only (see `docs/api-contract.md`).
 | `column_labels` | `{}` | `{field: label}` display labels |
 | `many_to_many` | `()` | many-to-many relationships shown as editable fields; each must be a plain association table (see [Many-to-many fields](#many-to-many-fields)); unlisted relationships stay invisible |
 | `many_to_many_limits` | `{}` | most related keys per many-to-many field, default 500, 1–10 000; keys must be listed in `many_to_many` |
-| `can_create` / `can_edit` / `can_delete` | `True` | per-model permissions (`bool`) |
+| `extra_permissions` | `{}` | custom permissions as `{key: description}`; codename `"<identity>.<key>"`, key `[a-z][a-z0-9_]{0,40}`, not an action, codename ≤ 100 characters (see [Permissions](#permissions)) |
+| `can_create` / `can_edit` / `can_delete` | `True` | static switches per model (`bool`); with a permission backend, the admin also needs the permission |
 
 List options must be lists or tuples: `search_fields = "email"` is an error
 (use `["email"]`). Composite primary keys are not supported yet.

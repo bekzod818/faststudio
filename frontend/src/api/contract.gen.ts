@@ -227,6 +227,7 @@ export interface ModelMeta {
  * via the `definition` "AccountMeta".
  */
 export interface AccountMeta {
+  admin_flag: string | null;
   protected_fields: string[];
 }
 /**
@@ -286,7 +287,9 @@ export interface FilterMeta {
   kind: "boolean" | "choice";
 }
 /**
- * Actions allowed on a model.
+ * Actions the signed-in admin may take on a model (ADR-0011 §5).
+ *
+ * `view` is always true in `/meta`, which lists only viewable models.
  *
  * This interface was referenced by `FastStudioContract`'s JSON-Schema
  * via the `definition` "PermissionsMeta".
@@ -295,6 +298,7 @@ export interface PermissionsMeta {
   create: boolean;
   delete: boolean;
   edit: boolean;
+  view: boolean;
 }
 /**
  * The signed-in admin.

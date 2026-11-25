@@ -129,8 +129,12 @@ class FilterMeta(_Contract):
 
 
 class PermissionsMeta(_Contract):
-    """Actions allowed on a model."""
+    """Actions the signed-in admin may take on a model (ADR-0011 §5).
 
+    `view` is always true in `/meta`, which lists only viewable models.
+    """
+
+    view: bool
     create: bool
     edit: bool
     delete: bool
@@ -145,6 +149,9 @@ class AccountMeta(_Contract):
     """
 
     protected_fields: list[str]
+    #: The superuser-like flag (e.g. ``is_admin``) only an admin holding every
+    #: permission may change, when the form shows it; null otherwise.
+    admin_flag: str | None
 
 
 class ModelMeta(_Contract):

@@ -4,6 +4,16 @@
       "additionalProperties": false,
       "description": "The model holds the admins' accounts (ADR-0009).\n\nOn the record of the signed-in admin (`pk == MetaResponse.user.id`), the\n`protected_fields` cannot be changed and the record cannot be deleted; the\nserver refuses with `self_lockout`.",
       "properties": {
+        "admin_flag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "protected_fields": {
           "items": {
             "type": "string"
@@ -12,7 +22,8 @@
         }
       },
       "required": [
-        "protected_fields"
+        "protected_fields",
+        "admin_flag"
       ],
       "type": "object"
     },
@@ -553,7 +564,7 @@
     },
     "PermissionsMeta": {
       "additionalProperties": false,
-      "description": "Actions allowed on a model.",
+      "description": "Actions the signed-in admin may take on a model (ADR-0011 §5).\n\n`view` is always true in `/meta`, which lists only viewable models.",
       "properties": {
         "create": {
           "type": "boolean"
@@ -563,9 +574,13 @@
         },
         "edit": {
           "type": "boolean"
+        },
+        "view": {
+          "type": "boolean"
         }
       },
       "required": [
+        "view",
         "create",
         "edit",
         "delete"
