@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -19,6 +20,9 @@ from faststudio.api._permission_sync import apply_sync, plan_sync
 from faststudio.registry import Registry
 
 logger = logging.getLogger("faststudio")
+
+#: Seconds between attempts after a failed sync.
+RETRY_INTERVAL = 30.0
 
 
 class StartupPermissionSync:
@@ -39,12 +43,14 @@ class StartupPermissionSync:
         self._session_maker = session_maker
         self._lock: asyncio.Lock | None = None
         self.done = False
+        #: Monotonic time before which a failed sync is not retried.
+        self._retry_after = 0.0
 
     async def _sync(self) -> None:
         if self._lock is None:
             self._lock = asyncio.Lock()  # inside the running loop
         async with self._lock:
-            if self.done:
+            if self.done or time.monotonic() < self._retry_after:
                 return
             try:
                 async with self._session_maker() as session, session.begin():
@@ -52,6 +58,8 @@ class StartupPermissionSync:
                     await apply_sync(session, self._rules, plan, prune=False)
             except Exception as exc:
                 logger.warning("Permission sync failed (%s); retrying later.", type(exc).__name__)
+                # While the database is down, only one request at a time pays for an attempt.
+                self._retry_after = time.monotonic() + RETRY_INTERVAL
                 return
             self.done = True
 

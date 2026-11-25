@@ -31,7 +31,11 @@ def load_admin(spec: str) -> Admin:
             raise CliError(msg, code=2)
         target = getattr(target, part)
     if not isinstance(target, Admin) and callable(target):
-        target = target()
+        try:
+            target = target()
+        except TypeError:  # e.g. a FastAPI app, which is callable but not a factory
+            msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
+            raise CliError(msg, code=2) from None
     if not isinstance(target, Admin):
         msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
         raise CliError(msg, code=2)

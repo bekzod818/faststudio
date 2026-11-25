@@ -191,11 +191,18 @@ class UsernameAudit(Protocol):
     """
 
     async def audit(self, session: AsyncSession) -> Sequence[AuditedAccount]:
-        """Return every account with its stored and expected sign-in key."""
+        """Return every account with its stored and expected sign-in key.
+
+        Every account, unpaged: fine for staff-account tables.
+        """
         ...
 
     async def fix(self, session: AsyncSession, account_ids: Sequence[str]) -> None:
-        """Set the stored key to the expected one for `account_ids` (caller commits)."""
+        """Set the stored key to the expected one for `account_ids` (caller commits).
+
+        Collisions are the caller's to avoid (``checkusers`` skips them); the
+        key's unique index rejects any that remain.
+        """
         ...
 
 

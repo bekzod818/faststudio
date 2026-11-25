@@ -102,6 +102,7 @@ def cli(terminal: FakeTerminal, *argv: str) -> int:
         (["createadmin", "--app", "no_such_module_xyz:admin"], 2, "Cannot import"),
         (["createadmin", "--app", f"{APP}:missing"], 2, "has no attribute"),
         (["createadmin", "--app", f"{APP}:not_an_admin"], 2, "is not a faststudio.Admin"),
+        (["createadmin", "--app", f"{APP}:fastapi_app"], 2, "is not a faststudio.Admin"),
     ],
 )
 def test_app_resolution_errors(

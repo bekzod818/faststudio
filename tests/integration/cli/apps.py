@@ -77,3 +77,4 @@ def no_accounts() -> Admin:
 
 
 not_an_admin = object()
+fastapi_app = FastAPI()  # callable, but not an Admin factory

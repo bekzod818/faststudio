@@ -29,9 +29,12 @@ def _error(text: str) -> None:
     print(text, file=sys.stderr)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class CliIO:
-    """How the CLI talks to the user. Passwords come only from `read_password`."""
+    """How the CLI talks to the user (a test seam). Passwords come only from `read_password`.
+
+    Keyword-only, so fields can be added later without breaking callers.
+    """
 
     read_line: Callable[[str], str] = input
     read_password: Callable[[str], str] = getpass.getpass

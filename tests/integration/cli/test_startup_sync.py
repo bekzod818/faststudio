@@ -86,6 +86,10 @@ async def test_a_failed_sync_is_logged_and_retried(
         assert first.status_code == 401  # served anyway
         assert "Permission sync failed (ConnectionError); retrying later." in caplog.text
         assert await _codenames(db) == set()
+        await http.get("/admin/api/v1/auth/me")  # within the retry interval: not retried
+        assert calls["n"] == 1
+        monkeypatch.setattr("faststudio.api._startup_sync.RETRY_INTERVAL", 0.0)
+        monkeypatch.setattr("time.monotonic", lambda: 10**9)  # well past the interval
         await http.get("/admin/api/v1/auth/me")
     assert "faststudio_user.view" in await _codenames(db)
     await db.dispose()
