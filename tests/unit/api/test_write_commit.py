@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 
 from faststudio.api.errors import ApiError
-from faststudio.api.write import _writing
+from faststudio.api.write import writing
 from faststudio.auth.guard import WriteRefused
 
 
@@ -26,10 +26,6 @@ class _FailingSession:
 
     async def rollback(self) -> None:
         self.rolled_back = True
-
-
-class _Registered:
-    identity = "notes"
 
 
 def _error(cls: type[Any], orig: Exception | None = None) -> Exception:
@@ -57,7 +53,7 @@ async def test_write_maps_database_errors(
 ) -> None:
     session = _FailingSession(error)
     with caplog.at_level("INFO", logger="faststudio"), pytest.raises(ApiError) as exc_info:
-        async with _writing(session, _Registered(), "update"):  # type: ignore[arg-type]  # duck-typed fakes
+        async with writing(session, "notes", "update"):  # type: ignore[arg-type]  # duck-typed fake
             pass  # the commit fails
     assert (exc_info.value.status_code, exc_info.value.code) == (status, code)
     assert session.rolled_back
@@ -70,7 +66,7 @@ async def test_write_maps_database_errors(
 async def test_guard_refusal_rolls_back_with_its_code() -> None:
     session = _FailingSession()
     with pytest.raises(ApiError) as exc_info:
-        async with _writing(session, _Registered(), "delete"):  # type: ignore[arg-type]  # duck-typed fakes
+        async with writing(session, "notes", "delete"):  # type: ignore[arg-type]  # duck-typed fake
             raise WriteRefused("self_lockout", "You cannot delete your own account.")
     error = exc_info.value
     assert (error.status_code, error.code, error.message) == (

@@ -163,7 +163,7 @@ class ModelUserBackend:
         if not isinstance(cast("object", password_endpoints), bool):
             msg = "ModelUserBackend: password_endpoints must be a bool."
             raise ConfigurationError(msg)
-        inputs = [username_field, *(["email"] if is_text_column(columns.get("email")) else [])]
+        inputs = [username_field, *(["email"] if _is_text_column(columns.get("email")) else [])]
         self._capabilities = BackendCapabilities(
             account_guard=FlagAccountGuard(
                 model, self._pk_field, flags, admin_flag=self._is_admin_field
@@ -266,7 +266,7 @@ class ModelUserBackend:
         return self._user(row)
 
 
-def is_text_column(column: Column[Any] | None) -> bool:
+def _is_text_column(column: Column[Any] | None) -> bool:
     """Return True for an existing string or text column."""
     return column is not None and is_text(column)
 

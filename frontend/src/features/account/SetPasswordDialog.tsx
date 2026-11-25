@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "@/api/client";
 import { useSetPassword } from "@/api/hooks";
@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "@/lib/toast";
 
-import { fieldErrors, type FieldErrors } from "./fieldErrors";
+import { fieldErrors, firstInvalid, type FieldErrors } from "./fieldErrors";
+
+const FIELDS = ["new_password", "confirm"] as const;
 import { PasswordField } from "./PasswordFields";
 
 /** "Set password" for another account (needs every permission; ADR-0013). */
@@ -24,6 +26,12 @@ export function SetPasswordButton({
   const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
   const setPassword = useSetPassword(identity, pk);
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    const name = firstInvalid(errors, FIELDS);
+    if (name !== undefined) inputs.current[name]?.focus();
+  }, [errors]);
 
   const close = () => {
     // Never keep typed passwords around once the dialog is gone.
@@ -49,7 +57,7 @@ export function SetPasswordButton({
         },
         onError: (error) => {
           if (error instanceof ApiError && error.code === "validation_error") {
-            setErrors(fieldErrors(error.details));
+            setErrors(fieldErrors(error.details, FIELDS));
           } else {
             setErrors({
               form: error instanceof ApiError ? error.message : "Setting the password failed.",
@@ -82,6 +90,9 @@ export function SetPasswordButton({
               </p>
             )}
             <PasswordField
+              ref={(element) => {
+                inputs.current.new_password = element;
+              }}
               label="New password"
               autoComplete="new-password"
               value={next}
@@ -89,6 +100,9 @@ export function SetPasswordButton({
               error={errors.new_password}
             />
             <PasswordField
+              ref={(element) => {
+                inputs.current.confirm = element;
+              }}
               label="Confirm new password"
               autoComplete="new-password"
               value={confirm}

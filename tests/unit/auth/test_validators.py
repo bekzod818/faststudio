@@ -47,7 +47,12 @@ def test_numeric() -> None:
         ("ALICE2026!!xyz", ["alice"], True),  # case-folded
         ("Straße-Bahn-Fahrt", ["STRASSE"], True),  # full Unicode case folding
         ("alice@example.com", ["alice@example.com"], True),
-        ("examplepassword1", ["alice@example.com"], True),  # a part of the email
+        ("alice2026-rocks!", ["alice@example.com"], True),  # the email's local part
+        ("examplx", ["alice@example.com"], True),  # very similar to a part
+        ("examplepassword1", ["alice@example.com"], False),  # a domain part alone
+        ("welcome to the jungle 77", ["alice@example.com"], False),  # contains "com"
+        ("a long computer passphrase", ["bob@corp.com"], False),
+        ("organic tea leaves forever", ["bob@mail.org"], False),
         ("correct horse battery", ["alice"], False),
         ("bob-is-my-friend", ["al"], False),  # parts shorter than 3 are ignored
         ("anything", [], False),

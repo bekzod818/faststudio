@@ -177,8 +177,10 @@ echo a password.
 - `POST /models/{identity}/items/{pk}/password` `{new_password}` sets
   another account's password (`204`; that account is signed out
   everywhere). Only for the model holding the admin accounts (`404`
-  otherwise); needs every permission (`403`, checked before the record is
-  looked up); never for one's own account (`403`; use `/auth/password`).
+  otherwise); needs every permission and the model's edit permission (`403`,
+  checked before the record is looked up), then the edit hook on the
+  record (`403`; a record hidden from retrieve is `404`); never for one's
+  own account (`403`; use `/auth/password`).
 
 ### Choices
 

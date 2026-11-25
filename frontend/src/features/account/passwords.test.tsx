@@ -115,6 +115,43 @@ describe("ChangePasswordPage", () => {
     );
   });
 
+  it("places FastAPI's body-level errors and focuses the first invalid field", async () => {
+    const post = vi.fn().mockRejectedValue(
+      new ApiError(422, "validation_error", "Invalid.", [
+        {
+          loc: ["body", "new_password"],
+          msg: "String should have at most 1024 characters",
+          type: "string_too_long",
+        },
+        { loc: ["body"], msg: "Field required", type: "missing" },
+      ]),
+    );
+    setup("/account/password", meta(true), { post });
+    await screen.findByRole("heading", { name: "Change password" });
+    await fill("Current password", "x");
+    await fill("New password", "a new passphrase");
+    await fill("Confirm new password", "a new passphrase");
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+    const field = screen.getByLabelText("New password");
+    await waitFor(() => {
+      expect(field).toHaveFocus();
+    });
+    expect(field).toHaveAccessibleDescription("String should have at most 1024 characters");
+    expect(screen.getByRole("alert")).toHaveTextContent("Field required");
+  });
+
+  it("focuses the confirmation when it does not match", async () => {
+    setup("/account/password", meta(true));
+    await screen.findByRole("heading", { name: "Change password" });
+    await fill("Current password", "x");
+    await fill("New password", "a new passphrase");
+    await fill("Confirm new password", "other");
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Confirm new password")).toHaveFocus();
+    });
+  });
+
   it("explains rate limiting and other failures", async () => {
     const post = vi
       .fn()
@@ -191,6 +228,9 @@ describe("SetPasswordButton", () => {
     await userEvent.type(within(dialog).getByLabelText("Confirm new password"), "short");
     await userEvent.click(within(dialog).getByRole("button", { name: "Set password" }));
     expect(await within(dialog).findByText("Use at least 12 characters.")).toBeVisible();
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText("New password")).toHaveFocus();
+    });
     await userEvent.click(within(dialog).getByRole("button", { name: "Set password" }));
     expect(await within(dialog).findByText("Forbidden.")).toBeVisible();
     await userEvent.click(within(dialog).getByRole("button", { name: "Set password" }));

@@ -381,3 +381,57 @@ async def test_an_account_deactivated_meanwhile_is_signed_out(
     monkeypatch.setattr(backend, "get_user", deactivated_after_the_change)
     response = await alice.post("/auth/password", {"current_password": OLD, "new_password": NEW})
     assert response.status_code == 401
+
+
+async def test_set_password_follows_the_edit_hooks(
+    app: FastAPI, db: AsyncEngine, secret_key: str
+) -> None:
+    """Setting a password is an edit: can_edit and object-level hooks apply."""
+    from starlette.requests import Request  # noqa: PLC0415
+
+    class LockedAdmin(ModelAdmin, model=AdminUser):
+        list_display = ("id", "username")
+        exclude = ("password_hash",)
+
+        @classmethod
+        async def has_edit_permission(cls, request: Request, obj: object | None = None) -> bool:
+            if isinstance(obj, AdminUser) and obj.username == "bob":
+                return False  # a break-glass account
+            return await super().has_edit_permission(request, obj)
+
+    class HiddenAdmin(ModelAdmin, model=AdminUser):
+        list_display = ("id", "username")
+        exclude = ("password_hash",)
+        can_edit = False
+
+    class InvisibleAdmin(ModelAdmin, model=AdminUser):
+        list_display = ("id", "username")
+        exclude = ("password_hash",)
+
+        @classmethod
+        async def has_view_permission(cls, request: Request, obj: object | None = None) -> bool:
+            if isinstance(obj, AdminUser) and obj.username == "bob":
+                return False  # hidden from retrieve: hidden here too
+            return await super().has_view_permission(request, obj)
+
+    cases = ((LockedAdmin, 403), (HiddenAdmin, 403), (InvisibleAdmin, 404))
+    for admin_class, expected in cases:  # object-level edit, model-level edit, object view
+        sub = FastAPI()
+        instance = Admin(
+            sub,
+            engine=db,
+            auth_backend=ModelUserBackend(AdminUser, password_endpoints=True),
+            secret_key=secret_key,
+        )
+        instance.register(admin_class)
+        async with AsyncExitStack() as stack:
+            http = await _open(stack, sub)
+            assert (await _login(http, "alice", OLD)).status_code == 200
+            alice = Client(http)
+            response = await alice.post(
+                "/models/admin_users/items/2/password", {"new_password": NEW}
+            )
+            assert response.status_code == expected, (admin_class.__name__, response.text)
+            meta = (await http.get(f"{API}/meta")).json()
+            assert meta["models"][0]["account"]["set_password"] is (admin_class is not HiddenAdmin)
+    del app

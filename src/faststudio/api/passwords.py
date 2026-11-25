@@ -19,7 +19,7 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
-from faststudio.api._authz import resolve_permissions
+from faststudio.api._authz import allowed, resolve_permissions
 from faststudio.api._deps import DbSession, ModelDep
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import load_or_404
@@ -31,6 +31,7 @@ from faststudio.api.auth import (
     rate_limit_username,
 )
 from faststudio.api.errors import ApiError
+from faststudio.api.write import writing
 from faststudio.auth.capabilities import AccountManager, AllPermissions
 from faststudio.auth.cookies import csrf_cookie, session_cookie
 from faststudio.auth.permissions import cached_permissions
@@ -89,11 +90,13 @@ async def change_password(
     if body.new_password == body.current_password:
         raise _invalid("new_password", ["Choose a password you have not used here."], "password")
     await _check_new(accounts, session, user.id, body.new_password)
-    try:
-        await accounts.set_password(session, user.id, body.new_password)
-    except LookupError:  # deleted meanwhile
-        raise ApiError(404, "not_found") from None
-    await session.commit()
+    # Database errors and lost races map like any write (409, never 500).
+    async with writing(session, "accounts", "password change"):
+        try:
+            await accounts.set_password(session, user.id, body.new_password)
+        except LookupError:  # deleted meanwhile
+            raise ApiError(404, "not_found") from None
+        await session.flush()
     await context.rate_limiter.reset(key)
     # Every session of this account is now stale (new hash, new auth_version):
     # issue a fresh one, and a CSRF token bound to it.
@@ -123,21 +126,32 @@ async def set_password(  # noqa: PLR0917 - FastAPI dependencies
     user: CurrentUser,
     session: DbSession,
 ) -> Response:
-    """Set another account's password; needs every permission (revokes its sessions)."""
+    """Set another account's password (revokes its sessions).
+
+    Needs every permission, and the model's edit hooks (it is an edit of the
+    account): `can_edit = False` or an object-level edit refusal blocks it.
+    """
     accounts = _accounts(request)
     guard = get_context(request).capabilities.account_guard
     if guard is None or not guard.guards(registered.model):
         raise ApiError(404, "not_found")
     if not isinstance(cached_permissions(request), AllPermissions):
         raise ApiError(403, "forbidden")
+    if not await allowed(request, registered, "edit"):
+        raise ApiError(403, "forbidden")  # setting a password is an edit of the account
     obj = await load_or_404(session, registered, pk)
+    if not await allowed(request, registered, "view", obj):
+        raise ApiError(404, "not_found")  # hidden from retrieve: hidden here too
+    if not await allowed(request, registered, "edit", obj):
+        raise ApiError(403, "forbidden")
     account_id = str(getattr(obj, registered.pk_field))
     if account_id == user.id:
         raise ApiError(403, "forbidden", "Use POST /auth/password to change your own password.")
     await _check_new(accounts, session, account_id, body.new_password)
-    try:
-        await accounts.set_password(session, account_id, body.new_password)
-    except LookupError:
-        raise ApiError(404, "not_found") from None
-    await session.commit()
+    async with writing(session, registered.identity, "set password"):
+        try:
+            await accounts.set_password(session, account_id, body.new_password)
+        except LookupError:
+            raise ApiError(404, "not_found") from None
+        await session.flush()
     return Response(status_code=204)

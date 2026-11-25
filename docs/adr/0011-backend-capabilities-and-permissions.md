@@ -181,3 +181,20 @@ its mapped attribute; an account `resolve_accounts` does not report counts
 as holding `ALL` when it is the target; the target account is re-read under
 a lock before the flag and `ALL` checks; the object-level view hook also
 applies to edit, delete and link counts (404).
+
+## Implementation notes (M18a, approved 2026-11-25)
+
+- **Names.** The capability called `user_admin` in §1 and in the
+  Consequences shipped as `BackendCapabilities.accounts`, protocol
+  `AccountManager` (`password_validators`, `user_inputs`, `check_password`,
+  `set_password`; accounts named by the `AuthenticatedUser.id` string). The
+  HTTP password endpoints are switched on by a separate
+  `BackendCapabilities.password_endpoints` (off for `ModelUserBackend`
+  unless `password_endpoints=True`), because the CLI always uses `accounts`.
+  M19 adds `find_account`, `required_fields` and `create_admin` before
+  0.2.0 is tagged.
+- **Validators** live in core (`faststudio.auth.validators`); no
+  common-password list is bundled (A5 open).
+- **Setting another account's password** needs every permission *and* the
+  model's edit hooks (`can_edit`, `has_edit_permission(obj)`); a record
+  hidden by `has_view_permission(obj)` is a 404, as on retrieve.

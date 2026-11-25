@@ -96,10 +96,11 @@ class PermissionBackend(Protocol):
     ) -> Mapping[object, Permissions]:
         """Return the current permissions of the accounts with primary keys `keys`.
 
-        `keys` are primary keys of the model the account guard covers (the
-        user model). Used by the escalation rules to check the accounts a
-        write affects, including "the target holds `ALL`". Return an entry
-        (possibly an empty frozenset) for **every requested key that exists**,
+        `keys` are native primary keys of the model the account guard covers
+        (the user model), unlike `AccountManager`, which takes string ids.
+        Used by the escalation rules to check the accounts a write affects,
+        including "the target holds `ALL`". Return an entry (possibly an
+        empty frozenset) for **every requested key that exists**,
         keyed by the same values: an account left out is treated as possibly
         holding `ALL` when it is the target of a write (refused), and as
         holding nothing when it would gain permissions.
@@ -111,9 +112,11 @@ class PermissionBackend(Protocol):
 class AccountManager(Protocol):
     """Capability: manage the passwords of admin accounts (ADR-0011, ADR-0013).
 
-    Used by the password endpoints and the CLI. Accounts are named by
-    `account_id`, the string form used in `AuthenticatedUser.id`; an id that
-    does not parse or match is a missing account. Methods run in the
+    Used by the password endpoints and the CLI. `account_id` identifies a
+    row of the model the `account_guard` covers, as the same string as
+    `AuthenticatedUser.id` (unlike `PermissionBackend.resolve_accounts`,
+    which takes native primary keys); an id that does not parse or match is
+    a missing account. Methods run in the
     caller's transaction; the caller commits.
     """
 

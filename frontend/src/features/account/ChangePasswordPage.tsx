@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 
-import { fieldErrors, type FieldErrors } from "./fieldErrors";
+import { fieldErrors, firstInvalid, type FieldErrors } from "./fieldErrors";
 import { PasswordField } from "./PasswordFields";
 
 const MISMATCH = "The passwords do not match.";
+const FIELDS = ["current_password", "new_password", "confirm"] as const;
 
 /** Route element for `/account/password`: change one's own password. */
 export function ChangePasswordPage() {
@@ -21,6 +22,15 @@ export function ChangePasswordPage() {
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const alertRef = useRef<HTMLParagraphElement>(null);
+
+  // Move keyboard and screen-reader users to the first problem.
+  useEffect(() => {
+    const name = firstInvalid(errors, FIELDS);
+    if (name !== undefined) inputs.current[name]?.focus();
+    else if (errors.form !== undefined) alertRef.current?.focus();
+  }, [errors]);
 
   if (meta.isPending) return <p role="status">Loading…</p>;
   if (meta.data?.capabilities.change_password !== true) return <NotFoundPage />;
@@ -41,7 +51,7 @@ export function ChangePasswordPage() {
         },
         onError: (error) => {
           if (error instanceof ApiError && error.code === "validation_error") {
-            setErrors(fieldErrors(error.details));
+            setErrors(fieldErrors(error.details, FIELDS));
           } else if (error instanceof ApiError && error.code === "rate_limited") {
             setErrors({ form: "Too many attempts. Wait a few minutes and try again." });
           } else {
@@ -65,6 +75,9 @@ export function ChangePasswordPage() {
           </p>
         )}
         <PasswordField
+          ref={(element) => {
+            inputs.current.current_password = element;
+          }}
           label="Current password"
           autoComplete="current-password"
           autoFocus
@@ -73,6 +86,9 @@ export function ChangePasswordPage() {
           error={errors.current_password}
         />
         <PasswordField
+          ref={(element) => {
+            inputs.current.new_password = element;
+          }}
           label="New password"
           autoComplete="new-password"
           value={next}
@@ -80,6 +96,9 @@ export function ChangePasswordPage() {
           error={errors.new_password}
         />
         <PasswordField
+          ref={(element) => {
+            inputs.current.confirm = element;
+          }}
           label="Confirm new password"
           autoComplete="new-password"
           value={confirm}

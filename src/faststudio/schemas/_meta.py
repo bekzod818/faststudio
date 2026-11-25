@@ -107,7 +107,12 @@ def build_model_meta(
             *(_field_meta(spec, registry, visible) for spec in specs.values()),
             *(_many_meta(field, registry, visible) for field in registered.many_to_many.values()),
         ],
-        account=_account_meta(registered, guard, set_password=set_password),
+        account=_account_meta(
+            registered,
+            guard,
+            set_password=set_password
+            and (permissions.edit if permissions is not None else registered.can_edit),
+        ),
     )
 
 

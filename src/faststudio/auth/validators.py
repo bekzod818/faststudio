@@ -36,6 +36,7 @@ __all__ = [
 _MIN_PART_LENGTH = 3
 _SEPARATORS = "@._-+ "
 _MIN_SIMILARITY = 0.1
+_SIMILAR = "Make the password less similar to the account's name or email."
 
 
 @runtime_checkable
@@ -86,10 +87,13 @@ class NumericPasswordValidator:
 class UserAttributeSimilarityValidator:
     """Not too similar to the account's name, email or similar inputs.
 
-    Compares case-folded text: a password containing an input (or a part of
-    it of at least 3 characters, split on ``@ . _ - +`` and spaces) is
-    refused, as is one whose similarity ratio with it reaches
-    `max_similarity`.
+    Compares case-folded text. A password is refused when it contains a
+    whole input, or the local part of an email address (before ``@``), of
+    at least 3 characters; or when its similarity ratio with the input or
+    with one of its parts (split on ``@ . _ - +`` and spaces, at least 3
+    characters) reaches `max_similarity`. Parts are not checked for
+    containment, so an email's domain (``example``, ``com``) does not rule
+    out ordinary passphrases.
     """
 
     def __init__(self, max_similarity: float = 0.7) -> None:
@@ -100,30 +104,34 @@ class UserAttributeSimilarityValidator:
             raise ConfigurationError(msg)
         self.max_similarity = float(max_similarity)
 
-    def _parts(self, value: str) -> Iterable[str]:
-        folded = _folded(value)
-        yield folded
-        part = ""
+    @staticmethod
+    def _parts(folded: str) -> list[str]:
+        parts, part = [], ""
         for char in folded:
             if char in _SEPARATORS:
-                yield part
+                parts.append(part)
                 part = ""
             else:
                 part += char
-        yield part
+        return [*parts, part]
+
+    def _similar(self, password: str, value: str) -> bool:
+        matcher = SequenceMatcher(a=password, b=value)
+        return (
+            matcher.quick_ratio() >= self.max_similarity and matcher.ratio() >= self.max_similarity
+        )
 
     def validate(self, password: str, *, user_inputs: Sequence[str]) -> str | None:
         """Refuse passwords that contain or closely resemble a user input."""
         folded = _folded(password)
-        for value in user_inputs:
-            for part in self._parts(value):
-                if len(part) < _MIN_PART_LENGTH:
-                    continue
-                similar = SequenceMatcher(a=folded, b=part).quick_ratio() >= self.max_similarity
-                if part in folded or (
-                    similar and SequenceMatcher(a=folded, b=part).ratio() >= self.max_similarity
-                ):
-                    return "Make the password less similar to the account's name or email."
+        for raw in user_inputs:
+            value = _folded(raw)
+            contained = [value, value.split("@", 1)[0]] if "@" in value else [value]
+            if any(len(c) >= _MIN_PART_LENGTH and c in folded for c in contained):
+                return _SIMILAR
+            candidates = [value, *self._parts(value)]
+            if any(len(c) >= _MIN_PART_LENGTH and self._similar(folded, c) for c in candidates):
+                return _SIMILAR
         return None
 
 

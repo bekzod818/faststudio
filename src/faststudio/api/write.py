@@ -332,9 +332,7 @@ async def _delete_links(
 
 
 @asynccontextmanager
-async def _writing(
-    session: AsyncSession, registered: RegisteredModel, action: str
-) -> AsyncIterator[None]:
+async def writing(session: AsyncSession, label: str, action: str) -> AsyncIterator[None]:
     """Run a write and commit it, mapping failures to contract errors.
 
     The body applies the change and flushes it, so database errors and guard
@@ -353,14 +351,14 @@ async def _writing(
     except StaleDataError:
         # The row was deleted by a concurrent request after it was loaded.
         await session.rollback()
-        logger.info("Concurrent change on %s %s", action, registered.identity)
+        logger.info("Concurrent change on %s %s", action, label)
         raise ApiError(409, "conflict") from None
     except StatementError as exc:
         await session.rollback()
         logger.info(
             "Database error on %s %s: %s (%s)",
             action,
-            registered.identity,
+            label,
             type(exc).__name__,
             type(exc.orig).__name__,
         )
@@ -414,7 +412,7 @@ async def create_item(
     await _check_relations(session, registered, values)
     await _check_many(session, registered, many)
     obj = registered.model(**values)
-    async with _writing(session, registered, "create"):
+    async with writing(session, registered.identity, "create"):
         intent = WriteIntent(model=registered.model, obj=obj, action="create", changes=sent)
         await _check_escalation(request, session, registered, intent, many)
         check = await _guard(request, session, user, intent)
@@ -447,7 +445,7 @@ async def update_item(
     pk_value = getattr(obj, registered.pk_field)
     await _check_many(session, registered, many)
     if sent:
-        async with _writing(session, registered, "update"):
+        async with writing(session, registered.identity, "update"):
             # Lock and read the links first: the escalation rules need what is added.
             current = await _current_links(session, registered, pk_value, many)
             # The guard sees many-to-many fields too, as lists of keys (ADR-0010 §5).
@@ -484,7 +482,7 @@ async def delete_item(
     obj = await load_or_404(session, registered, pk)
     await _require_visible(request, registered, obj)
     await require(request, registered, "delete", obj)
-    async with _writing(session, registered, "delete"):
+    async with writing(session, registered.identity, "delete"):
         registry = get_context(request).registry
         await _delete_links(session, registry, registered, getattr(obj, registered.pk_field))
         for statement in dependents_statements(sa_inspect(registered.model), obj):
