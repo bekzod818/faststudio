@@ -14,16 +14,20 @@ def test_configuration_error_is_faststudio_error() -> None:
 
 def test_public_api_is_explicit() -> None:
     assert sorted(faststudio.__all__) == [
+        "ALL",
         "Admin",
         "AuthBackend",
         "AuthenticatedUser",
+        "BackendCapabilities",
         "ConfigurationError",
         "FastStudioError",
+        "FlagAccountGuard",
         "InMemoryRateLimiter",
         "ModelAdmin",
         "ModelUserBackend",
         "RateLimitDecision",
         "RateLimiter",
         "__version__",
+        "has_perm",
         "hash_password",
     ]

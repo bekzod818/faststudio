@@ -165,6 +165,26 @@ describe("edit", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
+  it("shows the access page when the server refuses the record (403)", async () => {
+    setup("/models/users/items/7", {
+      client: {
+        get: vi.fn((url: string) =>
+          url === "/meta"
+            ? Promise.resolve({
+                schema_version: "1",
+                version: "0",
+                title: "Admin",
+                show_powered_by: true,
+                user: { id: "1", username: "admin" },
+                models: [model()],
+              })
+            : Promise.reject(new ApiError(403, "forbidden", "Forbidden.")),
+        ) as unknown as ApiClient["get"],
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "Not found or no access" })).toBeVisible();
+  });
+
   it("shows not found for a missing record", async () => {
     setup("/models/users/items/404");
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeVisible();
