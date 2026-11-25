@@ -517,13 +517,13 @@ async def test_concurrent_identical_adds_never_fail_or_duplicate(
     path, field, table, local, remote = case
     first, second = await sign_in(), await sign_in()
     barrier = asyncio.Barrier(2)
-    replace_many = write_module._replace_many
+    current_links = write_module._current_links
 
-    async def synchronized(*args: Any, **kwargs: Any) -> None:
-        await barrier.wait()  # both requests validated, both about to write
-        await replace_many(*args, **kwargs)
+    async def synchronized(*args: Any, **kwargs: Any) -> Any:
+        await barrier.wait()  # both requests validated, both about to lock and write
+        return await current_links(*args, **kwargs)
 
-    monkeypatch.setattr(write_module, "_replace_many", synchronized)
+    monkeypatch.setattr(write_module, "_current_links", synchronized)
     results = await asyncio.gather(
         first.patch(path, {field: [1]}), second.patch(path, {field: [1]})
     )
@@ -550,13 +550,13 @@ async def test_concurrent_replaces_never_merge(
 ) -> None:
     first, second = await sign_in(), await sign_in()
     barrier = asyncio.Barrier(2)
-    replace_many = write_module._replace_many
+    current_links = write_module._current_links
 
-    async def synchronized(*args: Any, **kwargs: Any) -> None:
+    async def synchronized(*args: Any, **kwargs: Any) -> Any:
         await barrier.wait()
-        await replace_many(*args, **kwargs)
+        return await current_links(*args, **kwargs)
 
-    monkeypatch.setattr(write_module, "_replace_many", synchronized)
+    monkeypatch.setattr(write_module, "_current_links", synchronized)
     results = await asyncio.gather(
         first.patch("/models/posts/items/2", {"tags": [1, 2]}),
         second.patch("/models/posts/items/2", {"tags": [3]}),

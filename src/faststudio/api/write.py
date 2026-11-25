@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from faststudio.api._authz import require, resolve_permissions, viewable
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
+from faststudio.api._escalation import check_escalation
 from faststudio.api._many import affected_fields, bind_to
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
@@ -31,6 +32,7 @@ from faststudio.auth.guard import (
     WriteIntent,
     WriteRefused,
 )
+from faststudio.auth.permissions import cached_permissions
 from faststudio.introspection._fields import Relation
 from faststudio.query._many import (
     INSERT_CHUNK_SIZE,
@@ -218,63 +220,98 @@ async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: o
         )
 
 
-async def _replace_many(
+async def _current_links(
     session: AsyncSession,
     registered: RegisteredModel,
     pk: object,
     many: dict[str, list[Any]],
-    *,
-    created: bool,
-) -> None:
-    """Make each field's links exactly the sent keys: delete the removed, insert the added.
+) -> dict[str, set[object]]:
+    """Lock the record and read the current links of each sent field.
 
-    On update the record is locked first, so the current links are read after
-    any concurrent link write committed: two replaces of the same field never
-    merge, and identical concurrent adds never store a duplicate pair. A field
-    with more than `max_items` links (also after a concurrent write) is refused
-    with 422 `truncated`, because a partial list must never be written back.
+    The record is locked first, so the links are read after any concurrent
+    link write committed: two replaces of the same field never merge, and
+    identical concurrent adds never store a duplicate pair. A field with more
+    than `max_items` links (also after a concurrent write) is refused with 422
+    `truncated`, because a partial list must never be written back.
     """
     if not many:
-        return
+        return {}
     bind = bind_to(registered.model)
-    if not created:
-        await _lock_record(session, registered, pk)
+    await _lock_record(session, registered, pk)
+    current: dict[str, set[object]] = {}
     truncated: list[ValidationIssue] = []
+    for name in many:
+        field = registered.many_to_many[name]
+        rows = (
+            await session.scalars(
+                locked_keys_statement(field.link, pk, field.max_items + 1), bind_arguments=bind
+            )
+        ).all()
+        # Conservative: duplicate rows (written by other code) count toward the limit.
+        if len(rows) > field.max_items:
+            truncated.append(
+                ValidationIssue(
+                    loc=[name],
+                    msg=f"More than {field.max_items} links exist; this field is read-only here.",
+                    type="truncated",
+                )
+            )
+            continue
+        current[name] = set(rows)
+    if truncated:
+        raise _invalid(truncated)
+    return current
+
+
+def _added(many: dict[str, list[Any]], current: dict[str, set[object]]) -> dict[str, list[Any]]:
+    """Keys each field gains, in the order sent."""
+    return {
+        name: [key for key in keys if key not in current.get(name, set())]
+        for name, keys in many.items()
+    }
+
+
+async def _apply_links(
+    session: AsyncSession,
+    registered: RegisteredModel,
+    pk: object,
+    many: dict[str, list[Any]],
+    current: dict[str, set[object]],
+) -> None:
+    """Make each field's links exactly the sent keys: delete the removed, insert the added."""
+    bind = bind_to(registered.model)
+    added = _added(many, current)
     for name, keys in many.items():
         field = registered.many_to_many[name]
-        current: set[object] = set()
-        if not created:
-            rows = (
-                await session.scalars(
-                    locked_keys_statement(field.link, pk, field.max_items + 1),
-                    bind_arguments=bind,
-                )
-            ).all()
-            # Conservative: duplicate rows (written by other code) count toward the limit.
-            if len(rows) > field.max_items:
-                truncated.append(
-                    ValidationIssue(
-                        loc=[name],
-                        msg=f"More than {field.max_items} links exist; this field is "
-                        "read-only here.",
-                        type="truncated",
-                    )
-                )
-                continue
-            current = set(rows)
-        wanted = set(keys)
-        removed = sorted(current - wanted, key=repr)
-        added = [key for key in keys if key not in current]
+        removed = sorted(current.get(name, set()) - set(keys), key=repr)
         for chunk in chunks(removed):
             await session.execute(
                 delete_links_statement(field.link, pk, chunk), bind_arguments=bind
             )
-        for chunk in chunks(added, INSERT_CHUNK_SIZE):  # two bound parameters per key
+        for chunk in chunks(added[name], INSERT_CHUNK_SIZE):  # two bound parameters per key
             await session.execute(
                 insert_links_statement(field.link, pk, chunk), bind_arguments=bind
             )
-    if truncated:
-        raise _invalid(truncated)
+
+
+async def _check_escalation(
+    request: Request,
+    session: AsyncSession,
+    registered: RegisteredModel,
+    intent: WriteIntent,
+    added: dict[str, list[Any]],
+) -> None:
+    """Apply the escalation rules (ADR-0011 §6) before the account guard."""
+    context = get_context(request)
+    await check_escalation(
+        session,
+        capabilities=context.capabilities,
+        rules=context.escalation,
+        actor=cached_permissions(request),
+        registered=registered,
+        intent=intent,
+        added=added,
+    )
 
 
 async def _delete_links(
@@ -367,11 +404,12 @@ async def create_item(
     obj = registered.model(**values)
     async with _writing(session, registered, "create"):
         intent = WriteIntent(model=registered.model, obj=obj, action="create", changes=sent)
+        await _check_escalation(request, session, registered, intent, many)
         check = await _guard(request, session, user, intent)
         session.add(obj)
         await session.flush()
         pk_value = getattr(obj, registered.pk_field)
-        await _replace_many(session, registered, pk_value, many, created=True)
+        await _apply_links(session, registered, pk_value, many, {})
         if check is not None:
             await check()
     await session.refresh(obj)
@@ -397,12 +435,15 @@ async def update_item(
     await _check_many(session, registered, many)
     if sent:
         async with _writing(session, registered, "update"):
+            # Lock and read the links first: the escalation rules need what is added.
+            current = await _current_links(session, registered, pk_value, many)
             # The guard sees many-to-many fields too, as lists of keys (ADR-0010 §5).
             intent = WriteIntent(model=registered.model, obj=obj, action="update", changes=sent)
+            await _check_escalation(request, session, registered, intent, _added(many, current))
             check = await _guard(request, session, user, intent)
             for name, value in values.items():
                 setattr(obj, name, value)
-            await _replace_many(session, registered, pk_value, many, created=False)
+            await _apply_links(session, registered, pk_value, many, current)
             await session.flush()
             if check is not None:
                 await check()
@@ -437,6 +478,7 @@ async def delete_item(
                 raise ApiError(409, "conflict", "Related records still reference this record.")
         # After the related-records check, so a refused delete never locks admin rows.
         intent = WriteIntent(model=registered.model, obj=obj, action="delete", changes={})
+        await _check_escalation(request, session, registered, intent, {})
         check = await _guard(request, session, user, intent)
         await session.delete(obj)
         await session.flush()

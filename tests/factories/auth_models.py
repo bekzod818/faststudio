@@ -90,12 +90,16 @@ class AuthUser(AuthBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(150), unique=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[str] = mapped_column(String(255), default="!")  # unusable
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     groups: Mapped[list[AuthGroup]] = relationship(secondary=user_groups, back_populates="users")
     permissions: Mapped[list[AuthPermission]] = relationship(
         secondary=user_permissions, back_populates="users"
+    )
+    #: A second, undeclared side over `user_groups`: registering it writable must fail.
+    shadow_groups: Mapped[list[AuthGroup]] = relationship(
+        secondary=user_groups, overlaps="groups,users"
     )
 
 

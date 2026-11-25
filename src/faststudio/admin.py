@@ -15,6 +15,7 @@ from starlette.types import Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
 from faststudio.api._context import AdminContext
+from faststudio.api._escalation import EscalationRules
 from faststudio.auth.backend import AuthBackend
 from faststudio.auth.capabilities import BackendCapabilities, PermissionBackend
 from faststudio.auth.csrf import CsrfTokens
@@ -101,6 +102,7 @@ class Admin:
         self._session_maker = _resolve_session_maker(engine, session_maker)
         self._auth_backend = _validate_auth_backend(auth_backend)
         self._capabilities = _resolve_capabilities(self._auth_backend)
+        self._escalation = EscalationRules.from_capabilities(self._capabilities)
         self._settings: Settings = resolve_settings(
             secret_key=secret_key,
             title=title,
@@ -119,6 +121,7 @@ class Admin:
             session_maker=self._session_maker,
             auth_backend=self._auth_backend,
             capabilities=self._capabilities,
+            escalation=self._escalation,
             static_dir=_STATIC_DIR,
             sessions=SessionManager(
                 self._settings.secret_key,
@@ -159,6 +162,8 @@ class Admin:
         guard = self._capabilities.account_guard
         if guard is not None:
             guard.check_model(registered.model)
+        if self._escalation is not None:
+            self._escalation.check_model(registered)
         self._registry.add(registered)
         return model_admin
 
