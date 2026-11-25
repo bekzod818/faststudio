@@ -11,24 +11,33 @@ metadata contract, CRUD API with search/filter/sort/pagination, built-in
 session authentication with CSRF, React SPA (login, dashboard, list, forms,
 dark mode), `examples/basic`. See the milestones in `docs/architecture.md`.
 
-## v0.1.x
+## v0.1.1 — Hardening (released)
 
-- Configurable per-client login budget (shared backend for multi-worker
-  deployments) *(ADR)*
+Admin self-lockout and last-admin protection (ADR-0009), lock races answered
+with 409, a configurable list offset cap (`max_list_offset`), a test-suite
+leak guard, and a clearer threat model for sessions.
 
-## v0.2 — Relationships and actions
+## v0.2 — Relationships, users and permissions
 
-- Many-to-many fields and inline/related editing *(ADR)*
+- Many-to-many fields (simple association tables) with a searchable
+  multi-select *(ADR)*
+- `faststudio.contrib.auth`: Django-style users, groups and permissions next
+  to `ModelUserBackend`; permission checks on every route and per-model
+  `has_*_permission` hooks *(ADR)*
+- `faststudio` CLI: `createadmin`, `changepassword`, `syncpermissions` *(ADR)*
+- Session improvements: optional idle timeout and "sign out everywhere"
+  (still stateless) *(ADR)*
+
+## v0.3 — Actions, extensibility and auditing
+
 - Custom bulk and row actions *(ADR)*
-- Composite primary keys
 - Public extension points: custom field types and form widgets registry *(ADR)*
-
-## v0.3 — Access control and auditing
-
-- Granular role-based permissions per model and action *(ADR)*
 - Audit log of admin changes
 - Server-side session store (revocable sessions; Redis/DB backends)
-- Shared rate limiter backends (Redis)
+- Shared rate limiter backends (Redis), including the per-client login budget
+- List-query hook for row-level visibility (object-level permissions on lists and choices)
+- Composite primary keys
+- Association objects with extra columns and inline/related editing
 
 ## v0.4 — Data workflows
 
@@ -42,7 +51,6 @@ dark mode), `examples/basic`. See the milestones in `docs/architecture.md`.
 - Theming API (colors, logo, fonts)
 - Synchronous SQLAlchemy sessions
 - SQLModel-specific conveniences; evaluate Tortoise ORM / Beanie support *(ADR)*
-- `faststudio` CLI (e.g. `faststudio create-admin-user`)
 - Documentation website
 
 ## v1.0

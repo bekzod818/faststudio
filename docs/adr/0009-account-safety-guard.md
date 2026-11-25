@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-24
 - Refines: ADR-0004 (authentication, sessions and CSRF)
+- Amended by: ADR-0011 (made public as the `account_guard` capability), v0.2
 
 ## Context
 
