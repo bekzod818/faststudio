@@ -20,6 +20,7 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `max_list_offset` | `int` | `10_000` | – | Lists and relation pickers never skip this many rows or more; see [Deep pagination](#deep-pagination). 1–10 000 000. |
 | `rate_limiter` | `RateLimiter` | `InMemoryRateLimiter()` | – | Login throttling: 5 attempts / 15 min per client IP + username. In-memory is per process; use a shared backend with multiple workers. Independently, each client IP gets at most 30 attempts / 15 min across all usernames (per process). Client IPs must be real: behind a reverse proxy enable trusted proxy headers (`uvicorn --proxy-headers --forwarded-allow-ips=...`). |
 | `show_powered_by` | `bool` | `True` | – | Footer credit. |
+| `sync_permissions_on_startup` | `bool` | `False` | – | Create missing permissions on the first admin request, as `faststudio syncpermissions` does without `--prune`; needs a permission schema (e.g. `contrib.auth`). A failure is logged and retried. |
 
 ## Mounting
 
@@ -323,6 +324,30 @@ startup: wrap its rules in an `AccountGuard` (or use `FlagAccountGuard`) and
 return it as `BackendCapabilities(account_guard=...)`. Creates now reach the
 guard too (`WriteIntent.action == "create"`).
 
+## Command line (`faststudio`)
+
+The `faststudio` command manages accounts and permissions. `--app` names your
+`Admin` instance, or a function returning one (`module.path:attr`, imported
+from the current directory). It never creates tables: run your migrations
+first.
+
+| Command | Does |
+|---|---|
+| `faststudio createadmin --app main:admin [--username U] [--set FIELD=VALUE ...]` | Creates an active account with every permission (`ModelUserBackend`: its active/admin flags; `contrib.auth`: a superuser). Asks for required columns without a default (e.g. `email`); `--set` gives text columns. |
+| `faststudio changepassword USERNAME --app main:admin` | Sets a new password; the account is signed out everywhere. |
+| `faststudio syncpermissions --app main:admin [--dry-run] [--prune [--yes]]` | Creates a permission for every `<identity>.<action>` and `extra_permissions` entry, updates names, and lists stale codenames (no registered model produces them, e.g. after renaming an `identity`) and orphaned ones (stale but still granted). One transaction; idempotent. Deletes stale permissions and their grants only with `--prune`, after confirmation or `--yes`. |
+| `faststudio checkusers --app main:admin [--fix [--yes]]` | `contrib.auth`: reports usernames whose normalized form drifted and case-insensitive collisions; `--fix` repairs drift that does not collide, after confirmation or `--yes`. |
+
+- **Passwords** are only asked interactively, twice, and checked by the
+  backend's validators. They are never read from arguments or environment
+  variables; `--yes` only answers confirmations. Without a terminal, a
+  command that needs input refuses.
+- **Exit codes:** 0 success, 1 the command refused or failed (nothing is
+  changed), 2 usage error (bad arguments, `--app` not found, input needed
+  without a terminal). Database errors are reported by type only.
+- `Admin(..., sync_permissions_on_startup=True)` runs the sync (never
+  `--prune`) on the first admin request instead.
+
 ## Users, groups and permissions (`contrib.auth`)
 
 `faststudio.contrib.auth` stores admin accounts, groups and permissions in
@@ -391,7 +416,9 @@ registered classes are not reachable from your code.
 
 `username_normalized` is kept in sync when `username` is assigned through
 the ORM (the admin, the CLI, `user.username = ...`). Core `update()` or bulk
-statements bypass it: always change usernames through the ORM.
+statements bypass it: always change usernames through the ORM. Run
+`faststudio checkusers --app main:admin` (for example in CI) to find drift
+and case-insensitive collisions; `--fix` repairs what it safely can.
 
 ## Deep pagination
 

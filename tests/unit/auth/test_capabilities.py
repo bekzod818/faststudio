@@ -237,6 +237,17 @@ class _Accounts:
     async def set_password(self, session: object, account_id: str, password: str) -> None:
         del session, account_id, password
 
+    async def find_account(self, session: object, username: str) -> str | None:
+        del session, username
+        return None
+
+    def required_fields(self) -> tuple[str, ...]:
+        return ()
+
+    async def create_admin(self, session: object, **kwargs: object) -> str:
+        del session, kwargs
+        return "1"
+
 
 @pytest.mark.parametrize(
     ("capabilities", "match"),

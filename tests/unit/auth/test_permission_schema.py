@@ -14,7 +14,7 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 
 from faststudio import Admin, ConfigurationError, ModelAdmin
 from faststudio.api._escalation import EscalationRules
-from faststudio.auth.capabilities import BackendCapabilities
+from faststudio.auth.capabilities import BackendCapabilities, PermissionSchema
 from faststudio.auth.guard import FlagAccountGuard
 from tests.factories.auth_models import (
     SCHEMA,
@@ -60,6 +60,7 @@ def test_no_schema_means_no_rules() -> None:
         ({"user_permissions": "nope"}, "has no relationship 'nope'"),
         ({"user_permissions": "groups"}, "targets AuthGroup, not AuthPermission"),
         ({"codename_field": "label"}, "'label' is not a column"),
+        ({"name_field": "title"}, "name_field 'title' is not a column"),
         ({"user_model": object}, "not a mapped SQLAlchemy class"),
         (
             {
@@ -408,3 +409,64 @@ async def test_a_target_deleted_meanwhile_is_a_conflict(auth_db: Any) -> None:
                 added={},
             )
         assert (refused.value.status_code, refused.value.code) == (409, "conflict")
+
+
+def test_codenames_must_be_unique() -> None:
+    """ON CONFLICT (codename) and the permission logic both need unique codenames."""
+    from sqlalchemy import Index, Integer, String, UniqueConstraint  # noqa: PLC0415
+
+    class Base(DeclarativeBase):
+        pass
+
+    loose = Table(
+        "loose_perms",
+        Base.metadata,
+        Column("id", Integer, primary_key=True),
+        Column("codename", String(100)),
+    )
+    indexed = Table(
+        "indexed_perms",
+        Base.metadata,
+        Column("id", Integer, primary_key=True),
+        Column("codename", String(100)),
+        Index("ix_indexed_codename", "codename", unique=True),
+    )
+    keyed = Table("keyed_perms", Base.metadata, Column("codename", String(100), primary_key=True))
+    constrained = Table(
+        "constrained_perms",
+        Base.metadata,
+        Column("id", Integer, primary_key=True),
+        Column("codename", String(100)),
+        UniqueConstraint("codename"),
+    )
+
+    class Loose(Base):
+        __table__ = loose
+
+    class Indexed(Base):
+        __table__ = indexed
+
+    class Keyed(Base):
+        __table__ = keyed
+
+    class Constrained(Base):
+        __table__ = constrained
+
+    def schema(model: type) -> PermissionSchema:
+        return dataclasses.replace(
+            SCHEMA,
+            permission_model=model,
+            user_permissions=None,
+            group_model=None,
+            user_groups=None,
+            group_permissions=None,
+            group_users=None,
+            permission_groups=None,
+            permission_users=None,
+        )
+
+    with pytest.raises(ConfigurationError, match="must be unique"):
+        EscalationRules.from_capabilities(_capabilities(schema(Loose)))
+    assert EscalationRules.from_capabilities(_capabilities(schema(Indexed))) is not None
+    assert EscalationRules.from_capabilities(_capabilities(schema(Keyed))) is not None
+    assert EscalationRules.from_capabilities(_capabilities(schema(Constrained))) is not None

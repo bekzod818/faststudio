@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from sqlalchemy import (
@@ -171,6 +171,10 @@ class ModelUserBackend:
             accounts=_ModelAccounts(
                 model,
                 parse_pk=parser,
+                pk_field=self._pk_field,
+                username_field=username_field,
+                flags=flags,
+                columns=columns,
                 password_field=password_field,
                 input_fields=tuple(inputs),
                 validators=cast("tuple[PasswordValidator, ...]", validators),
@@ -279,12 +283,34 @@ class _ModelAccounts:
         model: type[Any],
         *,
         parse_pk: Callable[[str], Any],
+        pk_field: str,
+        username_field: str,
+        flags: tuple[str, ...],
+        columns: dict[str, Column[Any]],
         password_field: str,
         input_fields: tuple[str, ...],
         validators: tuple[PasswordValidator, ...],
     ) -> None:
         self._model = model
         self._parse_pk = parse_pk
+        self._pk_field = pk_field
+        self._username_field = username_field
+        self._flags = flags
+        own = {pk_field, username_field, password_field, *flags}
+        #: Text columns `create_admin` accepts in `fields`.
+        self._settable = tuple(
+            name for name, column in columns.items() if name not in own and is_text(column)
+        )
+        #: NOT NULL columns without a default that `create_admin` must be given.
+        self._required = tuple(
+            name
+            for name, column in columns.items()
+            if name not in own
+            and not column.nullable
+            and column.default is None
+            and column.server_default is None
+            and not (column.primary_key and column.autoincrement in (True, "auto"))
+        )
         self._password_field = password_field
         self._input_fields = input_fields
         self.password_validators: Sequence[PasswordValidator] = validators
@@ -324,3 +350,50 @@ class _ModelAccounts:
             msg = "No such account."
             raise LookupError(msg)
         setattr(row, self._password_field, await hash_password_async(password))
+
+    async def find_account(self, session: AsyncSession, username: str) -> str | None:
+        """Return the id of the single account with exactly this username."""
+        column = getattr(self._model, self._username_field)
+        rows = (await session.scalars(select(self._model).where(column == username).limit(2))).all()
+        return str(getattr(rows[0], self._pk_field)) if len(rows) == 1 else None
+
+    def required_fields(self) -> Sequence[str]:
+        """Return the NOT NULL columns without a default (besides username/password/flags)."""
+        return self._required
+
+    async def create_admin(
+        self, session: AsyncSession, *, username: str, password: str, fields: Mapping[str, str]
+    ) -> str:
+        """Create an active admin (every flag set) and return its id.
+
+        Raises:
+            ValueError: for a field that is not a settable text column, or a
+                required column that is not text (it cannot be given as text).
+
+        """
+        unknown = sorted(set(fields) - set(self._settable))
+        if unknown:
+            msg = f"Not a text column of the user model: {', '.join(unknown)}."
+            raise ValueError(msg)
+        not_text = [name for name in self._required if name not in self._settable]
+        if not_text:
+            msg = (
+                f"Required column(s) {', '.join(not_text)} are not text: give them a "
+                "server default or create the account in code."
+            )
+            raise ValueError(msg)
+        missing = [name for name in self._required if name not in fields]
+        if missing:
+            msg = f"Missing required value(s): {', '.join(missing)}."
+            raise ValueError(msg)
+        row = self._model(
+            **{
+                self._username_field: username,
+                self._password_field: await hash_password_async(password),
+            },
+            **dict.fromkeys(self._flags, True),
+            **fields,
+        )
+        session.add(row)
+        await session.flush()
+        return str(getattr(row, self._pk_field))

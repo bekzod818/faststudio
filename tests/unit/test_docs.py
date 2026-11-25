@@ -88,18 +88,19 @@ def _python_block_after(marker: str, text: str = README) -> str:
     return text.split(marker, 1)[1].split("```python\n", 1)[1].split("```", 1)[0]
 
 
-@pytest.mark.parametrize("file", ["main.py", "create_admin.py"])
-def test_getting_started_uses_the_tested_quickstart(file: str) -> None:
-    marker = f"Save as `{file}`"
+def test_getting_started_uses_the_tested_quickstart() -> None:
+    marker = "Save as `main.py`"
     assert _python_block_after(marker, GETTING_STARTED) == _python_block_after(marker)
+    command = "faststudio createadmin --app main:admin"
+    assert command in README
+    assert command in GETTING_STARTED
 
 
-def _run_quickstart(
+def _load_main(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> types.ModuleType:
-    """Save main.py and run create_admin.py as the README says; return `main`."""
+    """Save main.py as the README says (a real `main` module); return it."""
     main_code = _python_block_after("Save as `main.py`")
-    admin_code = _python_block_after("Save as `create_admin.py`")
     url = "sqlite+aiosqlite:///app.db"
     assert url in main_code
     main_code = main_code.replace(url, f"sqlite+aiosqlite:///{tmp_path}/app.db")
@@ -111,11 +112,28 @@ def _run_quickstart(
     with caplog.at_level(logging.WARNING, logger="faststudio"):
         exec(compile(main_code, "README.md:main.py", "exec"), main.__dict__)
     assert caplog.records == []  # e.g. no "looks sensitive" or can_create warning
+    return main
 
-    answers = iter(["admin", "admin@example.com"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    monkeypatch.setattr("getpass.getpass", lambda prompt="": "a long passphrase")
-    exec(compile(admin_code, "README.md:create_admin.py", "exec"), {"__name__": "__main__"})
+
+def _run_quickstart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> types.ModuleType:
+    """Run the README steps: create_tables(), then ``faststudio createadmin``."""
+    from faststudio import cli  # noqa: PLC0415
+
+    main = _load_main(tmp_path, monkeypatch, caplog)
+    asyncio.run(main.__dict__["create_tables"]())
+    lines = iter(["admin", "admin@example.com"])  # username, then the email column
+    passwords = iter(["a long passphrase", "a long passphrase"])
+    out: list[str] = []
+    io = cli.CliIO(
+        read_line=lambda prompt: next(lines),
+        read_password=lambda prompt: next(passwords),
+        is_tty=lambda: True,
+        write=out.append,
+        error=out.append,
+    )
+    assert cli.main(["createadmin", "--app", "main:admin"], io=io) == 0, out
     return main
 
 
@@ -217,3 +235,19 @@ def test_getting_started_lockout_guard_and_recovery(
         {"__name__": "__main__"},
     )
     assert asyncio.run(_client_status(app, engine, "a new long passphrase")) == (200, 409)
+
+
+def test_getting_started_without_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The v0.1 create_admin.py script, kept under "Without the CLI", still works."""
+    main = _load_main(tmp_path, monkeypatch, caplog)
+    admin_code = _python_block_after("Save as\n`create_admin.py`", GETTING_STARTED)
+    answers = iter(["admin", "admin@example.com"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": "a long passphrase")
+    exec(
+        compile(admin_code, "getting-started.md:create_admin.py", "exec"), {"__name__": "__main__"}
+    )
+    app, engine = _app_and_engine(main)
+    asyncio.run(_sign_in_and_list_users(app, engine))

@@ -21,7 +21,7 @@ from faststudio import (
     ConfigurationError,
     FlagAccountGuard,
 )
-from faststudio.auth.capabilities import Permissions, PermissionSchema
+from faststudio.auth.capabilities import AuditedAccount, Permissions, PermissionSchema
 from faststudio.auth.passwords import (
     dummy_verify_async,
     hash_password_async,
@@ -95,6 +95,7 @@ class DatabaseAuthBackend:
                 user_model=models.user,
                 permission_model=models.permission,
                 codename_field="codename",
+                name_field="name",
                 user_permissions="permissions",
                 group_model=models.group,
                 user_groups="groups",
@@ -104,6 +105,7 @@ class DatabaseAuthBackend:
                 permission_users="users",
             ),
             accounts=self,
+            username_audit=self,
             password_endpoints=True,
             register_admins=self._register if register_admins else None,
         )
@@ -254,3 +256,62 @@ class DatabaseAuthBackend:
         if row is None:
             raise LookupError(account_id)
         row.password_hash = await hash_password_async(password)
+
+    async def find_account(self, session: AsyncSession, username: str) -> str | None:
+        """Return the id of the account signing in as `username` (normalized match)."""
+        statement = select(self._user.id).where(
+            self._user.username_normalized == normalize_username(username)
+        )
+        found = (await session.execute(statement)).scalar_one_or_none()
+        return None if found is None else str(found)
+
+    def required_fields(self) -> Sequence[str]:
+        """Return nothing: every other column has a default."""
+        return ()
+
+    async def create_admin(
+        self, session: AsyncSession, *, username: str, password: str, fields: Mapping[str, str]
+    ) -> str:
+        """Create an active superuser through the ORM and return its id.
+
+        Raises:
+            ValueError: for fields other than ``email``.
+
+        """
+        unknown = sorted(set(fields) - {"email"})
+        if unknown:
+            msg = f"Unknown field(s): {', '.join(unknown)} (only email can be set)."
+            raise ValueError(msg)
+        row = self._user(
+            username=username,
+            password_hash=await hash_password_async(password),
+            is_active=True,
+            is_superuser=True,
+            email=fields.get("email", ""),
+        )
+        session.add(row)
+        await session.flush()
+        return str(row.id)
+
+    # ------------------------------------------------------------- UsernameAudit
+
+    async def audit(self, session: AsyncSession) -> Sequence[AuditedAccount]:
+        """Return every account with its stored and expected normalized username."""
+        statement = select(self._user.id, self._user.username, self._user.username_normalized)
+        return [
+            AuditedAccount(
+                account_id=str(pk),
+                username=username,
+                stored=stored,
+                expected=normalize_username(username),
+            )
+            for pk, username, stored in (await session.execute(statement)).all()
+        ]
+
+    async def fix(self, session: AsyncSession, account_ids: Sequence[str]) -> None:
+        """Re-derive the normalized username of `account_ids` through the ORM."""
+        for account_id in account_ids:
+            row = await self._row(session, account_id)
+            if row is not None:
+                row.username_normalized = normalize_username(row.username)
+        await session.flush()
