@@ -10,7 +10,8 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from faststudio import Admin, AuthenticatedUser, ModelAdmin, ModelUserBackend, hash_password
-from faststudio.auth._guard import PostWriteCheck, WriteIntent
+from faststudio.auth.guard import PostWriteCheck, WriteIntent
+from tests._guards import guard_of
 from tests.factories.models import AdminUser, Team
 
 ORIGIN = "https://testserver"
@@ -82,7 +83,8 @@ def synchronize_writes(
     snapshot isolation, taken its snapshot) before any of them writes.
     """
     barrier = asyncio.Barrier(parties)
-    before_write = backend.before_write
+    guard = guard_of(backend)
+    before_write = guard.before_write
 
     async def synchronized(
         session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
@@ -90,4 +92,4 @@ def synchronize_writes(
         await barrier.wait()
         return await before_write(session, user, intent)
 
-    monkeypatch.setattr(backend, "before_write", synchronized)
+    monkeypatch.setattr(guard, "before_write", synchronized)

@@ -36,6 +36,11 @@ description: How to add a new ModelAdmin option to FastStudio safely - naming, d
   columns only.
 - Add the option to `OPTION_NAMES` in `model_admin.py`, otherwise
   registration rejects it as unknown.
+- **Permission-related options** (like `extra_permissions`) shape codenames
+  (`"<identity>.<key>"`, ≤ 100 characters, never one of the four actions).
+  Hooks are methods, not options: keep them async classmethods (checked in
+  `_check_hooks`) and never read permissions from raw class attributes in
+  request code; go through `api/_authz.py`.
 - Store the resolved value on the internal registered-model object; request
   code reads only resolved values, never the raw class attribute.
 - Expose via `ModelMeta` in `schemas/contract.py` if the SPA needs it, then

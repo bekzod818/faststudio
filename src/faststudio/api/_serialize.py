@@ -146,13 +146,25 @@ async def relation_labels(
     registered: RegisteredModel,
     rows: Sequence[object],
     fields: Sequence[str],
+    *,
+    visible: frozenset[str] | None = None,
 ) -> list[dict[str, str]]:
-    """Display labels of foreign-key values, one query per relation field."""
+    """Display labels of foreign-key values, one query per relation field.
+
+    Targets outside `visible` (models the admin may not view; ``None``: all
+    may be viewed) are labelled with the key itself and never queried (A1).
+    """
     labels: list[dict[str, str]] = [{} for _ in rows]
     for name in fields:
         spec = registered.field_specs[name]
         target = registry.target_of(spec.relation.target) if spec.relation else None
         if target is None:
+            continue
+        if visible is not None and target.identity not in visible:
+            for index, row in enumerate(rows):
+                value = getattr(row, name)
+                if value is not None:
+                    labels[index][name] = encode_pk(value)
             continue
         values = sorted({getattr(row, name) for row in rows} - {None}, key=repr)
         by_pk: dict[object, str] = {}

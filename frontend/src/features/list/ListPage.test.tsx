@@ -231,9 +231,15 @@ describe("ModelListRoute", () => {
     expect(listCalls()[0]).toEqual({ page: 1 });
   });
 
-  it("shows not found for an unknown model", async () => {
+  it("shows the access page when the server refuses the list (403)", async () => {
+    setup("/models/users", () => Promise.reject(new ApiError(403, "forbidden", "Forbidden.")));
+    expect(await screen.findByRole("heading", { name: "Not found or no access" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("says not found or no access for a model missing from /meta", async () => {
     setup("/models/nope");
-    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Not found or no access" })).toBeVisible();
   });
 
   it("keeps a search restored by the back button (no debounce wipe)", async () => {

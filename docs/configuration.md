@@ -166,6 +166,108 @@ class PostAdmin(ModelAdmin, model=Post):
   empty search box removes the last chip). A save sends the field only when
   its set changed, and never for read-only or truncated fields.
 
+## Permissions
+
+Without a permission backend (for example with `ModelUserBackend`) every
+signed-in admin may do everything the `ModelAdmin` flags allow, as in v0.1.
+A backend can add per-user permissions through its optional
+`faststudio_capabilities` (ADR-0011); `faststudio.contrib.auth` (v0.2) will
+provide users, groups and permissions out of the box.
+
+**Codenames** are `"<identity>.<action>"` with the actions `view`, `create`,
+`edit` and `delete` (`edit` implies `view`), plus your own:
+
+```python
+from faststudio import ModelAdmin, has_perm
+
+
+class ArticleAdmin(ModelAdmin, model=Article):
+    extra_permissions = {"publish": "Publish articles"}  # codename "articles.publish"
+
+    @classmethod
+    async def has_edit_permission(cls, request, obj=None) -> bool:
+        if obj is not None and obj.published and not await has_perm(request, "articles.publish"):
+            return False
+        return await super().has_edit_permission(request, obj)
+```
+
+- **Hooks** are async classmethods: `has_view_permission(request, obj=None)`,
+  `has_create_permission(request)`, `has_edit_permission(request, obj=None)`
+  and `has_delete_permission(request, obj=None)`. Each defaults to the static
+  flag (`can_create`, …) **and** the permission. Return `True` to allow;
+  anything else refuses. Registration fails if a hook is not an async
+  classmethod.
+- **`faststudio.has_perm(request, codename)`** checks one codename. The
+  permissions were resolved once for the request, so it runs no query.
+- **Object-level checks** (`obj`) run on retrieve, edit and delete. A record
+  `has_view_permission(request, obj)` refuses is a 404 for all three (and for
+  its link counts); an edit or delete refusal of a visible record is a 403. **They do not filter lists or choices**: do not rely on
+  them to hide rows (a list-query hook is planned for v0.3).
+- **Related models:** an admin who may not view a model sees its keys instead
+  of labels in other models' fields, cannot open its choices, and cannot set
+  relations to it (the field is readonly for them).
+- **Create or delete without view** works through the API only; the model is
+  not listed in the UI.
+
+**Writing a permission backend.** Return a `BackendCapabilities` from a
+`faststudio_capabilities` property. `permissions` resolves a user to `ALL` or
+a frozenset of codenames (`resolve`, once per request; `resolve_accounts`, for
+the escalation rules). Keep each to one query and return `ALL` for
+superusers. `resolve_accounts` must return an entry for every requested
+account that exists, keyed by the same values (an account it leaves out is
+treated as possibly holding `ALL` and cannot be edited by others).
+`permission_schema` tells FastStudio where users, groups and permissions are
+stored; **without it, grants edited in the admin are not checked** (startup
+logs a warning).
+
+```python
+from faststudio import ALL, BackendCapabilities, FlagAccountGuard
+from faststudio.auth.capabilities import PermissionSchema
+
+
+class MyBackend:
+    @property
+    def faststudio_capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities(
+            account_guard=FlagAccountGuard(
+                User,
+                "id",
+                ("is_active", "is_superuser"),
+                admin_flag="is_superuser",
+            ),
+            permissions=self,
+            permission_schema=PermissionSchema(
+                user_model=User,
+                permission_model=Permission,
+                codename_field="codename",
+                user_permissions="permissions",
+                group_model=Group,
+                user_groups="groups",
+                group_permissions="permissions",
+            ),
+        )
+
+    async def resolve(self, session, user): ...
+    async def resolve_accounts(self, session, keys): ...
+```
+
+**Escalation rules.** When users, groups or permissions are edited in the
+admin, FastStudio refuses (403) any write by an admin who does not hold every
+permission that would change the superuser-like flag, touch an account
+holding every permission, or give anyone a codename the admin does not hold,
+from either side of a relationship. The check is deliberately conservative:
+adding a codename the admin lacks to a group is refused even if every member
+already holds it. Declare every writable side in the `PermissionSchema`:
+registering a writable many-to-many over a declared association table that
+the schema does not name, or another mapping of a declared table (an alias of
+the permission table, say), fails at `register()`.
+
+A backend that still implements 0.1.1's private guard methods (`guards`,
+`before_write`, `check_model`) without `faststudio_capabilities` fails at
+startup: wrap its rules in an `AccountGuard` (or use `FlagAccountGuard`) and
+return it as `BackendCapabilities(account_guard=...)`. Creates now reach the
+guard too (`WriteIntent.action == "create"`).
+
 ## Deep pagination
 
 Lists page with SQL `OFFSET`, and the database reads and discards every
@@ -253,7 +355,8 @@ read-only (see `docs/api-contract.md`).
 | `column_labels` | `{}` | `{field: label}` display labels |
 | `many_to_many` | `()` | many-to-many relationships shown as editable fields; each must be a plain association table (see [Many-to-many fields](#many-to-many-fields)); unlisted relationships stay invisible |
 | `many_to_many_limits` | `{}` | most related keys per many-to-many field, default 500, 1–10 000; keys must be listed in `many_to_many` |
-| `can_create` / `can_edit` / `can_delete` | `True` | per-model permissions (`bool`) |
+| `extra_permissions` | `{}` | custom permissions as `{key: description}`; codename `"<identity>.<key>"`, key `[a-z][a-z0-9_]{0,40}`, not an action, codename ≤ 100 characters (see [Permissions](#permissions)) |
+| `can_create` / `can_edit` / `can_delete` | `True` | static switches per model (`bool`); with a permission backend, the admin also needs the permission |
 
 List options must be lists or tuples: `search_fields = "email"` is an error
 (use `["email"]`). Composite primary keys are not supported yet.

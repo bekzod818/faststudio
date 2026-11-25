@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
+import { isForbidden } from "@/api/errors";
 import type { FieldMeta, ModelMeta, Row } from "@/api/contract.gen";
 import { useList } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { useConfig } from "@/lib/config-context";
 import { cn } from "@/lib/utils";
 import { ModelGate } from "@/features/model/ModelGate";
 import { inSentence, routes } from "@/features/model/routes";
+import { NoAccessPage } from "@/pages/NoAccessPage";
 
 import { CellValue } from "./cells";
 import { EmptyState } from "./EmptyState";
@@ -199,6 +201,8 @@ export function ListPage({ model }: { model: ModelMeta }) {
             Go to the first page
           </Button>
         </div>
+      ) : list.isError && isForbidden(list.error) ? (
+        <NoAccessPage />
       ) : list.isError && list.data === undefined ? (
         <div role="alert" className="flex flex-col items-start gap-2">
           <p>Could not load {plural}.</p>

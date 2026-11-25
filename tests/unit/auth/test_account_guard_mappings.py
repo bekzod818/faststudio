@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from faststudio import Admin, AuthenticatedUser, ConfigurationError, ModelAdmin, ModelUserBackend
-from faststudio.auth._guard import WriteAction, WriteIntent, WriteRefused
+from faststudio.auth.guard import WriteAction, WriteIntent, WriteRefused
+from tests._guards import guard_of
 from tests._stubs import StubAuthBackend
 from tests.factories.models import Team
 
@@ -81,13 +82,13 @@ class Member(_Base):
 
 @pytest.mark.parametrize("model", [Staff, Contractor, Team])
 def test_user_model_subclasses_and_other_tables_are_allowed(model: type[Any]) -> None:
-    ModelUserBackend(Staff).check_model(model)
+    guard_of(ModelUserBackend(Staff)).check_model(model)
 
 
 @pytest.mark.parametrize("model", [Person, PersonView])
 def test_other_mappings_of_the_user_table_are_refused(model: type[Any]) -> None:
     with pytest.raises(ConfigurationError, match=r"maps a table of Staff.*ADR-0009"):
-        ModelUserBackend(Staff).check_model(model)
+        guard_of(ModelUserBackend(Staff)).check_model(model)
 
 
 def test_register_refuses_a_mapping_that_bypasses_the_guard(
@@ -118,8 +119,8 @@ def test_backends_without_a_guard_register_anything(
 
 
 def test_non_mapped_classes_are_ignored() -> None:
-    ModelUserBackend(Staff).check_model(object)
-    assert not ModelUserBackend(Staff).guards(object)
+    guard_of(ModelUserBackend(Staff)).check_model(object)
+    assert not guard_of(ModelUserBackend(Staff)).guards(object)
 
 
 # ------------------------------------------------------------------ primary key types
@@ -154,7 +155,7 @@ async def _guarded_write(
         changes: dict[str, object] = {"is_admin": False} if action == "update" else {}
         intent = WriteIntent(model=model, obj=obj, action=action, changes=changes)
         user = AuthenticatedUser(id=user_id, username="alice", auth_version="v")
-        check = await backend.before_write(session, user, intent)
+        check = await guard_of(backend).before_write(session, user, intent)
         assert check is not None
         await check()
 

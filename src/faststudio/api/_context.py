@@ -7,7 +7,9 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from faststudio.api._escalation import EscalationRules
 from faststudio.auth.backend import AuthBackend
+from faststudio.auth.capabilities import BackendCapabilities
 from faststudio.auth.csrf import CsrfTokens
 from faststudio.auth.session import SessionManager
 from faststudio.config import Settings
@@ -23,6 +25,10 @@ class AdminContext:
     registry: Registry
     session_maker: async_sessionmaker[AsyncSession]
     auth_backend: AuthBackend
+    #: Validated at startup (ADR-0011); empty for backends without capabilities.
+    capabilities: BackendCapabilities
+    #: Compiled from the guard's `PermissionSchema` (ADR-0011 §6); None without one.
+    escalation: EscalationRules | None
     static_dir: Path
     sessions: SessionManager
     csrf: CsrfTokens

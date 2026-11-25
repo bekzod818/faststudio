@@ -16,20 +16,24 @@ from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
+from faststudio.api._authz import allowed, require, resolve_permissions, viewable
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
+from faststudio.api._escalation import check_escalation
 from faststudio.api._many import affected_fields, bind_to
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
+from faststudio.api._serialize import encode_value, to_row
 from faststudio.api.auth import CurrentUser, current_user, get_context
 from faststudio.api.errors import ApiError, validation_issues
-from faststudio.auth._guard import (
-    AccountGuard,
+from faststudio.auth.backend import AuthenticatedUser
+from faststudio.auth.guard import (
     PostWriteCheck,
     WriteIntent,
     WriteRefused,
 )
-from faststudio.auth.backend import AuthenticatedUser
+from faststudio.auth.permissions import cached_permissions
+from faststudio.introspection._fields import Relation
 from faststudio.query._many import (
     INSERT_CHUNK_SIZE,
     chunks,
@@ -43,10 +47,14 @@ from faststudio.query._many import (
 from faststudio.query._write import dependents_statements, exists_statement
 from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas._dynamic import WriteSchema
+from faststudio.schemas._meta import hidden_target
 from faststudio.schemas.contract import Row, ValidationIssue
 
 logger = logging.getLogger("faststudio.api")
-router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(current_user)])
+# Every route resolves the admin's permissions first (ADR-0011 §5; route test).
+router = APIRouter(
+    prefix=API_PREFIX, dependencies=[Depends(current_user), Depends(resolve_permissions)]
+)
 
 #: Largest accepted request body (bytes).
 MAX_BODY_BYTES = 1024 * 1024
@@ -85,6 +93,49 @@ async def _validated(request: Request, schema: type[WriteSchema]) -> dict[str, A
         errors = exc.errors(include_input=False, include_context=False, include_url=False)
         raise _invalid(validation_issues(errors)) from None
     return model.submitted()
+
+
+def _refuse_hidden_targets(
+    registry: Registry, registered: RegisteredModel, sent: dict[str, Any], visible: frozenset[str]
+) -> None:
+    """Relations to models the admin may not view are readonly for them (A1).
+
+    Refused like any readonly field, before the existence check, which would
+    otherwise tell whether a key exists in a model they were denied.
+    """
+    issues = []
+    for name in sent:
+        spec = registered.field_specs.get(name)
+        many = registered.many_to_many.get(name)
+        relation = (
+            spec.relation
+            if spec is not None
+            else Relation(many.link.target_pk, many.link.value_type)
+            if many is not None
+            else None
+        )
+        if relation is not None and hidden_target(relation, registry, visible):
+            issues.append(
+                ValidationIssue(
+                    loc=[name], msg="Extra inputs are not permitted", type="extra_forbidden"
+                )
+            )
+    if issues:
+        raise _invalid(issues)
+
+
+def _minimal_row(
+    registered: RegisteredModel, obj: object, values: dict[str, Any], many: dict[str, list[Any]]
+) -> Row:
+    """Describe the created record to an admin who may not view the model (A6).
+
+    Only the primary key and the submitted fields: no labels, no other values.
+    """
+    keys = {
+        name: [encode_value(registered.many_to_many[name].link.value_type, key) for key in keys]
+        for name, keys in many.items()
+    }
+    return to_row(registered, obj, list(values), {}, many=keys)
 
 
 async def _check_relations(
@@ -169,63 +220,98 @@ async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: o
         )
 
 
-async def _replace_many(
+async def _current_links(
     session: AsyncSession,
     registered: RegisteredModel,
     pk: object,
     many: dict[str, list[Any]],
-    *,
-    created: bool,
-) -> None:
-    """Make each field's links exactly the sent keys: delete the removed, insert the added.
+) -> dict[str, set[object]]:
+    """Lock the record and read the current links of each sent field.
 
-    On update the record is locked first, so the current links are read after
-    any concurrent link write committed: two replaces of the same field never
-    merge, and identical concurrent adds never store a duplicate pair. A field
-    with more than `max_items` links (also after a concurrent write) is refused
-    with 422 `truncated`, because a partial list must never be written back.
+    The record is locked first, so the links are read after any concurrent
+    link write committed: two replaces of the same field never merge, and
+    identical concurrent adds never store a duplicate pair. A field with more
+    than `max_items` links (also after a concurrent write) is refused with 422
+    `truncated`, because a partial list must never be written back.
     """
     if not many:
-        return
+        return {}
     bind = bind_to(registered.model)
-    if not created:
-        await _lock_record(session, registered, pk)
+    await _lock_record(session, registered, pk)
+    current: dict[str, set[object]] = {}
     truncated: list[ValidationIssue] = []
+    for name in many:
+        field = registered.many_to_many[name]
+        rows = (
+            await session.scalars(
+                locked_keys_statement(field.link, pk, field.max_items + 1), bind_arguments=bind
+            )
+        ).all()
+        # Conservative: duplicate rows (written by other code) count toward the limit.
+        if len(rows) > field.max_items:
+            truncated.append(
+                ValidationIssue(
+                    loc=[name],
+                    msg=f"More than {field.max_items} links exist; this field is read-only here.",
+                    type="truncated",
+                )
+            )
+            continue
+        current[name] = set(rows)
+    if truncated:
+        raise _invalid(truncated)
+    return current
+
+
+def _added(many: dict[str, list[Any]], current: dict[str, set[object]]) -> dict[str, list[Any]]:
+    """Keys each field gains, in the order sent."""
+    return {
+        name: [key for key in keys if key not in current.get(name, set())]
+        for name, keys in many.items()
+    }
+
+
+async def _apply_links(
+    session: AsyncSession,
+    registered: RegisteredModel,
+    pk: object,
+    many: dict[str, list[Any]],
+    current: dict[str, set[object]],
+) -> None:
+    """Make each field's links exactly the sent keys: delete the removed, insert the added."""
+    bind = bind_to(registered.model)
+    added = _added(many, current)
     for name, keys in many.items():
         field = registered.many_to_many[name]
-        current: set[object] = set()
-        if not created:
-            rows = (
-                await session.scalars(
-                    locked_keys_statement(field.link, pk, field.max_items + 1),
-                    bind_arguments=bind,
-                )
-            ).all()
-            # Conservative: duplicate rows (written by other code) count toward the limit.
-            if len(rows) > field.max_items:
-                truncated.append(
-                    ValidationIssue(
-                        loc=[name],
-                        msg=f"More than {field.max_items} links exist; this field is "
-                        "read-only here.",
-                        type="truncated",
-                    )
-                )
-                continue
-            current = set(rows)
-        wanted = set(keys)
-        removed = sorted(current - wanted, key=repr)
-        added = [key for key in keys if key not in current]
+        removed = sorted(current.get(name, set()) - set(keys), key=repr)
         for chunk in chunks(removed):
             await session.execute(
                 delete_links_statement(field.link, pk, chunk), bind_arguments=bind
             )
-        for chunk in chunks(added, INSERT_CHUNK_SIZE):  # two bound parameters per key
+        for chunk in chunks(added[name], INSERT_CHUNK_SIZE):  # two bound parameters per key
             await session.execute(
                 insert_links_statement(field.link, pk, chunk), bind_arguments=bind
             )
-    if truncated:
-        raise _invalid(truncated)
+
+
+async def _check_escalation(
+    request: Request,
+    session: AsyncSession,
+    registered: RegisteredModel,
+    intent: WriteIntent,
+    added: dict[str, list[Any]],
+) -> None:
+    """Apply the escalation rules (ADR-0011 §6) before the account guard."""
+    context = get_context(request)
+    await check_escalation(
+        session,
+        capabilities=context.capabilities,
+        rules=context.escalation,
+        actor=cached_permissions(request),
+        registered=registered,
+        intent=intent,
+        added=added,
+    )
 
 
 async def _delete_links(
@@ -290,36 +376,58 @@ async def _writing(
         raise ApiError(500, "internal_error") from None
 
 
-def _require(allowed: bool) -> None:
-    if not allowed:
-        raise ApiError(403, "forbidden")
+async def _require_visible(request: Request, registered: RegisteredModel, obj: object) -> None:
+    """Answer 404 for a record the object-level view hook hides, as retrieve does.
+
+    Only asked when the admin may view the model: without view (create or
+    delete without view, A6) there is no record-level visibility to apply.
+    """
+    if registered.identity in await viewable(request) and not await allowed(
+        request, registered, "view", obj
+    ):
+        raise ApiError(404, "not_found")
 
 
 async def _guard(
     request: Request, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
 ) -> PostWriteCheck | None:
     """Ask the auth backend's account guard about this write (ADR-0009)."""
-    backend = get_context(request).auth_backend
-    if not isinstance(backend, AccountGuard) or not backend.guards(intent.model):
+    guard = get_context(request).capabilities.account_guard
+    if guard is None or not guard.guards(intent.model):
         return None
-    return await backend.before_write(session, user, intent)
+    return await guard.before_write(session, user, intent)
 
 
 @router.post("/models/{identity}/items", status_code=201, response_model=Row)
-async def create_item(request: Request, registered: ModelDep, session: DbSession) -> Row:
-    """Create a record from the writable fields of the request body."""
-    _require(registered.can_create)
-    values, many = _split_many(registered, await _validated(request, registered.create_schema))
+async def create_item(
+    request: Request, registered: ModelDep, session: DbSession, user: CurrentUser
+) -> Row:
+    """Create a record from the writable fields of the request body.
+
+    Without view permission the response is a minimal `Row` (A6).
+    """
+    await require(request, registered, "create")
+    registry, visible = get_context(request).registry, await viewable(request)
+    sent = await _validated(request, registered.create_schema)
+    _refuse_hidden_targets(registry, registered, sent, visible)
+    values, many = _split_many(registered, sent)
     await _check_relations(session, registered, values)
     await _check_many(session, registered, many)
     obj = registered.model(**values)
     async with _writing(session, registered, "create"):
+        intent = WriteIntent(model=registered.model, obj=obj, action="create", changes=sent)
+        await _check_escalation(request, session, registered, intent, many)
+        check = await _guard(request, session, user, intent)
         session.add(obj)
         await session.flush()
         pk_value = getattr(obj, registered.pk_field)
-        await _replace_many(session, registered, pk_value, many, created=True)
+        await _apply_links(session, registered, pk_value, many, {})
+        if check is not None:
+            await check()
     await session.refresh(obj)
-    return await detail_row(session, get_context(request).registry, registered, obj)
+    if registered.identity not in visible:
+        return _minimal_row(registered, obj, values, many)
+    return await detail_row(session, registry, registered, obj, visible)
 
 
 @router.patch("/models/{identity}/items/{pk}", response_model=Row)
@@ -327,26 +435,34 @@ async def update_item(
     request: Request, registered: ModelDep, pk: str, session: DbSession, user: CurrentUser
 ) -> Row:
     """Change the writable fields sent in the body; primary keys never change."""
-    _require(registered.can_edit)
+    await require(request, registered, "edit")
     obj = await load_or_404(session, registered, pk)
+    await _require_visible(request, registered, obj)
+    await require(request, registered, "edit", obj)
+    registry, visible = get_context(request).registry, await viewable(request)
     sent = await _validated(request, registered.update_schema)
+    _refuse_hidden_targets(registry, registered, sent, visible)
     values, many = _split_many(registered, sent)
     await _check_relations(session, registered, values)
     pk_value = getattr(obj, registered.pk_field)
     await _check_many(session, registered, many)
     if sent:
         async with _writing(session, registered, "update"):
+            # Lock and read the links first: the escalation rules need what is added.
+            current = await _current_links(session, registered, pk_value, many)
             # The guard sees many-to-many fields too, as lists of keys (ADR-0010 §5).
             intent = WriteIntent(model=registered.model, obj=obj, action="update", changes=sent)
+            await _check_escalation(request, session, registered, intent, _added(many, current))
             check = await _guard(request, session, user, intent)
             for name, value in values.items():
                 setattr(obj, name, value)
-            await _replace_many(session, registered, pk_value, many, created=False)
+            await _apply_links(session, registered, pk_value, many, current)
             await session.flush()
             if check is not None:
                 await check()
         await session.refresh(obj)
-    return await detail_row(session, get_context(request).registry, registered, obj)
+    # Edit implies view (ADR-0011 §2), so the full record is returned.
+    return await detail_row(session, registry, registered, obj, visible)
 
 
 @router.delete("/models/{identity}/items/{pk}", status_code=204)
@@ -364,8 +480,10 @@ async def delete_item(
     between this check and the flush are not covered; database foreign-key
     rules still apply and also give 409.
     """
-    _require(registered.can_delete)
+    await require(request, registered, "delete")
     obj = await load_or_404(session, registered, pk)
+    await _require_visible(request, registered, obj)
+    await require(request, registered, "delete", obj)
     async with _writing(session, registered, "delete"):
         registry = get_context(request).registry
         await _delete_links(session, registry, registered, getattr(obj, registered.pk_field))
@@ -374,6 +492,7 @@ async def delete_item(
                 raise ApiError(409, "conflict", "Related records still reference this record.")
         # After the related-records check, so a refused delete never locks admin rows.
         intent = WriteIntent(model=registered.model, obj=obj, action="delete", changes={})
+        await _check_escalation(request, session, registered, intent, {})
         check = await _guard(request, session, user, intent)
         await session.delete(obj)
         await session.flush()

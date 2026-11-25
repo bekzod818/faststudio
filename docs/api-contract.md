@@ -117,11 +117,49 @@ returns `400 invalid_query`; messages name the parameter, never the value.
 - Unsupported values are shown as text (binary data as `<N bytes>`, other
   values truncated to 200 characters).
 
+### Authorization (ADR-0011)
+
+Every model route resolves the admin's permissions once per request and asks
+the `ModelAdmin` permission hooks. Without a permission backend every admin
+holds every permission and only `can_create` / `can_edit` / `can_delete`
+apply (v0.1 behaviour). Refusals are `403 forbidden`, checked before the
+body is read:
+
+| Route | Needs |
+|---|---|
+| `GET /meta` | lists only models the admin may view; `permissions` gives `view`, `create`, `edit`, `delete` per model |
+| `GET items` | view |
+| `GET items/{pk}` | view; a record the object-level hook refuses answers **`404`**, like a missing one |
+| `GET items/{pk}/links` | delete (also on the record); a record hidden from retrieve is `404` |
+| `GET fields/{field}/choices` | create or edit on the model, and view on the target |
+| `POST items` | create |
+| `PATCH items/{pk}` | edit (also on the record); `edit` implies `view`; a record hidden from retrieve is `404` |
+| `DELETE items/{pk}` | delete (also on the record; `404` if it does not exist or is hidden from retrieve) |
+
+- **Related models the admin may not view** (A1): their labels fall back to
+  the key (`labels`, `many_labels`), `/meta` gives the field no target
+  (`target_identity: null`) and marks it `readonly`, and sending it is `422`
+  with `type: "extra_forbidden"`, like any readonly field.
+- **Create without view** returns `201` with a minimal `Row`: `pk` and the
+  submitted fields only; `labels`, `many_labels` and `truncated` are empty.
+  **Delete without view** works (`204`). Both are API-only: the model is not
+  in `/meta`, so the UI cannot reach it.
+- **Escalation rules** (writes by an admin who does not hold every
+  permission): changing the superuser-like flag (`account.admin_flag`),
+  editing or deleting an account that holds every permission, and any write
+  that could give anyone a permission the admin does not hold (grants, group
+  membership, from either side, or renaming a permission) are `403
+  forbidden`, before the account guard. Removals are always allowed. The
+  checks lock the rows they read, so two concurrent writes to related
+  accounts or groups may deadlock; the loser gets `409 conflict`.
+- **Object-level hooks do not filter lists or choices** (v0.3 adds a
+  list-query hook).
+
 ### Choices
 
 `GET /models/{identity}/fields/{field}/choices?page=&q=` works only for
 foreign-key and many-to-many fields whose target model is registered
-(otherwise `404`). It
+(otherwise `404`) and that the admin may view (otherwise `403`). It
 returns 20 options per page ordered by label, each `{value: <target pk as
 string>, label}`. `q` searches the target's `search_fields`, or its label field
 when it has none (and is ignored if the label is the primary key). Only rows
@@ -134,7 +172,9 @@ inheritance respected).
 deleting the record would remove, for the delete confirmation. It needs the
 delete permission (`403` otherwise; `404` for an unknown record) and changes
 nothing. `items` lists every affected opted-in field, also those with no
-links, in this order: the model's own fields, then fields of other registered
+links, except fields of models the admin may not view (the delete still
+removes their links: deleting needs only the delete permission on this
+model). The order is: the model's own fields, then fields of other registered
 models whose target is this model. Each entry is `{identity, field, label,
 count}`, where `identity` is the model that declares the field. A
 self-referential field is one entry counting both directions. Fields sharing
@@ -145,10 +185,12 @@ the same links the delete removes (ADR-0010 §6).
 
 `POST /models/{identity}/items` (201), `PATCH /models/{identity}/items/{pk}`
 (200) and `DELETE /models/{identity}/items/{pk}` (204) respond with the full
-`Row` (all visible fields) after the database round trip.
+`Row` (all visible fields) after the database round trip (a minimal `Row`
+for create without view; see Authorization).
 
-- **Permissions:** `can_create` / `can_edit` / `can_delete` false ⇒ `403
-  forbidden`, checked before the body is read.
+- **Permissions:** see Authorization; `can_create` / `can_edit` /
+  `can_delete` false ⇒ `403 forbidden` for everyone, checked before the body
+  is read.
 - **Body:** `Content-Type: application/json` (anything else ⇒ `422` with
   `type: "content_type"`), a JSON object, at most 1 MiB
   (`413 payload_too_large`, also enforced while streaming).
@@ -242,12 +284,14 @@ the same links the delete removes (ADR-0010 §6).
     "list_filter": [{ "field": "is_active", "kind": "boolean", "choices": [] }],
     "ordering": ["-created_at"], "sortable_fields": ["id", "email", "created_at"],
     "page_size": 25,
-    "permissions": { "create": true, "edit": true, "delete": false },
+    "permissions": { "view": true, "create": true, "edit": true, "delete": false },
     "fields": [FieldMeta],
     // Only on the model that holds the admins' accounts (ADR-0009), else null.
     // On the record whose pk equals user.id these fields are read-only and the
     // record cannot be deleted (the server answers 409 self_lockout).
-    "account": { "protected_fields": ["is_active", "is_admin"] }
+    // admin_flag: the superuser-like flag only an admin holding every
+    // permission may change (403 otherwise); null when not shown.
+    "account": { "protected_fields": ["is_active", "is_admin"], "admin_flag": "is_admin" }
   }]
 }
 
@@ -290,7 +334,7 @@ characters, and at most 50 issues are returned.
 | 401 | `not_authenticated` | missing, tampered, expired or revoked session |
 | 401 | `invalid_credentials` | login failed (always "Invalid username or password.") |
 | 403 | `csrf_failed` | missing/invalid CSRF token or cross-origin request |
-| 403 | `forbidden` | action disabled by `can_create` / `can_edit` / `can_delete` |
+| 403 | `forbidden` | action disabled by `can_create` / `can_edit` / `can_delete`, refused by a permission hook, or an escalation rule (see Authorization) |
 | 404 | `not_found` | unknown model identity, field or primary key; any unknown `/api/*` path (never the SPA) |
 | 405 | `method_not_allowed` | wrong method on an API route, or a non-GET request to a UI path |
 | 409 | `conflict` | database integrity error or lost lock race with a concurrent write (no SQL in the message) |

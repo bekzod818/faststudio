@@ -125,7 +125,7 @@ describe("create", () => {
 
   it("explains when creating is disabled", async () => {
     setup("/models/users/new", {
-      meta: model({ permissions: { create: false, edit: true, delete: true } }),
+      meta: model({ permissions: { view: true, create: false, edit: true, delete: true } }),
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("Adding users is disabled.");
     expect(screen.queryByRole("button", { name: /Create/ })).toBeNull();
@@ -158,11 +158,31 @@ describe("edit", () => {
 
   it("is read-only when editing is disabled", async () => {
     setup("/models/users/items/7", {
-      meta: model({ permissions: { create: true, edit: false, delete: false } }),
+      meta: model({ permissions: { view: true, create: true, edit: false, delete: false } }),
     });
     expect(await screen.findByLabelText(/Email/)).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  it("shows the access page when the server refuses the record (403)", async () => {
+    setup("/models/users/items/7", {
+      client: {
+        get: vi.fn((url: string) =>
+          url === "/meta"
+            ? Promise.resolve({
+                schema_version: "1",
+                version: "0",
+                title: "Admin",
+                show_powered_by: true,
+                user: { id: "1", username: "admin" },
+                models: [model()],
+              })
+            : Promise.reject(new ApiError(403, "forbidden", "Forbidden.")),
+        ) as unknown as ApiClient["get"],
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "Not found or no access" })).toBeVisible();
   });
 
   it("shows not found for a missing record", async () => {
@@ -301,7 +321,7 @@ describe("list integration", () => {
 describe("own account (ADR-0009)", () => {
   // The signed-in admin is user "1" (see setup's /meta).
   const OWN: Row = { ...ROW, pk: "1", data: { ...ROW.data, id: 1 } };
-  const accounts = () => model({ account: { protected_fields: ["is_active"] } });
+  const accounts = () => model({ account: { protected_fields: ["is_active"], admin_flag: null } });
 
   it("locks the protected fields and hides delete on the admin's own record", async () => {
     const patch = vi.fn().mockResolvedValue(OWN);
@@ -321,10 +341,10 @@ describe("own account (ADR-0009)", () => {
 
   it("only explains the hidden delete when no field is protected or editing is off", async () => {
     const cases = [
-      model({ account: { protected_fields: [] } }),
+      model({ account: { protected_fields: [], admin_flag: null } }),
       model({
-        account: { protected_fields: ["is_active"] },
-        permissions: { create: true, edit: false, delete: true },
+        account: { protected_fields: ["is_active"], admin_flag: null },
+        permissions: { view: true, create: true, edit: false, delete: true },
       }),
     ];
     for (const meta of cases) {
@@ -340,8 +360,8 @@ describe("own account (ADR-0009)", () => {
 
   it("shows no hint when the record cannot be edited or deleted anyway", async () => {
     const meta = model({
-      account: { protected_fields: ["is_active"] },
-      permissions: { create: true, edit: false, delete: false },
+      account: { protected_fields: ["is_active"], admin_flag: null },
+      permissions: { view: true, create: true, edit: false, delete: false },
     });
     setup("/models/users/items/1", { meta, row: OWN });
     expect(await screen.findByRole("heading", { name: "User 1" })).toBeVisible();

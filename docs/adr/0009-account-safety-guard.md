@@ -88,6 +88,11 @@ needs the same protection for `is_superuser`.
 
 ## Contract for implementers
 
+> **Amended by ADR-0011** (see its "Implementation notes (M17)"): the guard is
+> public (`faststudio.auth.guard`), provided through
+> `BackendCapabilities.account_guard`, and creates reach it too
+> (`WriteIntent.action == "create"`).
+
 - `before_write` runs after authorization (`can_edit` / `can_delete`, and
   the v0.2 permission checks), body validation and relation checks, and before
   any change is applied to `intent.obj`. Refusal codes therefore never reach a

@@ -28,9 +28,35 @@ listed under **Changed** or **Removed** with migration notes.
   truncated on a record are shown read-only with an explanation and are
   never sent. The delete confirmation lists the links the delete removes.
 - The example app has `Tag` and a `Task.tags` many-to-many field.
+- Authorization (ADR-0011):
+  - backend capabilities: `faststudio_capabilities` returning
+    `BackendCapabilities`, with `PermissionBackend` and `PermissionSchema`
+    in `faststudio.auth.capabilities`;
+  - the public account guard in `faststudio.auth.guard`, and
+    `FlagAccountGuard`;
+  - async permission hooks on `ModelAdmin`;
+  - `ModelAdmin.extra_permissions`;
+  - `faststudio.has_perm` and `faststudio.ALL`.
+- Every route is authorized per model:
+  - `/meta` lists only viewable models;
+  - labels and choices of models the admin may not view are withheld;
+  - create without view returns a minimal `Row`.
+- Escalation rules: nobody grants a permission they do not hold, whichever
+  side of a relationship the write comes from. Only admins holding every
+  permission may change the superuser-like flag or touch such accounts.
+- API contract (additive): `PermissionsMeta.view`, `AccountMeta.admin_flag`.
+- Admin UI: a "Not found or no access" page.
 
 ### Changed
 
+- Auth backends that still implement 0.1.1's private account-guard methods
+  without `faststudio_capabilities` fail at startup instead of silently
+  losing their guard. `ModelUserBackend` provides its guard through
+  `faststudio_capabilities`; its private `guards`, `before_write`,
+  `check_model` and `protected_fields` methods are gone, so a subclass that
+  overrode them must move its rules into an `AccountGuard` (startup logs a
+  warning while such methods exist). Creates now reach the account guard
+  (`WriteIntent.action == "create"`).
 - Deleting a record removes the links of its opted-in many-to-many fields,
   and of opted-in fields of other models pointing at it, instead of
   answering `409`. Relationships that are not opted in behave as before.

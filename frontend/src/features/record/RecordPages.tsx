@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
+import { isForbidden } from "@/api/errors";
 import type { LinkCount, ModelMeta } from "@/api/contract.gen";
 import {
   useCreateItem,
@@ -20,6 +21,7 @@ import { ModelGate } from "@/features/model/ModelGate";
 import { inSentence, routes } from "@/features/model/routes";
 import { toast } from "@/lib/toast";
 import { SKIP_GUARD } from "@/lib/unsaved";
+import { NoAccessPage } from "@/pages/NoAccessPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 
 function BackToList({ model }: { model: ModelMeta }) {
@@ -132,6 +134,7 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
   if (item.isPending) return <p role="status">Loading…</p>;
   if (item.isError) {
     if (item.error instanceof ApiError && item.error.code === "not_found") return <NotFoundPage />;
+    if (isForbidden(item.error)) return <NoAccessPage />;
     return <p role="alert">Could not load this {inSentence(model.name)}. Try again later.</p>;
   }
 

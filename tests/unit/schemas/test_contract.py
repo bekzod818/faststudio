@@ -157,7 +157,12 @@ def test_model_meta_options(admin: Admin) -> None:
     assert meta.search_fields == ["email"]
     assert meta.ordering == ["-created_at", "email"]
     assert meta.page_size == 50
-    assert meta.permissions.model_dump() == {"create": True, "edit": True, "delete": False}
+    assert meta.permissions.model_dump() == {
+        "view": True,
+        "create": True,
+        "edit": True,
+        "delete": False,
+    }
 
 
 def test_model_meta_filters(admin: Admin) -> None:
