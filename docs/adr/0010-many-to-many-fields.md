@@ -1,6 +1,6 @@
 # ADR-0010: Many-to-many fields
 
-- Status: Proposed
+- Status: Accepted (2026-11-25, maintainer approval with amendments A1–A7)
 - Date: 2026-11-24
 - Amends: the v0.1 delete rule (docs/api-contract.md "Delete"). Plan: docs/plans/v0.2.md §2
 
@@ -26,9 +26,15 @@ happen silently.
 3. **Wire format.**
    - The value is a list of target primary keys, in foreign-key wire form.
    - Detail rows carry `many_labels[field][pk]` and `truncated: [field]`.
+     Labels fall back to the primary key when the user cannot view the
+     target model (ADR-0011).
    - List rows omit M2M fields.
    - `FieldType` gains `"many_to_many"`, and `FieldMeta.max_items` is new.
-4. **Bounds** (`MAX_RELATED_ITEMS = 500`):
+4. **Bounds.** The default is 500 per field, configurable per field with
+   `ModelAdmin.many_to_many_limits = {"field": n}` (1 to
+   `MAX_RELATED_ITEMS_LIMIT = 10_000`). Contrib's permission fields use
+   10 000, with a startup warning when an app exceeds it (ADR-0011, plan §3).
+   Label and existence queries are chunked or joined for large key sets:
    - Reads use an explicit query with `LIMIT max_items + 1`; there is no
      lazy loading under asyncio.
    - When more links exist, the field is listed in `truncated`, and the

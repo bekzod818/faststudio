@@ -1,6 +1,6 @@
 # ADR-0011: Backend capabilities, authorization and contrib.auth
 
-- Status: Proposed
+- Status: Accepted (2026-11-25, maintainer approval with amendments A1–A7)
 - Date: 2026-11-24
 - Amends: ADR-0004 (decision 1), ADR-0009 (made public), threat model T2 and new T9.
   Plan: docs/plans/v0.2.md §2, §4
@@ -53,8 +53,16 @@ and the definition of "admin".
    - `/meta` lists only models the user can view, `permissions` gains
      `view`, and `relation.target_identity` is null for targets the user
      cannot view.
-   - Choices need create or edit on the source and view on the target.
-   - Labels of targets the user cannot view are omitted.
+   - Choices need create or edit on the source, and answer `403` without
+     view on the target.
+   - FK and M2M labels of targets the user cannot view fall back to the
+     primary key, in list and detail responses. FK and M2M fields pointing
+     to such targets are readonly for that user, so the existence check
+     cannot probe a denied model.
+   - **Implications:** `edit` implies `view`. `create` and `delete` without
+     `view` are API-only, because `/meta` lists only viewable models.
+     Create without view returns a minimal `Row` (`pk` plus the submitted
+     fields). The full table is in docs/auth.md.
 6. **Escalation rules**, enforced by core before the account guard, on
    **create, update and delete**. The guard capability declares the
    superuser-like flag and the permission-bearing M2M fields, including any
@@ -64,8 +72,23 @@ and the definition of "admin".
      (including on create), edit or delete an account holding `ALL`, or set
      another user's password. Nobody may set their **own** password through
      the set-password endpoint; that goes through `POST /auth/password`.
-   - M2M grants may only add codenames the editor holds; a group counts as
-     all of its codenames.
+   - **Effective-permission rule:** for any write that changes anyone's
+     effective permissions, the codenames each affected user would gain
+     (`effective_after − effective_before`) must be a subset of the actor's,
+     unless the actor holds `ALL`. This covers `user.permissions`,
+     `user.groups` (self-membership included), `group.permissions` (every
+     member is affected) and writable reverse sides.
+     - It is computed **before the flush, from the intent** (only
+       association rows change), in the write's transaction, after locking
+       the affected group and user rows (`FOR UPDATE`, primary-key order).
+     - A refusal is `403 forbidden`, before the account guard.
+     - A conservative closed form keeps the query count fixed: for
+       `group.permissions`, the added codenames must be within the actor's;
+       for `user.groups` / `user.permissions`, `(perms(added groups) ∪ added
+       codenames) − effective_before(u)` must be within the actor's. This is
+       slightly stricter than "no user may gain", which is documented.
+     - Removals are never escalation. The guard capability supplies the
+       affected models and the resolver, so core stays contrib-agnostic.
 7. **Guard (ADR-0009, now public).**
    - "Admin" is defined by flags only; group-granted permissions do not
      count.

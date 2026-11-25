@@ -1,6 +1,6 @@
 # ADR-0013: Idle timeout and "sign out everywhere" (still stateless)
 
-- Status: Proposed
+- Status: Accepted (2026-11-25, maintainer approval with amendments A1–A7)
 - Date: 2026-11-24
 - Refines: ADR-0004. Plan: docs/plans/v0.2.md
 
@@ -33,9 +33,15 @@ planned for v0.3. v0.2 should narrow the gap without adding storage.
    database restore can't revive old cookies the way decrementing a counter
    could.
    - `contrib.auth` has a `session_token` column.
-   - `ModelUserBackend` supports it only with the new opt-in
-     `session_token_field=` (a string column in the host's model). Its
-     `auth_version` formula is unchanged unless that is set.
+   - `ModelUserBackend` supports it only through the optional parameter
+     `session_token_field="..."`, which names a string column of at least 43
+     characters **in the host's own user model**. FastStudio never requires
+     or creates that column.
+     - When unset, the feature is disabled: the button is hidden
+       (`capabilities.sign_out_everywhere` is false), the endpoint answers
+       404, and `auth_version` keeps its v0.1 formula.
+     - When set, the column is validated at startup.
+     - Both cases are tested and documented.
    - Without the capability, the button is hidden
      (`MetaResponse.capabilities`).
 4. **Password change.** `POST /auth/password` requires the current password.
