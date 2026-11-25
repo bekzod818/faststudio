@@ -48,6 +48,9 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 - Backend coverage ≥ 90 %; security-relevant code is tested for both the
   allowed and the rejected path.
 - Never weaken a security check or skip a test to make CI pass.
+- `tests/compat/v0_1_0/` is a frozen copy of the v0.1.0 README quickstart and
+  `examples/basic`. Never edit it: `tests/compat/test_v0_1_0.py` checks its
+  hashes and proves that v0.1 apps keep working unchanged.
 - Tests dispose every engine and close every connection they open; engine
   fixtures are function-scoped and dispose the engine in their teardown. A
   guard in `tests/conftest.py` (`tests/_leaks.py`) fails the test that leaves
