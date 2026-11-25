@@ -9,7 +9,14 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { setUnsavedChanges, skipsGuard } from "@/lib/unsaved";
 
-import { buildBody, initialValues, isEditable, type FormValues, type Mode } from "./codec";
+import {
+  buildBody,
+  changedNames,
+  initialValues,
+  isEditable,
+  type FormValues,
+  type Mode,
+} from "./codec";
 import { FieldInput } from "./FieldInput";
 
 export interface RecordFormProps {
@@ -37,6 +44,8 @@ export function RecordForm(props: RecordFormProps) {
   const { model, mode, row, readOnly = false } = props;
   const fields =
     mode === "create" ? model.fields.filter((field) => isEditable(field, "create")) : model.fields;
+  // Many-to-many fields this record has more links in than the form can show.
+  const truncated = new Set(row?.truncated ?? []);
   const form = useForm<FormValues>({ defaultValues: initialValues(fields, row?.data) });
   const [formError, setFormError] = useState<string | null>(null);
   const alertRef = useRef<HTMLParagraphElement>(null);
@@ -73,8 +82,11 @@ export function RecordForm(props: RecordFormProps) {
 
   const save = async (values: FormValues) => {
     setFormError(null);
-    const changed = mode === "edit" ? new Set(Object.keys(form.formState.dirtyFields)) : undefined;
-    const { body, errors } = buildBody(fields, values, mode, changed);
+    // Compared with the starting values rather than taken from RHF's
+    // dirtyFields, whose shape for list values is per item.
+    const start = form.formState.defaultValues as FormValues | undefined;
+    const changed = mode === "edit" ? changedNames(values, start ?? {}) : undefined;
+    const { body, errors } = buildBody(fields, values, mode, changed, truncated);
     const invalid = Object.entries(errors);
     if (invalid.length > 0) {
       for (const [name, message] of invalid) form.setError(name, { type: "client", message });
@@ -126,8 +138,10 @@ export function RecordForm(props: RecordFormProps) {
           control={form.control}
           identity={model.identity}
           mode={mode}
-          disabled={readOnly || !isEditable(field, mode)}
+          disabled={readOnly || !isEditable(field, mode, truncated)}
+          truncated={truncated.has(field.name)}
           relationLabel={row?.labels[field.name]}
+          manyLabels={row?.many_labels[field.name]}
           onEdit={() => {
             form.clearErrors(field.name);
             if (formError !== null) setFormError(null);
@@ -193,7 +207,9 @@ function FieldRow({
   identity,
   mode,
   disabled,
+  truncated,
   relationLabel,
+  manyLabels,
   onEdit,
 }: {
   field: FieldMeta;
@@ -201,14 +217,18 @@ function FieldRow({
   identity: string;
   mode: Mode;
   disabled: boolean;
+  /** A many-to-many field with more links than `max_items` on this record. */
+  truncated: boolean;
   relationLabel: string | undefined;
+  manyLabels: Partial<Record<string, string>> | undefined;
   onEdit: () => void;
 }) {
   const { field: input, fieldState } = useController({ name: field.name, control });
   const id = `field-${field.name}`;
   const helpId = field.help_text !== null ? `${id}-help` : undefined;
+  const truncatedId = truncated ? `${id}-truncated` : undefined;
   const errorId = fieldState.error !== undefined ? `${id}-error` : undefined;
-  const describedBy = [helpId, errorId].filter(Boolean).join(" ") || undefined;
+  const describedBy = [helpId, truncatedId, errorId].filter(Boolean).join(" ") || undefined;
   const inline = field.type === "boolean" && !field.nullable;
 
   return (
@@ -230,6 +250,7 @@ function FieldRow({
           identity={identity}
           value={input.value}
           relationLabel={relationLabel}
+          manyLabels={manyLabels}
           disabled={disabled}
           allowEmpty={field.nullable || (mode === "create" && !field.required)}
           invalid={fieldState.error !== undefined}
@@ -245,6 +266,11 @@ function FieldRow({
       {field.help_text !== null && (
         <p id={helpId} className="order-3 w-full text-xs text-muted-foreground">
           {field.help_text}
+        </p>
+      )}
+      {truncated && (
+        <p id={truncatedId} className="order-3 w-full text-xs text-muted-foreground">
+          {`This record has more than ${String(field.max_items)} ${field.label.toLowerCase()}, so only the first ${String(field.max_items)} are shown and the field cannot be edited here.`}
         </p>
       )}
       {fieldState.error !== undefined && (

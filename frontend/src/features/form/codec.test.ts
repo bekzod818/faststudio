@@ -1,7 +1,14 @@
 import type { FieldMeta } from "@/api/contract.gen";
 import { testField } from "@/test/fixtures";
 
-import { buildBody, fromFormValue, initialValues, isEditable, toFormValue } from "./codec";
+import {
+  buildBody,
+  changedNames,
+  fromFormValue,
+  initialValues,
+  isEditable,
+  toFormValue,
+} from "./codec";
 
 const f = (overrides: Partial<FieldMeta> & Pick<FieldMeta, "name">) => testField(overrides);
 
@@ -245,11 +252,82 @@ describe("buildBody", () => {
   });
 });
 
-describe("many-to-many fields (read-only until M16)", () => {
-  const tags = testField({ name: "tags", type: "many_to_many", max_items: 500 });
+describe("many-to-many fields", () => {
+  const tags = testField({
+    name: "tags",
+    type: "many_to_many",
+    max_items: 3,
+    default: [],
+    has_default: true,
+    relation: { target_identity: "tags", target_field: "id", value_type: "integer" },
+  });
+  const labels = testField({
+    name: "labels",
+    type: "many_to_many",
+    max_items: 500,
+    relation: { target_identity: "labels", target_field: "code", value_type: "string" },
+  });
 
-  it("are never editable", () => {
-    expect(isEditable(tags, "create")).toBe(false);
-    expect(isEditable(tags, "edit")).toBe(false);
+  it("are editable unless readonly or truncated on this record", () => {
+    expect(isEditable(tags, "create")).toBe(true);
+    expect(isEditable(tags, "edit")).toBe(true);
+    expect(isEditable({ ...tags, readonly: true }, "edit")).toBe(false);
+    expect(isEditable(tags, "edit", new Set(["tags"]))).toBe(false);
+    expect(isEditable(labels, "edit", new Set(["tags"]))).toBe(true);
+  });
+
+  it("start from the record's keys as strings, or an empty list", () => {
+    expect(toFormValue(tags, [1, 2])).toEqual(["1", "2"]);
+    expect(toFormValue(tags, ["9007199254740993"])).toEqual(["9007199254740993"]);
+    expect(toFormValue(labels, ["red"])).toEqual(["red"]);
+    expect(toFormValue(tags, null)).toEqual([]);
+    expect(initialValues([tags], undefined)).toEqual({ tags: [] });
+  });
+
+  it("send keys in the target's wire type", () => {
+    expect(fromFormValue(tags, ["1", "9007199254740993"], "edit")).toEqual({
+      kind: "value",
+      value: [1, "9007199254740993"],
+    });
+    expect(fromFormValue(labels, ["red", "1"], "edit")).toEqual({
+      kind: "value",
+      value: ["red", "1"],
+    });
+    expect(fromFormValue(tags, [], "edit")).toEqual({ kind: "value", value: [] });
+  });
+
+  it("refuse too many keys, repeats and malformed keys", () => {
+    expect(fromFormValue(tags, ["1", "2", "3", "4"], "edit")).toEqual({
+      kind: "error",
+      message: "Choose at most 3.",
+    });
+    expect(fromFormValue(tags, ["1", "1"], "edit").kind).toBe("error");
+    expect(fromFormValue(tags, ["x"], "edit").kind).toBe("error");
+  });
+
+  it("are never sent when readonly or truncated, and only when changed on edit", () => {
+    const fields = [tags, { ...labels, readonly: true }];
+    const values = { tags: ["1"], labels: ["red"] };
+    expect(buildBody(fields, values, "create")).toEqual({ body: { tags: [1] }, errors: {} });
+    expect(buildBody(fields, values, "edit", new Set(["tags", "labels"]))).toEqual({
+      body: { tags: [1] },
+      errors: {},
+    });
+    expect(buildBody(fields, values, "edit", new Set(["tags"]), new Set(["tags"]))).toEqual({
+      body: {},
+      errors: {},
+    });
+    expect(buildBody(fields, values, "edit", new Set())).toEqual({ body: {}, errors: {} });
+  });
+});
+
+describe("changedNames", () => {
+  it("lists fields whose value differs from the start, comparing lists by content", () => {
+    const initial = { title: "a", active: true, tags: ["1", "2"], none: [] };
+    expect(
+      changedNames({ title: "a", active: false, tags: ["1", "2"], none: [] }, initial),
+    ).toEqual(new Set(["active"]));
+    expect(changedNames({ ...initial, tags: ["1"] }, initial)).toEqual(new Set(["tags"]));
+    expect(changedNames({ ...initial, none: ["3"] }, initial)).toEqual(new Set(["none"]));
   });
 });

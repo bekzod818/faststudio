@@ -326,6 +326,47 @@
       "type": "object"
     },
     "JsonValue": {},
+    "LinkCount": {
+      "additionalProperties": false,
+      "description": "Links of one many-to-many field that deleting a record would remove.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "field": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "field",
+        "label",
+        "count"
+      ],
+      "type": "object"
+    },
+    "LinkCountsResponse": {
+      "additionalProperties": false,
+      "description": "`GET /models/{identity}/items/{pk}/links`: every affected opted-in field.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/LinkCount"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
     "ListResponse": {
       "additionalProperties": false,
       "description": "`GET /models/{identity}/items`.",
@@ -713,6 +754,9 @@
     },
     "ErrorResponse": {
       "$ref": "#/$defs/ErrorResponse"
+    },
+    "LinkCountsResponse": {
+      "$ref": "#/$defs/LinkCountsResponse"
     },
     "ListResponse": {
       "$ref": "#/$defs/ListResponse"

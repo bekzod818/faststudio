@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    Column,
     Date,
     DateTime,
     Enum,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     Uuid,
 )
@@ -79,6 +81,24 @@ class Product(Base):
     category: Mapped[Category | None] = relationship(back_populates="products")
 
 
+class Tag(Base):
+    """Labels for tasks (the many-to-many example)."""
+
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), unique=True)
+
+
+# A plain association table: two foreign keys, their pair as the primary key.
+task_tags = Table(
+    "task_tags",
+    Base.metadata,
+    Column("task_id", ForeignKey("tasks.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+)
+
+
 class Task(Base):
     """Back-office to-dos."""
 
@@ -94,3 +114,4 @@ class Task(Base):
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    tags: Mapped[list[Tag]] = relationship(secondary=task_tags)

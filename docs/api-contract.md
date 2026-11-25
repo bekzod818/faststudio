@@ -77,6 +77,7 @@ addressed; avoid them as natural keys.
 | PATCH | `/models/{identity}/items/{pk}` | yes | yes | 200 `Row` |
 | DELETE | `/models/{identity}/items/{pk}` | yes | yes | 204 |
 | GET | `/models/{identity}/fields/{field}/choices` | yes | – | 200 `ChoicesResponse` |
+| GET | `/models/{identity}/items/{pk}/links` | yes | – | 200 `LinkCountsResponse` |
 
 ### List query parameters
 
@@ -126,6 +127,19 @@ string>, label}`. `q` searches the target's `search_fields`, or its label field
 when it has none (and is ignored if the label is the primary key). Only rows
 of the registered target class are offered (joined and single-table
 inheritance respected).
+
+### Link counts
+
+`GET /models/{identity}/items/{pk}/links` says how many many-to-many links
+deleting the record would remove, for the delete confirmation. It needs the
+delete permission (`403` otherwise; `404` for an unknown record) and changes
+nothing. `items` lists every affected opted-in field, also those with no
+links, in this order: the model's own fields, then fields of other registered
+models whose target is this model. Each entry is `{identity, field, label,
+count}`, where `identity` is the model that declares the field. A
+self-referential field is one entry counting both directions. Fields sharing
+an association table are each listed, since each loses its links. These are
+the same links the delete removes (ADR-0010 §6).
 
 ### Writes
 

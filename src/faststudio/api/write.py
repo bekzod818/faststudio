@@ -18,7 +18,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
-from faststudio.api._many import bind_to
+from faststudio.api._many import affected_fields, bind_to
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
 from faststudio.api.auth import CurrentUser, current_user, get_context
@@ -233,21 +233,16 @@ async def _delete_links(
 ) -> None:
     """Remove the links of opted-in many-to-many fields that involve the row `pk`.
 
-    That is the row's own fields and every registered field whose target is
-    this model (ADR-0010 §6). Links of relationships that are not opted in are
-    left alone, so those deletes keep the v0.1 behaviour (409).
+    The same fields `GET .../links` counts (ADR-0010 §6, `affected_fields`).
     """
-    for field in registered.many_to_many.values():
-        await session.execute(
-            delete_links_statement(field.link, pk), bind_arguments=bind_to(registered.model)
-        )
-    mapper = sa_inspect(registered.model)
-    for other in registry:
-        for field in other.many_to_many.values():
-            if mapper.isa(sa_inspect(field.link.target_model)):
-                await session.execute(
-                    delete_links_to_statement(field.link, pk), bind_arguments=bind_to(other.model)
-                )
+    for item in affected_fields(registry, registered):
+        bind = bind_to(item.owner.model)
+        if item.own:
+            await session.execute(delete_links_statement(item.many.link, pk), bind_arguments=bind)
+        if item.pointing:
+            await session.execute(
+                delete_links_to_statement(item.many.link, pk), bind_arguments=bind
+            )
 
 
 @asynccontextmanager

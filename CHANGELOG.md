@@ -20,7 +20,14 @@ listed under **Changed** or **Removed** with migration notes.
   - `FieldMeta.max_items`;
   - `Row.many_labels` and `Row.truncated`;
   - the choices endpoint for many-to-many fields;
+  - `GET /models/{identity}/items/{pk}/links`: how many many-to-many links
+    deleting the record would remove, per field (`LinkCountsResponse`);
   - a documented forward-compatibility rule for clients.
+- Admin UI: many-to-many fields are edited with a searchable multi-select
+  (removable chips, keyboard support, further pages loaded on scroll). Fields
+  truncated on a record are shown read-only with an explanation and are
+  never sent. The delete confirmation lists the links the delete removes.
+- The example app has `Tag` and a `Task.tags` many-to-many field.
 
 ### Changed
 

@@ -3,8 +3,15 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
-import type { ModelMeta } from "@/api/contract.gen";
-import { useCreateItem, useDeleteItem, useItem, useMeta, useUpdateItem } from "@/api/hooks";
+import type { LinkCount, ModelMeta } from "@/api/contract.gen";
+import {
+  useCreateItem,
+  useDeleteItem,
+  useItem,
+  useLinkCounts,
+  useMeta,
+  useUpdateItem,
+} from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RecordForm } from "@/features/form/RecordForm";
@@ -24,6 +31,56 @@ function BackToList({ model }: { model: ModelMeta }) {
       <ArrowLeft aria-hidden className="size-4" />
       {model.name_plural}
     </Link>
+  );
+}
+
+/** Whether deleting a record of `identity` can remove many-to-many links (ADR-0010 §6). */
+function involvesLinks(models: ModelMeta[], identity: string): boolean {
+  return models.some((model) =>
+    model.fields.some(
+      (field) =>
+        field.type === "many_to_many" &&
+        (model.identity === identity || field.relation?.target_identity === identity),
+    ),
+  );
+}
+
+function linkText(link: LinkCount, own: string, models: ModelMeta[]): string {
+  const count = `${String(link.count)} ${link.count === 1 ? "link" : "links"}`;
+  if (link.identity === own) return `${count} in ${link.label}`;
+  const owner = models.find((model) => model.identity === link.identity)?.name_plural;
+  return `${count} in ${owner ?? link.identity} › ${link.label}`;
+}
+
+/** The confirmation text: what else the delete removes, then "cannot be undone". */
+function DeleteDescription({
+  identity,
+  models,
+  links,
+}: {
+  identity: string;
+  models: ModelMeta[];
+  links: ReturnType<typeof useLinkCounts> | null;
+}) {
+  const removed = links?.data?.items.filter((link) => link.count > 0) ?? [];
+  return (
+    <>
+      {links?.isPending === true && <p>Counting the links this delete removes…</p>}
+      {links?.isError === true && <p>Could not count the links this delete removes.</p>}
+      {removed.length > 0 && (
+        <>
+          <p>This also removes:</p>
+          <ul className="my-2 list-disc pl-5">
+            {removed.map((link) => (
+              <li key={`${link.identity}\u0000${link.field}`}>
+                {linkText(link, identity, models)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p>This cannot be undone.</p>
+    </>
   );
 }
 
@@ -73,8 +130,12 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
   const item = useItem(model.identity, pk);
   const update = useUpdateItem(model.identity, pk);
   const remove = useDeleteItem(model.identity, pk);
-  const userId = useMeta().data?.user.id;
+  const meta = useMeta().data;
+  const userId = meta?.user.id;
+  const models = meta?.models ?? [];
   const [confirming, setConfirming] = useState(false);
+  const linked = involvesLinks(models, model.identity);
+  const links = useLinkCounts(model.identity, pk, confirming && linked);
   const title = `${model.name} ${pk}`;
 
   if (item.isPending) return <p role="status">Loading…</p>;
@@ -152,7 +213,13 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
       <ConfirmDialog
         open={confirming}
         title={`Delete ${title}?`}
-        description="This cannot be undone."
+        description={
+          <DeleteDescription
+            identity={model.identity}
+            models={models}
+            links={linked ? links : null}
+          />
+        }
         confirmLabel={remove.isPending ? "Deleting…" : "Delete"}
         destructive
         busy={remove.isPending}

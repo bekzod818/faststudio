@@ -1,10 +1,11 @@
-"""Read API: metadata, lists, single records and relation choices (M7)."""
+"""Read API: metadata, lists, single records, relation choices and delete previews."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
 from faststudio.api._deps import DbSession, ModelDep
+from faststudio.api._many import link_counts
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
 from faststudio.api._serialize import encode_pk, format_label, relation_labels, to_row
@@ -18,6 +19,7 @@ from faststudio.schemas.contract import (
     SCHEMA_VERSION,
     ChoiceMeta,
     ChoicesResponse,
+    LinkCountsResponse,
     ListResponse,
     MetaResponse,
     Row,
@@ -77,6 +79,23 @@ async def retrieve_item(request: Request, registered: ModelDep, pk: str, session
     """Return one record with all visible fields."""
     obj = await load_or_404(session, registered, pk)
     return await detail_row(session, get_context(request).registry, registered, obj)
+
+
+@router.get("/models/{identity}/items/{pk}/links", response_model=LinkCountsResponse)
+async def item_links(
+    request: Request, registered: ModelDep, pk: str, session: DbSession
+) -> LinkCountsResponse:
+    """Count the many-to-many links deleting this record would remove (ADR-0010 §6).
+
+    For the delete confirmation, so it needs the delete permission. Lists every
+    affected opted-in field, also those with no links.
+    """
+    if not registered.can_delete:
+        raise ApiError(403, "forbidden")
+    obj = await load_or_404(session, registered, pk)
+    registry = get_context(request).registry
+    counts = await link_counts(session, registry, registered, getattr(obj, registered.pk_field))
+    return LinkCountsResponse(items=counts)
 
 
 @router.get("/models/{identity}/fields/{field}/choices", response_model=ChoicesResponse)

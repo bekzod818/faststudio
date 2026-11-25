@@ -24,6 +24,8 @@ __all__ = [
     "FieldMeta",
     "FieldType",
     "FilterMeta",
+    "LinkCount",
+    "LinkCountsResponse",
     "ListResponse",
     "LoginRequest",
     "MetaResponse",
@@ -216,6 +218,22 @@ class ChoicesResponse(_Contract):
 
     items: list[ChoiceMeta]
     total: int
+
+
+class LinkCount(_Contract):
+    """Links of one many-to-many field that deleting a record would remove."""
+
+    #: Model that declares the field (the record's own model, or one pointing at it).
+    identity: str
+    field: str
+    label: str
+    count: int
+
+
+class LinkCountsResponse(_Contract):
+    """`GET /models/{identity}/items/{pk}/links`: every affected opted-in field."""
+
+    items: list[LinkCount]
 
 
 class SpaConfig(_Contract):

@@ -55,6 +55,7 @@ export type FieldType =
 export interface FastStudioContract {
   ChoicesResponse?: ChoicesResponse;
   ErrorResponse?: ErrorResponse;
+  LinkCountsResponse?: LinkCountsResponse;
   ListResponse?: ListResponse;
   LoginRequest?: LoginRequest;
   MetaResponse?: MetaResponse;
@@ -112,6 +113,27 @@ export interface ValidationIssue {
   loc: (string | number)[];
   msg: string;
   type: string;
+}
+/**
+ * `GET /models/{identity}/items/{pk}/links`: every affected opted-in field.
+ *
+ * This interface was referenced by `FastStudioContract`'s JSON-Schema
+ * via the `definition` "LinkCountsResponse".
+ */
+export interface LinkCountsResponse {
+  items: LinkCount[];
+}
+/**
+ * Links of one many-to-many field that deleting a record would remove.
+ *
+ * This interface was referenced by `FastStudioContract`'s JSON-Schema
+ * via the `definition` "LinkCount".
+ */
+export interface LinkCount {
+  count: number;
+  field: string;
+  identity: string;
+  label: string;
 }
 /**
  * `GET /models/{identity}/items`.

@@ -39,6 +39,7 @@ def test_schema_exposes_every_top_level_shape(exporter: ModuleType) -> None:
         "ChoicesResponse",
         "ErrorResponse",
         "ListResponse",
+        "LinkCountsResponse",
         "LoginRequest",
         "MetaResponse",
         "Row",
