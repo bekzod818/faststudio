@@ -28,6 +28,11 @@ listed under **Changed** or **Removed** with migration notes.
   and of opted-in fields of other models pointing at it, instead of
   answering `409`. Relationships that are not opted in behave as before.
 - Foreign-key labels are loaded in chunks of at most 500 keys per query.
+- Many-to-many writes lock the record's row with `SELECT ... FOR UPDATE` on
+  PostgreSQL and MySQL/MariaDB, so host `ON UPDATE` triggers never fire when
+  only links change. On SQLite a no-change `UPDATE` takes the write lock,
+  so SQLite triggers do fire. Under PostgreSQL REPEATABLE READ, concurrent
+  link edits of one record may merge (documented).
 
 ## [0.1.1] - 2026-11-24
 

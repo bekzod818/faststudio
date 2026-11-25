@@ -182,12 +182,14 @@ inheritance respected).
   - the record already has more links than `max_items` (`truncated`);
   - the field is readonly (`extra_forbidden`), or the value is `null`.
 
-  The record's row is locked with a no-change `UPDATE` and the current links
-  are read with a locking read, so concurrent link writes to the same record
-  are serialized: they never merge and never store a duplicate pair (tested
-  on SQLite and PostgreSQL READ COMMITTED and REPEATABLE READ; MySQL is
-  covered by the same locking design but not tested). Under snapshot
-  isolation the second writer gets `409 conflict`.
+  The record's row is locked (`SELECT ... FOR UPDATE`; a no-change `UPDATE` on
+  SQLite) and the current links are read with a locking read, so concurrent
+  link writes to the same record are serialized: they never merge and never
+  store a duplicate pair. This is tested on SQLite and PostgreSQL READ
+  COMMITTED. MySQL/MariaDB are covered by the same design but are not tested
+  yet. **Exception:** under PostgreSQL REPEATABLE READ concurrent link edits of
+  one record may merge (tested, documented in configuration.md). Under
+  SERIALIZABLE the second writer gets `409 conflict`.
   Only missing links are inserted. A lost race (a foreign-key violation, a
   duplicate pair written by other code when the association table has a
   unique pair, or a serialization failure) is `409 conflict`, never `500`.

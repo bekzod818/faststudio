@@ -11,12 +11,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import select
 from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
+from faststudio.api._many import bind_to
 from faststudio.api._paths import API_PREFIX
 from faststudio.api._records import detail_row, load_or_404
 from faststudio.api.auth import CurrentUser, current_user, get_context
@@ -126,7 +128,10 @@ async def _check_many(
         link = registered.many_to_many[name].link
         found: set[object] = set()
         for chunk in chunks(keys):
-            found.update((await session.scalars(existing_keys_statement(link, chunk))).all())
+            rows = await session.scalars(
+                existing_keys_statement(link, chunk), bind_arguments=bind_to(registered.model)
+            )
+            found.update(rows.all())
         if any(key not in found for key in keys):
             issues.append(
                 ValidationIssue(
@@ -138,9 +143,30 @@ async def _check_many(
 
 
 async def _lock_record(session: AsyncSession, registered: RegisteredModel, pk: object) -> None:
-    """Serialize concurrent link writes to the same record (see `touch_record_statement`)."""
+    """Serialize concurrent link writes to the same record without changing its row.
+
+    PostgreSQL and MySQL/MariaDB: `SELECT ... FOR UPDATE` on the record's row,
+    so host `ON UPDATE` triggers never fire for a links-only write. A second
+    writer waits; it then reads the first writer's links under READ COMMITTED
+    (PostgreSQL's default), InnoDB REPEATABLE READ (locking read) and
+    SERIALIZABLE (aborted with 409). Under PostgreSQL REPEATABLE READ its
+    snapshot stays stale, so concurrent link edits of one record may merge
+    (documented limitation).
+
+    SQLite has no `FOR UPDATE`: a no-change `UPDATE` takes the database write
+    lock (SQLite `ON UPDATE` triggers on the record's table do fire). Other
+    dialects are assumed to honour `FOR UPDATE` (FastStudio supports SQLite,
+    PostgreSQL and MySQL/MariaDB).
+    """
     link = next(iter(registered.many_to_many.values())).link
-    await session.execute(touch_record_statement(link, pk))
+    bind = bind_to(registered.model)
+    if session.get_bind(mapper=bind["mapper"]).dialect.name == "sqlite":
+        await session.execute(touch_record_statement(link, pk), bind_arguments=bind)
+    else:
+        await session.execute(
+            select(link.local_pk).where(link.local_pk == pk).with_for_update(),
+            bind_arguments=bind,
+        )
 
 
 async def _replace_many(
@@ -161,6 +187,7 @@ async def _replace_many(
     """
     if not many:
         return
+    bind = bind_to(registered.model)
     if not created:
         await _lock_record(session, registered, pk)
     truncated: list[ValidationIssue] = []
@@ -169,7 +196,10 @@ async def _replace_many(
         current: set[object] = set()
         if not created:
             rows = (
-                await session.scalars(locked_keys_statement(field.link, pk, field.max_items + 1))
+                await session.scalars(
+                    locked_keys_statement(field.link, pk, field.max_items + 1),
+                    bind_arguments=bind,
+                )
             ).all()
             # Conservative: duplicate rows (written by other code) count toward the limit.
             if len(rows) > field.max_items:
@@ -187,9 +217,13 @@ async def _replace_many(
         removed = sorted(current - wanted, key=repr)
         added = [key for key in keys if key not in current]
         for chunk in chunks(removed):
-            await session.execute(delete_links_statement(field.link, pk, chunk))
+            await session.execute(
+                delete_links_statement(field.link, pk, chunk), bind_arguments=bind
+            )
         for chunk in chunks(added, INSERT_CHUNK_SIZE):  # two bound parameters per key
-            await session.execute(insert_links_statement(field.link, pk, chunk))
+            await session.execute(
+                insert_links_statement(field.link, pk, chunk), bind_arguments=bind
+            )
     if truncated:
         raise _invalid(truncated)
 
@@ -204,12 +238,16 @@ async def _delete_links(
     left alone, so those deletes keep the v0.1 behaviour (409).
     """
     for field in registered.many_to_many.values():
-        await session.execute(delete_links_statement(field.link, pk))
+        await session.execute(
+            delete_links_statement(field.link, pk), bind_arguments=bind_to(registered.model)
+        )
     mapper = sa_inspect(registered.model)
     for other in registry:
         for field in other.many_to_many.values():
             if mapper.isa(sa_inspect(field.link.target_model)):
-                await session.execute(delete_links_to_statement(field.link, pk))
+                await session.execute(
+                    delete_links_to_statement(field.link, pk), bind_arguments=bind_to(other.model)
+                )
 
 
 @asynccontextmanager
