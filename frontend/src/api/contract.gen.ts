@@ -35,6 +35,7 @@ export type JsonValue = unknown;
  */
 export type FieldType =
   | "foreign_key"
+  | "many_to_many"
   | "string"
   | "text"
   | "integer"
@@ -137,7 +138,15 @@ export interface Row {
   labels: {
     [k: string]: string | undefined;
   };
+  many_labels: {
+    [k: string]:
+      | {
+          [k: string]: string | undefined;
+        }
+      | undefined;
+  };
   pk: string;
+  truncated: string[];
 }
 /**
  * `POST /auth/login` body. The password never appears in repr or errors.
@@ -214,6 +223,7 @@ export interface FieldMeta {
   has_default: boolean;
   help_text: string | null;
   label: string;
+  max_items: number | null;
   max_length: number | null;
   max_value: number | null;
   min_value: number | null;

@@ -101,6 +101,17 @@ returns `400 invalid_query`; messages name the parameter, never the value.
   primary key (also used when the value is empty); `__str__` is never used.
   Labels are at most 200 characters. With inheritance, only rows of the
   registered target class are labelled.
+- **Many-to-many fields** (`ModelAdmin.many_to_many`, ADR-0010) appear only
+  when retrieving one record:
+  - `data[field]` is the list of linked target keys in key order, in the same
+    wire form as foreign keys;
+  - `many_labels[field]` maps each key (as a string) to its label, which falls
+    back to the key when the target model is not registered;
+  - at most `max_items` keys are returned. When more links exist, the field
+    is listed in `truncated` and is read-only for that record.
+
+  `many_labels` and `truncated` are always present, and empty in lists and
+  for models without many-to-many fields.
 - Integers outside ±(2^53 − 1) are strings, also when nested inside JSON values.
 - Unsupported values are shown as text (binary data as `<N bytes>`, other
   values truncated to 200 characters).
@@ -108,7 +119,8 @@ returns `400 invalid_query`; messages name the parameter, never the value.
 ### Choices
 
 `GET /models/{identity}/fields/{field}/choices?page=&q=` works only for
-foreign-key fields whose target model is registered (otherwise `404`). It
+foreign-key and many-to-many fields whose target model is registered
+(otherwise `404`). It
 returns 20 options per page ordered by label, each `{value: <target pk as
 string>, label}`. `q` searches the target's `search_fields`, or its label field
 when it has none (and is ignored if the label is the primary key). Only rows
@@ -161,6 +173,29 @@ inheritance respected).
   Registering another mapping of the user model's table (a base class or a
   second class on the same table) fails at startup. Custom `AuthBackend`s are
   not covered unless they implement the guard capability (public in v0.2).
+- **Many-to-many fields:** a write replaces the whole set with the sent list
+  of keys (`[]` clears it), in the same transaction as the rest of the write.
+  It is refused with `422` when:
+  - a key does not exist (`type: "foreign_key"`);
+  - a key is repeated (`value_error`) or has the wrong type;
+  - there are more than `max_items` keys (`too_long`);
+  - the record already has more links than `max_items` (`truncated`);
+  - the field is readonly (`extra_forbidden`), or the value is `null`.
+
+  The record's row is locked with a no-change `UPDATE` and the current links
+  are read with a locking read, so concurrent link writes to the same record
+  are serialized: they never merge and never store a duplicate pair (tested
+  on SQLite and PostgreSQL READ COMMITTED and REPEATABLE READ; MySQL is
+  covered by the same locking design but not tested). Under snapshot
+  isolation the second writer gets `409 conflict`.
+  Only missing links are inserted. A lost race (a foreign-key violation, a
+  duplicate pair written by other code when the association table has a
+  unique pair, or a serialization failure) is `409 conflict`, never `500`.
+- **Delete and many-to-many links (ADR-0010 §6):** deleting a record first
+  removes the links of its opted-in many-to-many fields, and of opted-in
+  fields of other registered models pointing at it, in the same
+  transaction. Relationships that are not opted in keep the rule below
+  (`409` while they have related rows).
 - **Database errors:** integrity errors ⇒ `409 conflict`; a write that loses
   a lock or snapshot race to a concurrent request (SQLite busy/locked,
   serialization failure, deadlock), or updates a row another request deleted
@@ -172,8 +207,10 @@ inheritance respected).
 ## Shapes
 
 ```jsonc
-// Row
-{ "pk": "42", "data": { "email": "a@b.c", "team_id": 3 }, "labels": { "team_id": "Core" } }
+// Row (many_labels and truncated: detail rows only, else empty)
+{ "pk": "42", "data": { "email": "a@b.c", "team_id": 3, "tags": [1, 2] },
+  "labels": { "team_id": "Core" }, "many_labels": { "tags": { "1": "news", "2": "tech" } },
+  "truncated": [] }
 
 // ListResponse
 { "items": [Row], "total": 120, "page": 1, "page_size": 25 }
@@ -207,8 +244,16 @@ inheritance respected).
   "choices": null,
   "relation": { "target_identity": "teams", "target_field": "id", "value_type": "integer" },
   "timezone": null, "precision": null, "scale": null, "help_text": null
+  // max_items: many_to_many fields only (the key limit), null otherwise
 }
 ```
+
+## Forward compatibility
+
+`schema_version` stays `"1"` while changes are additive (ADR-0011): new keys
+and new `FieldType` values may appear. Clients must ignore keys they do not
+know and treat an unknown `FieldType` as `unsupported` (read-only text).
+Removing or renaming a key, or changing its meaning, requires `"2"`.
 
 ## Errors
 
@@ -248,6 +293,7 @@ column type (`TypeDecorator.impl` unwrapped), most specific first.
 | SQLAlchemy | `type` | Wire format | Input validation | Widget | Cell |
 |---|---|---|---|---|---|
 | single-column `ForeignKey` to the target's single-column primary key | `foreign_key` | target PK value | the FK column's own type (`relation.value_type`) | async combobox | label |
+| `relationship()` over a plain association table, listed in `ModelAdmin.many_to_many` | `many_to_many` | list of target PK values | each key like the target PK; distinct; at most `max_items` | read-only (multi-select in v0.2 M16) | not listable |
 | `String(n)`, `Unicode` | `string` | string | `max_length=n` | text input | text |
 | `Text`, `UnicodeText` | `text` | string | – | textarea | truncated |
 | `Integer`, `SmallInteger`, `BigInteger` | `integer` | number | strict int | number | right-aligned |

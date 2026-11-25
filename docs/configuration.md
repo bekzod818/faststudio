@@ -80,9 +80,11 @@ def _fk_on(dbapi_connection, _record):
     dbapi_connection.execute("PRAGMA foreign_keys=ON")
 ```
 
-FastStudio still checks that a submitted foreign-key value exists, but
-deleting a row referenced by a table without an ORM `relationship()` only
-fails if the database enforces the constraint.
+FastStudio still checks that a submitted foreign-key value, and every
+many-to-many key, exists. With `PRAGMA foreign_keys` off that check is the
+**only** guard against links to missing rows, so enable foreign keys in
+production. Deleting a row referenced by a table without an ORM
+`relationship()` only fails if the database enforces the constraint.
 
 Deleting is refused (`409`) while an ORM `relationship()` the delete would
 touch still has related rows (one-to-many, many-to-many, or many-to-one with a
@@ -97,6 +99,54 @@ attribute, or when two writable attributes map to the same column.
 
 In production create the engine with `hide_parameters=True` so that any
 SQLAlchemy error logged by your application never contains row values.
+
+## Many-to-many fields
+
+List a `relationship()` in `ModelAdmin.many_to_many` to edit it as a field (a
+list of the target's primary keys):
+
+```python
+class PostAdmin(ModelAdmin, model=Post):
+    many_to_many = ("tags",)
+    many_to_many_limits = {"tags": 2_000}  # default 500, at most 10 000
+```
+
+- **Plain association tables only.** FastStudio reads and writes the
+  `secondary` table directly, so the relationship must meet all of these:
+  - the table has exactly two foreign keys, each referencing the
+    single-column primary key of one side;
+  - every other column has a default;
+  - the join conditions are just those two equalities;
+  - the target primary key is an integer, string or UUID.
+
+  Anything else (association objects, extra criteria in `primaryjoin` or
+  `secondaryjoin`, also on `viewonly` relationships) fails registration with
+  the reason. Self-referential relationships work.
+- **Opt-in.** Unlisted relationships stay invisible, so upgrading never
+  exposes new writable fields.
+  - `readonly_fields` and `column_labels` accept the names.
+  - `viewonly=True` relationships are read-only.
+  - The fields cannot be used in `list_display`, `search_fields`,
+    `list_filter` or `ordering`.
+- **Bounded.** A record shows at most `max_items` links. When it has more,
+  the field is marked truncated and becomes read-only for that record, so a
+  partial list is never written back.
+- **Unique pairs.** Give the association table a primary key or unique
+  constraint on the two foreign keys. FastStudio serializes its own link
+  writes per record, but other code writing the table could still store
+  duplicate links, so registration warns when the table has none. Reads hide
+  duplicates either way.
+- **Concurrent writes.** Before changing a record's links, FastStudio locks
+  the record with a no-change `UPDATE` of its row and reads the current links
+  with a locking read. Concurrent link writes to the same record are therefore
+  serialized (under snapshot isolation the second gets `409`). Because it is a
+  real `UPDATE`, database `ON UPDATE` triggers on the record's table (audit or
+  `updated_at` triggers) fire even when only links change. SQLAlchemy
+  `onupdate` defaults are not applied.
+- **Deleting** a record removes its opted-in links (both directions for
+  self-referential fields, and links of other registered models' opted-in
+  fields pointing at it) instead of refusing with `409`. Relationships that
+  are not opted in keep the `409` rule above.
 
 ## Deep pagination
 
@@ -183,6 +233,8 @@ read-only (see `docs/api-contract.md`).
 | `readonly_fields` | `()` | shown, never writable |
 | `exclude` | `()` | never shown, searched, filtered, sorted or writable; cannot appear in any other option; the primary key cannot be excluded; every attribute mapped to an excluded column must be excluded too |
 | `column_labels` | `{}` | `{field: label}` display labels |
+| `many_to_many` | `()` | many-to-many relationships shown as editable fields; each must be a plain association table (see [Many-to-many fields](#many-to-many-fields)); unlisted relationships stay invisible |
+| `many_to_many_limits` | `{}` | most related keys per many-to-many field, default 500, 1–10 000; keys must be listed in `many_to_many` |
 | `can_create` / `can_edit` / `can_delete` | `True` | per-model permissions (`bool`) |
 
 List options must be lists or tuples: `search_fields = "email"` is an error

@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import math
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from faststudio.introspection._fields import FieldSpec, JsonValue, is_plain_json
 from faststudio.introspection._types import FieldType
 from faststudio.query._list import label_statement
+from faststudio.query._many import chunks
 from faststudio.registry import RegisteredModel, Registry
 from faststudio.schemas.contract import MAX_SAFE_INTEGER, Row
 
@@ -153,11 +154,11 @@ async def relation_labels(
         target = registry.target_of(spec.relation.target) if spec.relation else None
         if target is None:
             continue
-        values = {getattr(row, name) for row in rows} - {None}
-        if not values:
-            continue
-        result = await session.execute(label_statement(target, values))
-        by_pk = {pk: format_label(pk, label) for pk, label in result.all()}
+        values = sorted({getattr(row, name) for row in rows} - {None}, key=repr)
+        by_pk: dict[object, str] = {}
+        for chunk in chunks(values):  # bounded IN lists (SQLite parameter limit)
+            result = await session.execute(label_statement(target, chunk))
+            by_pk.update((pk, format_label(pk, label)) for pk, label in result.all())
         for index, row in enumerate(rows):
             value = getattr(row, name)
             if value in by_pk:
@@ -170,11 +171,25 @@ def to_row(
     obj: object,
     fields: Sequence[str],
     labels: dict[str, str],
+    *,
+    many: Mapping[str, list[JsonValue]] | None = None,
+    many_labels: Mapping[str, dict[str, str]] | None = None,
+    truncated: Sequence[str] = (),
 ) -> Row:
-    """Serialize one ORM object: primary key, the given visible fields, labels."""
+    """Serialize one ORM object: primary key, the given visible fields, labels.
+
+    `many` holds already encoded many-to-many keys (detail rows only): they are
+    loaded with explicit queries, never through the relationship attribute.
+    """
     specs = registered.field_specs
+    data: dict[str, JsonValue] = {
+        name: encode_field(specs[name], getattr(obj, name)) for name in fields
+    }
+    data.update(many or {})
     return Row(
         pk=encode_pk(getattr(obj, registered.pk_field)),
-        data={name: encode_field(specs[name], getattr(obj, name)) for name in fields},
+        data=data,
         labels=labels,
+        many_labels=dict(many_labels or {}),
+        truncated=list(truncated),
     )

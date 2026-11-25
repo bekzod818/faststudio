@@ -114,6 +114,8 @@ class FieldMeta(_Contract):
     precision: int | None
     scale: int | None
     help_text: str | None
+    #: Most related keys of a `many_to_many` field (read and write); null otherwise.
+    max_items: int | None
 
 
 class FilterMeta(_Contract):
@@ -194,6 +196,10 @@ class Row(_Contract):
     pk: str
     data: dict[str, JsonValue]
     labels: dict[str, str]
+    #: Detail rows: labels of many-to-many keys, `{field: {key: label}}`; empty otherwise.
+    many_labels: dict[str, dict[str, str]]
+    #: Detail rows: many-to-many fields with more than `max_items` links (read-only there).
+    truncated: list[str]
 
 
 class ListResponse(_Contract):

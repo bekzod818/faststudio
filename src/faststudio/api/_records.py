@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from faststudio.api._many import many_values
 from faststudio.api._serialize import parse_pk, relation_labels, to_row
 from faststudio.api.errors import ApiError
 from faststudio.registry import RegisteredModel, Registry
@@ -25,4 +26,13 @@ async def detail_row(
     """`Row` with every visible field and relation labels."""
     fields = list(registered.fields)
     (labels,) = await relation_labels(session, registry, registered, [obj], fields)
-    return to_row(registered, obj, fields, labels)
+    many = await many_values(session, registry, registered, getattr(obj, registered.pk_field))
+    return to_row(
+        registered,
+        obj,
+        fields,
+        labels,
+        many=many.keys,
+        many_labels=many.labels,
+        truncated=many.truncated,
+    )

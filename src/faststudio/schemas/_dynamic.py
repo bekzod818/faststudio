@@ -17,7 +17,8 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, TypeAlias, cast
@@ -184,7 +185,32 @@ def value_annotation(spec: FieldSpec) -> _Annotation:
     return annotation | None if spec.nullable else annotation
 
 
-def _model(name: str, specs: list[FieldSpec], *, all_optional: bool) -> type[WriteSchema]:
+@dataclass(frozen=True, slots=True)
+class ManyKeys:
+    """A writable many-to-many field: a list of target keys (ADR-0010)."""
+
+    name: str
+    #: Describes the target's primary key: each key is validated like it.
+    key_spec: FieldSpec
+    max_items: int
+
+
+def _distinct_keys(keys: list[object]) -> list[object]:
+    if len(set(keys)) != len(keys):
+        msg = "must not contain duplicate keys"
+        raise ValueError(msg)
+    return keys
+
+
+def many_annotation(field: ManyKeys) -> _Annotation:
+    """`[key, ...]`: each key typed like the target primary key, bounded, distinct, not null."""
+    key = value_annotation(replace(field.key_spec, nullable=False))
+    return Annotated[list[key], Field(max_length=field.max_items), AfterValidator(_distinct_keys)]  # type: ignore[valid-type]  # built at runtime
+
+
+def _model(
+    name: str, specs: list[FieldSpec], many: Sequence[ManyKeys], *, all_optional: bool
+) -> type[WriteSchema]:
     fields: dict[str, Any] = {}
     field_map: dict[str, str] = {}
     for index, spec in enumerate(specs):
@@ -192,18 +218,25 @@ def _model(name: str, specs: list[FieldSpec], *, all_optional: bool) -> type[Wri
         field_map[internal] = spec.name
         default: Any = ... if spec.required and not all_optional else None
         fields[internal] = (value_annotation(spec), Field(default, alias=spec.name))
+    for index, field in enumerate(many):
+        internal = f"m{index}"
+        field_map[internal] = field.name
+        fields[internal] = (many_annotation(field), Field(None, alias=field.name))
     model = cast("type[WriteSchema]", create_model(name, __base__=WriteSchema, **fields))
     model.field_map = field_map
     return model
 
 
 def build_write_schemas(
-    model_name: str, field_specs: Mapping[str, FieldSpec]
+    model_name: str, field_specs: Mapping[str, FieldSpec], many: Sequence[ManyKeys] = ()
 ) -> tuple[type[WriteSchema], type[WriteSchema]]:
-    """Return `(Create, Update)` models; only explicitly sent fields are written."""
+    """Return `(Create, Update)` models; only explicitly sent fields are written.
+
+    `many` lists the writable (opted-in, not readonly) many-to-many fields.
+    """
     creatable = [s for s in field_specs.values() if not s.readonly]
     updatable = [s for s in creatable if not s.create_only]
     return (
-        _model(f"{model_name}Create", creatable, all_optional=False),
-        _model(f"{model_name}Update", updatable, all_optional=True),
+        _model(f"{model_name}Create", creatable, many, all_optional=False),
+        _model(f"{model_name}Update", updatable, many, all_optional=True),
     )

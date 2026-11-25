@@ -26,6 +26,7 @@ from faststudio.introspection._columns import base_type
 
 FieldType = Literal[
     "foreign_key",
+    "many_to_many",
     "string",
     "text",
     "integer",

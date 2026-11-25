@@ -3,7 +3,7 @@ import { testModel } from "@/test/fixtures";
 
 import { isOwnAccount, withProtectedFields } from "./account";
 
-const row: Row = { pk: "1", data: {}, labels: {} };
+const row: Row = { pk: "1", data: {}, labels: {}, many_labels: {}, truncated: [] };
 const accounts = testModel({ account: { protected_fields: ["is_active"] } });
 
 describe("isOwnAccount", () => {

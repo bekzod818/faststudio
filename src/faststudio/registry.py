@@ -31,12 +31,21 @@ from faststudio.introspection._columns import (
 from faststudio.introspection._fields import (
     FieldSpec,
     build_field_spec,
+    humanize,
     is_required_column,
     looks_sensitive,
 )
+from faststudio.introspection._many import (
+    DEFAULT_MAX_RELATED_ITEMS,
+    MAX_RELATED_ITEMS_LIMIT,
+    ManyToManyField,
+    ManyToManyLink,
+    NotPlainError,
+    plain_many_to_many,
+)
 from faststudio.introspection._types import FieldType
 from faststudio.model_admin import OPTION_NAMES, ModelAdmin
-from faststudio.schemas._dynamic import WriteSchema, build_write_schemas
+from faststudio.schemas._dynamic import ManyKeys, WriteSchema, build_write_schemas
 
 logger = logging.getLogger("faststudio.registry")
 
@@ -98,6 +107,9 @@ class RegisteredModel:
     readonly_fields: frozenset[str]
     exclude: frozenset[str]
     column_labels: Mapping[str, str]
+    #: Opted-in many-to-many fields (`ModelAdmin.many_to_many`), in declaration order.
+    #: Kept apart from `fields`, which holds columns only.
+    many_to_many: Mapping[str, ManyToManyField]
     page_size: int
     can_create: bool
     can_edit: bool
@@ -170,6 +182,8 @@ class _Validator:
         self.available: Mapping[str, Column[Any]] = mapped_columns(mapper)
         self.managed: frozenset[int] = _managed_column_ids(mapper)
         self.excluded: frozenset[str] = frozenset()  # set once `exclude` is validated
+        self.relationships: frozenset[str] = frozenset(mapper.relationships.keys())
+        self.m2m_names: tuple[str, ...] = ()  # set once `many_to_many` is validated
 
     def fail(self, message: str) -> ConfigurationError:
         return ConfigurationError(f"{self.label}: {message}")
@@ -184,6 +198,9 @@ class _Validator:
             raise self.fail(f"exclude: the primary key {pk_field!r} cannot be excluded.")
         self.excluded = frozenset(exclude)
         visible = self._visible_fields()
+        links = self._many_to_many()
+        self.m2m_names = tuple(links)
+        limits = self._many_to_many_limits()
 
         list_display = self._fields("list_display", visible_only=True) or self._default_list(
             pk_field, visible
@@ -202,9 +219,20 @@ class _Validator:
                     f"list_filter: {field!r} must be a boolean or enum column in this version."
                 )
         self._warn_sensitive(visible)
-        readonly_fields = frozenset(self._fields("readonly_fields", visible_only=True))
+        readonly_entries = self._fields("readonly_fields", visible_only=True, allow_m2m=True)
+        readonly_fields = frozenset(f for f in readonly_entries if f not in links)
         self._check_readonly_aliases(readonly_fields, visible)
         column_labels = self._column_labels()
+        many_to_many = {
+            name: ManyToManyField(
+                name=name,
+                label=column_labels.get(name) or humanize(name),
+                readonly=name in readonly_entries or link.viewonly,
+                max_items=limits.get(name, DEFAULT_MAX_RELATED_ITEMS),
+                link=link,
+            )
+            for name, link in links.items()
+        }
         field_specs = {
             key: self._field_spec(key, column, column_labels.get(key), key in readonly_fields)
             for key, column in visible.items()
@@ -215,7 +243,16 @@ class _Validator:
 
         name = self._name()
         ordering = self._ordering()
-        create_schema, update_schema = build_write_schemas(self.label, field_specs)
+        writable_many = [
+            ManyKeys(
+                name=field.name,
+                key_spec=self._target_key_spec(field.link),
+                max_items=field.max_items,
+            )
+            for field in many_to_many.values()
+            if not field.readonly
+        ]
+        create_schema, update_schema = build_write_schemas(self.label, field_specs, writable_many)
         return RegisteredModel(
             admin_class=self.cls,
             model=self.mapper.class_,
@@ -234,6 +271,7 @@ class _Validator:
             readonly_fields=readonly_fields,
             exclude=self.excluded,
             column_labels=column_labels,
+            many_to_many=MappingProxyType(many_to_many),
             page_size=self._page_size(),
             can_create=can_create,
             can_edit=self._flag("can_edit"),
@@ -387,24 +425,117 @@ class _Validator:
             raise self.fail(f"{option} must be a list or tuple of field names.")
         return value
 
-    def _field_name(self, option: str, entry: object) -> str:
+    def _field_name(self, option: str, entry: object, *, allow_m2m: bool = False) -> str:
         if not isinstance(entry, str):
             raise self.fail(f"{option}: entries must be field names (str), got {entry!r}.")
+        if entry in self.m2m_names:
+            if allow_m2m:
+                return entry
+            # `exclude` is validated before `many_to_many`; it gets the relationship message.
+            raise self.fail(
+                f"{option}: {entry!r} is a many-to-many field; many-to-many fields cannot be "
+                "listed, searched, filtered or sorted in this version."
+            )
+        if entry not in self.available and entry in self.relationships:
+            if option == "exclude":
+                raise self.fail(
+                    f"exclude: {entry!r} is a relationship, not a column; leave it out of "
+                    "many_to_many to keep it hidden."
+                )
+            raise self.fail(
+                f"{option}: {entry!r} is a relationship, not a column. Plain many-to-many "
+                "relationships can be shown by listing them in many_to_many."
+            )
         if entry not in self.available:
             raise self.fail(
                 f"{option}: unknown field {entry!r}. Available fields: {', '.join(self.available)}."
             )
         return entry
 
-    def _fields(self, option: str, *, visible_only: bool = False) -> list[str]:
+    def _fields(
+        self, option: str, *, visible_only: bool = False, allow_m2m: bool = False
+    ) -> list[str]:
         result: list[str] = []
         for entry in self._sequence(option):
-            field = self._field_name(option, entry)
+            field = self._field_name(option, entry, allow_m2m=allow_m2m)
             if field in result:
                 raise self.fail(f"{option}: duplicate field {field!r}.")
             if visible_only and field in self.excluded:
                 raise self.fail(f"{option}: {field!r} is excluded and cannot be used here.")
             result.append(field)
+        return result
+
+    def _many_to_many(self) -> dict[str, ManyToManyLink]:
+        """Resolve `many_to_many` to plain many-to-many links (ADR-0010)."""
+        links: dict[str, ManyToManyLink] = {}
+        for entry in self._sequence("many_to_many"):
+            if not isinstance(entry, str):
+                raise self.fail(
+                    f"many_to_many: entries must be relationship names (str), got {entry!r}."
+                )
+            if entry in links:
+                raise self.fail(f"many_to_many: duplicate field {entry!r}.")
+            if entry in self.available:
+                raise self.fail(f"many_to_many: {entry!r} is a column, not a relationship.")
+            if entry not in self.relationships:
+                raise self.fail(
+                    f"many_to_many: unknown relationship {entry!r}. Available many-to-many "
+                    f"relationships: {', '.join(self._plain_relationships()) or 'none'}."
+                )
+            try:
+                link = plain_many_to_many(self.mapper.relationships[entry])
+            except NotPlainError as exc:
+                raise self.fail(
+                    f"many_to_many: {entry!r} is not a plain many-to-many relationship: "
+                    f"{exc.reason}."
+                ) from None
+            if not link.unique_pair:
+                logger.warning(
+                    "%s: association table %r has no primary key or unique constraint on "
+                    "(%s, %s); add one so concurrent writes cannot store duplicate links.",
+                    self.label,
+                    link.secondary.name,
+                    link.local_fk.name,
+                    link.remote_fk.name,
+                )
+            links[entry] = link
+        return links
+
+    @staticmethod
+    def _target_key_spec(link: ManyToManyLink) -> FieldSpec:
+        """Describe the target primary key, so each sent key is validated like it."""
+        return build_field_spec(
+            "key", link.target_pk, label=None, readonly=False, siblings=[], managed=False
+        )
+
+    def _plain_relationships(self) -> list[str]:
+        names: list[str] = []
+        for name, relationship in self.mapper.relationships.items():
+            try:
+                plain_many_to_many(relationship)
+            except NotPlainError:
+                continue
+            names.append(name)
+        return names
+
+    def _many_to_many_limits(self) -> dict[str, int]:
+        limits: object = self.cls.many_to_many_limits
+        if not isinstance(limits, Mapping):
+            raise self.fail("many_to_many_limits must be a mapping of field name to int.")
+        result: dict[str, int] = {}
+        for key, value in limits.items():
+            if key not in self.m2m_names:
+                raise self.fail(f"many_to_many_limits: {key!r} is not listed in many_to_many.")
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 1 <= value <= MAX_RELATED_ITEMS_LIMIT
+            ):
+                raise self.fail(
+                    f"many_to_many_limits[{key!r}] must be an int between 1 and "
+                    f"{MAX_RELATED_ITEMS_LIMIT}."
+                )
+            result[key] = value
         return result
 
     def _default_list(self, pk_field: str, visible: Mapping[str, Column[Any]]) -> list[str]:
@@ -473,7 +604,7 @@ class _Validator:
             raise self.fail("column_labels must be a mapping of field name to label.")
         result: dict[str, str] = {}
         for key, label in labels.items():
-            field = self._field_name("column_labels", key)
+            field = self._field_name("column_labels", key, allow_m2m=True)
             if field in self.excluded:
                 raise self.fail(f"column_labels: {field!r} is excluded and cannot be used here.")
             result[field] = self._text(f"column_labels[{field!r}]", label)
