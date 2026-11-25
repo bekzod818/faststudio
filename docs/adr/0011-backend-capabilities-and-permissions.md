@@ -198,3 +198,31 @@ applies to edit, delete and link counts (404).
 - **Setting another account's password** needs every permission *and* the
   model's edit hooks (`can_edit`, `has_edit_permission(obj)`); a record
   hidden by `has_view_permission(obj)` is a 404, as on retrieve.
+
+## Implementation notes (M18b, approved 2026-11-25)
+
+- **Secret fields.** `AccountGuard.secret_fields(model)` (new, before the
+  protocol is released) names columns that must never be shown;
+  `Admin.register()` fails unless they are excluded. `contrib.auth` declares
+  `password_hash` and `session_token`; `ModelUserBackend` declares none, so
+  v0.1 apps keep starting (with the existing warning).
+- **`BackendCapabilities.register_admins`** (keyword-only, additive) is
+  called with the `Admin` at the end of its construction. `contrib.auth`
+  registers its users, groups and permissions admins unless
+  `DatabaseAuthBackend(register_admins=False)`; the default admin classes
+  are public factories (`user_admin`, `group_admin`, `permission_admin`) to
+  subclass.
+- **Usernames.** A `username_normalized` column (NFKC + case-fold, kept in
+  sync on assignment) with a plain unique index replaces the functional
+  `lower(username)` index: same behaviour on SQLite, PostgreSQL and MySQL,
+  and clean Alembic autogenerate.
+- **Lock order across chunks** (M17 follow-up): only matters above 500
+  keys in one write; the worst case is a deadlock, which is a documented
+  `409`. A PostgreSQL test pins "409, never 500" for concurrent writes on
+  admin accounts.
+- **Codename count (A3).** The warning when codenames exceed 10 000 moves to
+  `syncpermissions` (M19): only there are all registered models known.
+- **Password helpers are public** (`faststudio.auth.passwords.__all__`):
+  `hash_password`, `hash_password_async`, `verify_password_async`,
+  `dummy_verify_async`, `is_password_hash`, `prepare_dummy_hash`. Contrib
+  depends only on public core API; custom backends need the same helpers.

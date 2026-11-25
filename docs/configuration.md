@@ -300,6 +300,12 @@ class MyBackend:
     async def resolve_accounts(self, session, keys): ...
 ```
 
+**Password helpers for backends** (`faststudio.auth.passwords`, public):
+`hash_password` / `hash_password_async` (argon2id), `verify_password_async`,
+`is_password_hash`, and `dummy_verify_async` with `prepare_dummy_hash` (call
+it at startup) to spend the same time on unknown accounts, as the
+`AuthBackend` protocol requires. The async variants run off the event loop.
+
 **Escalation rules.** When users, groups or permissions are edited in the
 admin, FastStudio refuses (403) any write by an admin who does not hold every
 permission that would change the superuser-like flag, touch an account
@@ -316,6 +322,76 @@ A backend that still implements 0.1.1's private guard methods (`guards`,
 startup: wrap its rules in an `AccountGuard` (or use `FlagAccountGuard`) and
 return it as `BackendCapabilities(account_guard=...)`. Creates now reach the
 guard too (`WriteIntent.action == "create"`).
+
+## Users, groups and permissions (`contrib.auth`)
+
+`faststudio.contrib.auth` stores admin accounts, groups and permissions in
+tables FastStudio declares on your own SQLAlchemy base:
+
+```python
+from sqlalchemy.orm import DeclarativeBase
+from faststudio import Admin
+from faststudio.contrib.auth import AuthModels, DatabaseAuthBackend
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+auth = AuthModels(Base)  # faststudio_user, faststudio_group, faststudio_permission, ...
+admin = Admin(app, engine=engine, auth_backend=DatabaseAuthBackend(auth))
+```
+
+> **These are admin staff accounts, not your application's users.** Every
+> active user in these tables can sign in to the admin. Never store your
+> application's end users (customers, members) here.
+
+- **Tables.** Create them with your migrations: Alembic autogenerate sees
+  them because they live on your `Base` (`table_prefix=` changes the
+  `faststudio_` prefix). Association tables cascade deletes.
+- **Sign-in.** Any active user may sign in. Usernames are compared in a
+  normalized form (NFKC, case-folded): `Admin`, `admin` and full-width
+  variants are the same account, and cannot be created twice (409).
+  `last_login` is recorded.
+- **Permissions.** Superusers hold every permission. Other users hold the
+  permissions granted to them and to their groups, resolved with one query
+  per request. The escalation rules apply to every edit of users, groups and
+  permissions. The last active superuser cannot be deactivated, demoted or
+  deleted, and nobody can do that to their own account.
+- **Passwords.** New users get an unusable password: they cannot sign in
+  until one is set, with "Set password" (by a superuser) or the CLI (v0.2).
+  The password endpoints are on. `password_validators=` works as for
+  `ModelUserBackend`.
+- **Permission rows** follow your registered models (`<identity>.<action>`
+  and `extra_permissions`); `faststudio syncpermissions` (v0.2) creates them.
+  The permissions admin is read-only.
+
+**Customizing the admins.** By default the users, groups and permissions
+admins are registered for you. To change them, turn that off and register
+subclasses of the exported defaults:
+
+```python
+from faststudio.contrib.auth import group_admin, permission_admin, user_admin
+
+admin = Admin(app, engine=engine, auth_backend=DatabaseAuthBackend(auth, register_admins=False))
+
+
+class StaffAdmin(user_admin(auth)):
+    list_display = ("id", "username", "email", "last_login")
+
+
+admin.register(StaffAdmin)
+admin.register(group_admin(auth))
+admin.register(permission_admin(auth))
+```
+
+`password_hash` and `session_token` must stay excluded: registration fails
+otherwise. Customize only this way: with automatic registration on, the
+registered classes are not reachable from your code.
+
+`username_normalized` is kept in sync when `username` is assigned through
+the ORM (the admin, the CLI, `user.username = ...`). Core `update()` or bulk
+statements bypass it: always change usernames through the ORM.
 
 ## Deep pagination
 

@@ -96,6 +96,13 @@ class AccountGuard(Protocol):
         """
         ...
 
+    def secret_fields(self, model: type[Any]) -> tuple[str, ...]:
+        """Return fields of a guarded model that must never be shown (e.g. hashes).
+
+        Registering the model fails unless they are all in `exclude`.
+        """
+        ...
+
     async def before_write(
         self, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
     ) -> PostWriteCheck | None:
@@ -128,6 +135,7 @@ class FlagAccountGuard:
         flags: Sequence[str],
         *,
         admin_flag: str | None = None,
+        secret_fields: Sequence[str] = (),
     ) -> None:
         """Validate the model, its primary key and the flag columns.
 
@@ -148,7 +156,7 @@ class FlagAccountGuard:
             msg = f"FlagAccountGuard: {pk_field!r} is not the primary key of {model.__name__}."
             raise ConfigurationError(msg)
         columns = set(mapper.columns.keys())
-        for flag in (*flags, *([admin_flag] if admin_flag else [])):
+        for flag in (*flags, *([admin_flag] if admin_flag else []), *secret_fields):
             if flag not in columns:
                 msg = f"FlagAccountGuard: {flag!r} is not a column of {model.__name__}."
                 raise ConfigurationError(msg)
@@ -157,6 +165,7 @@ class FlagAccountGuard:
         self._pk_field: str = pk_field
         self._flags: tuple[str, ...] = tuple(flags)
         self._admin_flag: str | None = admin_flag
+        self._secret_fields: tuple[str, ...] = tuple(secret_fields)
 
     def _active_admin(self) -> ColumnElement[bool]:
         """Return the SQL condition for rows that may sign in (every flag is true)."""
@@ -176,6 +185,10 @@ class FlagAccountGuard:
     def admin_flag(self, model: type[Any]) -> str | None:
         """Return the superuser-like flag for guarded models."""
         return self._admin_flag if self.guards(model) else None
+
+    def secret_fields(self, model: type[Any]) -> tuple[str, ...]:
+        """Return the secret columns for guarded models (none otherwise)."""
+        return self._secret_fields if self.guards(model) else ()
 
     def check_model(self, model: type[Any]) -> None:
         """Refuse other mappings of the user table: their writes could not be checked."""

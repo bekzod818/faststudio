@@ -9,6 +9,15 @@ from anyio.lowlevel import RunVar
 from argon2 import PasswordHasher, extract_parameters
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
+__all__ = [
+    "dummy_verify_async",
+    "hash_password",
+    "hash_password_async",
+    "is_password_hash",
+    "prepare_dummy_hash",
+    "verify_password_async",
+]
+
 _HASHER = PasswordHasher()  # argon2id with argon2-cffi's current recommended parameters
 
 #: Concurrent argon2 verifications per event loop. Each one costs tens of
