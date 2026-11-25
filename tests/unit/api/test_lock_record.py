@@ -28,10 +28,10 @@ class _Session:
         self.bind = _Bind(dialect)
         self.statements: list[Any] = []
 
-    def get_bind(self) -> _Bind:
+    def get_bind(self, **_kwargs: Any) -> _Bind:
         return self.bind
 
-    async def execute(self, statement: Any) -> None:
+    async def execute(self, statement: Any, **_kwargs: Any) -> None:
         self.statements.append(statement)
 
 

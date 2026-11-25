@@ -147,8 +147,10 @@ class PostAdmin(ModelAdmin, model=Post):
   - **PostgreSQL REPEATABLE READ:** the second writer keeps its earlier
     snapshot and no error is raised, so two concurrent link edits of the same
     record may merge (and, without a unique pair, store a duplicate row that
-    reads hide). Use READ COMMITTED or SERIALIZABLE for the admin's engine if
-    that matters.
+    reads hide). A merge can exceed `max_items`, after which the field is
+    read-only in the admin until links are removed in the database; the
+    second writer may instead get `409`. Use READ COMMITTED or SERIALIZABLE for
+    the admin's engine if that matters.
   - **SQLite** has no `FOR UPDATE`: FastStudio takes the database write lock
     with a no-change `UPDATE` of the record's row, so SQLite `ON UPDATE`
     triggers on that table **do** fire when only links change. SQLAlchemy

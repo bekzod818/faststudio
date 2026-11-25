@@ -21,7 +21,12 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import event, func, insert, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from faststudio import Admin, ModelAdmin, ModelUserBackend, hash_password
 from faststudio.api import write as write_module
@@ -125,7 +130,7 @@ class ArticleAdmin(ModelAdmin, model=Article):
                     pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
                 ],
             )
-            for kind in ("postgres", "postgres-repeatable-read")
+            for kind in ("postgres", "postgres-repeatable-read", "postgres-serializable")
         ),
     ]
 )
@@ -140,7 +145,11 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
         name = make_url(POSTGRES_URL).database or ""
         if not name.endswith("_test"):
             pytest.fail(f"Refusing to drop tables in {name!r}: use a database named *_test.")
-        isolation = "REPEATABLE READ" if database.endswith("repeatable-read") else "READ COMMITTED"
+        isolation = {
+            "postgres": "READ COMMITTED",
+            "postgres-repeatable-read": "REPEATABLE READ",
+            "postgres-serializable": "SERIALIZABLE",
+        }[database]
         engine = create_async_engine(POSTGRES_URL, isolation_level=isolation)
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/m2m.db")
@@ -624,10 +633,10 @@ async def test_links_only_write_never_updates_the_record_row(
     with a no-change UPDATE there, and the trigger fires once (documented).
     """
     kind = "postgres" if database.startswith("postgres") else "sqlite"
-    async with db.begin() as conn:
-        for statement in _TRIGGERS[kind]:
-            await conn.execute(text(statement))
     try:
+        async with db.begin() as conn:
+            for statement in _TRIGGERS[kind]:
+                await conn.execute(text(statement))
         response = await client.patch("/models/posts/items/1", {"tags": [3]})
         assert response.status_code == 200, response.text
         assert await _audit_count(db) == (1 if kind == "sqlite" else 0)
@@ -638,3 +647,40 @@ async def test_links_only_write_never_updates_the_record_row(
         async with db.begin() as conn:
             for statement in _DROP[kind]:
                 await conn.execute(text(statement))
+
+
+# --------------------------------------------------------------------------- session factories
+
+
+async def test_session_factory_with_binds_only(
+    app: FastAPI, db: AsyncEngine, secret_key: str
+) -> None:
+    """A host factory routing engines only through `binds=` (no default bind) works."""
+    maker = async_sessionmaker(binds={Base: db}, expire_on_commit=False)
+    instance = Admin(
+        app,
+        session_maker=maker,
+        auth_backend=ModelUserBackend(AdminUser),
+        secret_key=secret_key,
+    )
+    instance.register(PostAdmin)
+    instance.register(TagAdmin)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as http:
+        await http.get(f"{API}/auth/me")
+        login = await http.post(
+            f"{API}/auth/login",
+            json={"username": "admin", "password": PASSWORD},
+            headers={"x-faststudio-csrf": http.cookies["faststudio_csrftoken"], "origin": ORIGIN},
+        )
+        assert login.status_code == 200, login.text
+        headers = {"x-faststudio-csrf": http.cookies["faststudio_csrftoken"], "origin": ORIGIN}
+        detail = await http.get(f"{API}/models/posts/items/1")
+        assert detail.json()["data"]["tags"] == [1, 2]
+        replaced = await http.patch(
+            f"{API}/models/posts/items/1", json={"tags": [3]}, headers=headers
+        )
+        assert replaced.status_code == 200, replaced.text
+        assert replaced.json()["data"]["tags"] == [3]
+        deleted = await http.delete(f"{API}/models/posts/items/1", headers=headers)
+        assert deleted.status_code == 204, deleted.text
+    assert await _links(db, post_tags, "post_id", "tag_id", 1) == []

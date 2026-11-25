@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from faststudio.api._serialize import encode_pk, encode_value, format_label
@@ -23,11 +25,21 @@ class ManyValues:
     truncated: list[str] = field(default_factory=list)
 
 
+def bind_to(model: type[Any]) -> dict[str, Any]:
+    """`bind_arguments` for Core statements on a model's association tables.
+
+    They name no mapped entity, so a session factory that routes engines only
+    through `binds={Base: engine}` could not resolve them; the record's mapper can.
+    """
+    return {"mapper": sa_inspect(model)}
+
+
 async def linked_keys(
-    session: AsyncSession, many: ManyToManyField, pk: object, limit: int
+    session: AsyncSession, model: type[Any], many: ManyToManyField, pk: object, limit: int
 ) -> list[object]:
     """Distinct keys linked to `pk`, at most `limit` (explicit query, no lazy loading)."""
-    return list((await session.scalars(linked_keys_statement(many.link, pk, limit))).all())
+    statement = linked_keys_statement(many.link, pk, limit)
+    return list((await session.scalars(statement, bind_arguments=bind_to(model))).all())
 
 
 async def many_values(
@@ -41,7 +53,7 @@ async def many_values(
     """
     result = ManyValues()
     for name, many in registered.many_to_many.items():
-        keys = await linked_keys(session, many, pk, many.max_items + 1)
+        keys = await linked_keys(session, registered.model, many, pk, many.max_items + 1)
         if len(keys) > many.max_items:
             result.truncated.append(name)
             keys = keys[: many.max_items]
