@@ -8,7 +8,7 @@ from faststudio.exceptions import ConfigurationError, FastStudioError
 from faststudio.model_admin import ModelAdmin
 from faststudio.security.rate_limit import InMemoryRateLimiter, RateLimitDecision, RateLimiter
 
-__version__ = "0.1.1"
+__version__ = "0.1.2.dev0"
 
 __all__ = [
     "Admin",
