@@ -109,7 +109,8 @@ test("guards unsaved changes", async ({ page }) => {
 
 test("deletes after confirmation", async ({ page }) => {
   const state = await open(page, "./models/tasks");
-  const url = await createTask(page, uniqueTitle());
+  const title = uniqueTitle();
+  const url = await createTask(page, title);
   await page.getByRole("button", { name: "Delete" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("This cannot be undone.");
@@ -127,7 +128,12 @@ test("deletes after confirmation", async ({ page }) => {
   const response = await page.request.get(
     url.replace("/admin/models/tasks/items/", "/admin/api/v1/models/tasks/items/"),
   );
-  expect(response.status()).toBe(404);
+  // SQLite reuses the highest deleted id, so a parallel test may already have
+  // created another task under it: the deleted record must be gone either way.
+  if (response.status() !== 404) {
+    expect(response.status()).toBe(200);
+    expect(((await response.json()) as { data: { title: string } }).data.title).not.toBe(title);
+  }
   await expectClean(page, state);
 });
 

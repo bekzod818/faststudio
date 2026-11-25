@@ -135,3 +135,30 @@ and the definition of "admin".
   backend explicitly provides. Threat model T2 is amended accordingly.
 - Permission changes take effect on the next request; group changes don't
   revoke sessions.
+
+## Implementation notes (M17, approved 2026-11-25)
+
+Decisions the plan left open, approved with the M17 plan:
+
+1. **Escalation logic lives in core.** The guard capability declares where
+   users, groups and permissions live (`PermissionSchema`: models, codename
+   column, relationship names of each writable side). Core reads and locks
+   the association tables with its own many-to-many introspection
+   (ADR-0010). The backend only resolves accounts
+   (`PermissionBackend.resolve_accounts`). Core refuses to register a mapping
+   of a declared association table, or a writable many-to-many over one that
+   the schema does not declare. Renaming a permission's codename counts as
+   granting the new codename to its holders.
+2. **Removing links on the other side** when a record is deleted needs only
+   the delete permission on that record's model (removals never escalate).
+3. **Link counts** (`GET .../links`) leave out fields of models the admin may
+   not view.
+4. **Relations to models the admin may not view** are readonly for them:
+   `/meta` marks them readonly, and writing one is `422 extra_forbidden`,
+   before the existence check.
+5. **The SPA** shows one "Not found or no access" page for models missing
+   from `/meta` and for `403` answers.
+
+Also: creates reach the account guard (`WriteIntent.action == "create"`);
+`ModelUserBackend` provides its guard as `FlagAccountGuard` through
+`faststudio_capabilities`, and its private 0.1.1 guard methods are removed.

@@ -105,8 +105,8 @@ Residual risks (documented, accepted for v0.1):
 | Defaults of `unsupported` or sensitive-looking fields are not published; other scalar defaults and column comments are (documented). | `tests/unit/introspection/test_fields.py` |
 | `exclude`d fields never appear in metadata (checked on the whole serialized payload), list, retrieve or choices responses (relation labels use visible fields only, never `__str__`; lists load only displayed columns; label and choices queries go through the mapped entity so inheritance joins and discriminators apply), and cannot be configured as display, search, filter, ordering, readonly or label fields (which would turn search/sort into an oracle on hidden values, e.g. `password_hash`). Exclusion is column-based: another attribute mapped to an excluded column must be excluded too. Unknown `ModelAdmin` attributes fail registration, so a misspelled `exclude` cannot fail open. Visible fields with sensitive-looking names log a warning. | `tests/unit/test_model_admin_validation.py`, `tests/unit/schemas/test_contract.py`, `tests/integration/api/` |
 | Many-to-many fields are opt-in (`ModelAdmin.many_to_many`), limited to plain association tables with exact join conditions (the API writes the table directly), validated like the target primary key (distinct, at most `max_items`, every key must exist), replaced atomically in the write's transaction, and refused when the stored set is truncated. A lost race (duplicate pair, foreign-key violation) is 409, never 500. Reads use explicit bounded queries (no lazy loading) and chunked `IN` lists. | `tests/unit/introspection/test_many.py`, `tests/unit/test_many_to_many_options.py`, `tests/integration/api/test_many_to_many.py` (SQLite with foreign keys on and off, PostgreSQL) |
-| `can_create` / `can_edit` / `can_delete` enforced server-side (403, before reading the body), not only hidden in the UI. | `tests/integration/api/test_write.py` |
-| Account safety (ADR-0009): when the user model of `ModelUserBackend` is registered, an admin cannot change their own sign-in flags or delete their own row (409 `self_lockout`), and no write can remove the last active admin (409 `last_admin`). The last-admin check runs for every write that could remove an admin (decided from the request, not the possibly stale loaded row), locks the active admin rows (`FOR UPDATE`) and re-reads the remaining active admins with a locking read after the flush, in the same transaction, so concurrent removals cannot both succeed; the loser of a lock race gets 409, never 500. Other mappings of the user table are refused at `register()`. | `tests/unit/auth/test_account_guard.py`, `tests/unit/auth/test_account_guard_mappings.py`, `tests/integration/security/test_account_guard.py`, `tests/integration/security/test_account_guard_postgres.py` (PostgreSQL CI job: READ COMMITTED, REPEATABLE READ, SERIALIZABLE), `tests/unit/api/test_db_errors.py` |
+| `can_create` / `can_edit` / `can_delete` enforced server-side (403, before reading the body), not only hidden in the UI. With a permission backend the permission is needed too (T9). | `tests/integration/api/test_write.py`, `tests/integration/security/test_authorization.py` |
+| Account safety (ADR-0009; public `FlagAccountGuard` since ADR-0011): when the user model of `ModelUserBackend` is registered, an admin cannot change their own sign-in flags or delete their own row (409 `self_lockout`), and no write can remove the last active admin (409 `last_admin`). The last-admin check runs for every write that could remove an admin (decided from the request, not the possibly stale loaded row), locks the active admin rows (`FOR UPDATE`) and re-reads the remaining active admins with a locking read after the flush, in the same transaction, so concurrent removals cannot both succeed; the loser of a lock race gets 409, never 500. Other mappings of the user table are refused at `register()`. | `tests/unit/auth/test_account_guard.py`, `tests/unit/auth/test_account_guard_mappings.py`, `tests/integration/security/test_account_guard.py`, `tests/integration/security/test_account_guard_postgres.py` (PostgreSQL CI job: READ COMMITTED, REPEATABLE READ, SERIALIZABLE), `tests/unit/api/test_db_errors.py` |
 | Integrity errors return 409, data errors 422, other database errors 500, all with generic messages; FastStudio logs only the exception types (never SQL or parameters), also for unhandled database errors on reads. Error `details` are typed (`ValidationIssue`: `loc`, `msg`, `type` only) so a handler cannot echo submitted values. | `tests/unit/schemas/test_contract.py`, `tests/integration/api/test_write.py` |
 
 ### T6. Cross-site scripting
@@ -142,6 +142,33 @@ build backend; publishing to PyPI needs the `pypi` environment (required
 reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
 `starlette>=0.49.1` excludes the Range-header DoS (CVE-2025-62727).
 
+### T9. Authorization (ADR-0011)
+
+Attacker: a signed-in admin with limited permissions who tries to read or
+change models they were not granted, or to grant themselves (or an
+accomplice) more than they hold. Without a permission backend every admin
+holds every permission (v0.1 behaviour, 0 extra queries).
+
+| Control | Tests |
+|---|---|
+| Permissions are resolved once per request through the backend's optional, namespaced `faststudio_capabilities` (validated at startup; nothing else on a backend is inspected; a backend still implementing 0.1.1's private guard methods fails startup instead of silently losing its guard). A malformed result is a 500, never a guess. | `tests/unit/auth/test_capabilities.py`, `tests/integration/security/test_authorization.py` |
+| Every model route resolves permissions and asks the `ModelAdmin` hooks before reading the body: list and retrieve need view, choices need create or edit on the model and view on the target, writes need their action (object-level for edit and delete), link counts need delete. A hook allows only by returning `True`; an exception is a 500. A test enumerates the mounted routes and fails if one does not resolve permissions; a matrix covers route × user × missing permission. | `tests/integration/security/test_authorization.py` |
+| `/meta` lists only viewable models. An object-level view refusal answers 404 like a missing record (no existence oracle); edit and delete refusals answer 403 (the record is already known from retrieve). | `tests/integration/security/test_authorization.py` |
+| Related models (A1): labels of foreign keys and many-to-many keys whose target the admin cannot view fall back to the key and run no query; `/meta` hides the target and marks the field readonly; writing such a field is refused like a readonly field (422 `extra_forbidden`, before the existence check), so an admin cannot probe which keys exist in a denied model. Link counts leave out fields of hidden models. | `tests/integration/security/test_authorization.py` |
+| Create without view returns a minimal `Row` (primary key and the submitted fields): no labels or server-generated values of a model the admin may not view. | `tests/integration/security/test_authorization.py` |
+| **Escalation rules**, enforced by core on create, update and delete for admins who do not hold `ALL`, before the account guard (403): only `ALL` may change the superuser-like flag or edit or delete an account holding `ALL`; the codenames a write could give anyone (user and group grants, membership, reverse sides, renaming a permission) must be held by the actor. Computed from the write's intent with a conservative closed form (fixed number of queries), after the record lock and with the affected group and user rows locked `FOR UPDATE` in primary-key order. Registering a mapping of a permission association table, or a writable many-to-many over one that the backend's `PermissionSchema` does not declare, fails at `register()`. | `tests/integration/security/test_escalation.py` (SQLite, PostgreSQL), `tests/unit/auth/test_permission_schema.py` |
+| Query budget: 0 extra queries without a permission backend or for superusers, exactly 1 otherwise, independent of the number of models and hooks; escalation checks add queries only on writes to users, groups and permissions. | `tests/integration/api/test_query_budget.py`, `tests/integration/security/test_authorization.py` |
+
+**Object-level hooks do not filter lists or choices.** `has_view_permission(request, obj)`
+hides a record from retrieve only; rows still appear in lists and choices
+until a list-query hook exists (v0.3). Do not rely on it to hide rows.
+
+Model identities are not secret: a model the admin may not view answers 403,
+an unknown one 404. Deleting a record needs only the delete permission on its
+model, also when it removes many-to-many links that other models' fields hold
+(removals never escalate). Permission changes take effect on the next
+request; they do not end sessions.
+
 ## Known limitations (v0.1.0)
 
 - A repeated session or CSRF cookie is refused (T3). Besides a sibling
@@ -169,10 +196,11 @@ reviewer, `v*` tags only). Minimum dependency versions are tested in CI;
   once.
   Planned: an idle timeout and "sign out everywhere" in v0.2, and a
   server-side session store with per-session revocation in v0.3.
-- No granular permissions: every admin can access every registered model.
+- Without a permission backend every admin can access every registered
+  model; object-level permission hooks do not filter lists or choices (T9).
 - The account-safety guard (ADR-0009) only covers writes through the admin
-  API with `ModelUserBackend`. Custom `AuthBackend`s are unprotected until
-  they implement the capability (public in v0.2). Host code, direct database
+  API, with `ModelUserBackend` or a backend that provides the
+  `account_guard` capability (for example `FlagAccountGuard`). Host code, direct database
   changes, and database-only `ON DELETE CASCADE` foreign keys from other
   tables (no ORM relationship, so the delete check cannot see them) can still
   remove the last admin; recover with `restore_admin.py`
