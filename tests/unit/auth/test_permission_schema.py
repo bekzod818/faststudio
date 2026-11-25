@@ -375,3 +375,36 @@ async def test_the_target_account_is_re_read_under_lock(auth_db: Any) -> None:
                 added={},
             )
         assert refused.value.status_code == 403
+
+
+async def test_a_target_deleted_meanwhile_is_a_conflict(auth_db: Any) -> None:
+    """The locked re-read finds no row: a lost race is 409, never 500."""
+    from sqlalchemy import delete  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from faststudio.api._escalation import check_escalation  # noqa: PLC0415
+    from faststudio.api.errors import ApiError  # noqa: PLC0415
+    from faststudio.auth.guard import WriteIntent  # noqa: PLC0415
+
+    capabilities = BackendCapabilities(
+        account_guard=FlagAccountGuard(AuthUser, "id", ("is_active",)),
+        permissions=PermBackend(),
+    )
+    registered: Any = SimpleNamespace(model=AuthUser, pk_field="id")
+    async with AsyncSession(auth_db) as session:
+        loaded = await session.get(AuthUser, 1)
+        await session.commit()
+        async with auth_db.begin() as conn:  # a concurrent delete
+            await conn.execute(delete(AuthUser).where(AuthUser.id == 1))
+        intent = WriteIntent(model=AuthUser, obj=loaded, action="update", changes={"username": "x"})
+        with pytest.raises(ApiError) as refused:
+            await check_escalation(
+                session,
+                capabilities=capabilities,
+                rules=None,
+                actor=frozenset({"users.edit"}),
+                registered=registered,
+                intent=intent,
+                added={},
+            )
+        assert (refused.value.status_code, refused.value.code) == (409, "conflict")

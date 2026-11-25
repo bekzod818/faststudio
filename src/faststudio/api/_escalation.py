@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from sqlalchemy import Column, select
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapper
 
@@ -391,7 +392,10 @@ async def check_escalation(
             # Lock the account and re-read it: a concurrent promotion must not be
             # judged from the copy loaded before any lock (no-op lock on SQLite,
             # where the write lock serializes writers).
-            await session.refresh(intent.obj, with_for_update=True)
+            try:
+                await session.refresh(intent.obj, with_for_update=True)
+            except InvalidRequestError:  # deleted by a concurrent request: a lost race
+                raise ApiError(409, "conflict") from None
         flag = guard.admin_flag(registered.model)
         if flag is not None and flag in intent.changes:
             value = intent.changes[flag]
