@@ -22,7 +22,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from sqlalchemy import Column, select
+from sqlalchemy import Column, UniqueConstraint, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,6 +144,12 @@ class EscalationRules:
             )
             raise ConfigurationError(msg)
         codename = _mapper(models["permission"]).columns.get(schema.codename_field)
+        if codename is not None and not _is_unique(codename):
+            msg = (
+                f"PermissionSchema.codename_field {schema.codename_field!r} must be unique "
+                f"(unique=True or a unique index on {models['permission'].__name__})."
+            )
+            raise ConfigurationError(msg)
         if codename is None:
             msg = (
                 f"PermissionSchema.codename_field {schema.codename_field!r} is not a column "
@@ -359,6 +365,17 @@ def _ordered(keys: Iterable[object]) -> list[Any]:
         return sorted(distinct)
     except TypeError:  # pragma: no cover - single-column keys of one model compare
         return sorted(distinct, key=repr)
+
+
+def _is_unique(column: Column[Any]) -> bool:
+    """Return True if a unique constraint or index covers exactly `column`."""
+    if column.unique or (column.primary_key and len(column.table.primary_key.columns) == 1):
+        return True
+    table = column.table
+    for constraint in table.constraints:
+        if isinstance(constraint, UniqueConstraint) and list(constraint.columns) == [column]:
+            return True
+    return any(bool(index.unique) and list(index.columns) == [column] for index in table.indexes)
 
 
 def _mapper(model: type[Any]) -> Mapper[Any]:
