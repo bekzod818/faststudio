@@ -1,4 +1,4 @@
-import { LogOut } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useNavigation } from "react-router-dom";
 
@@ -79,6 +79,15 @@ export function Layout() {
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2">
           <span className="text-sm text-muted-foreground">{me.data?.user.username}</span>
+          {meta.data?.capabilities.change_password === true && (
+            <NavLink
+              to="/account/password"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm hover:bg-muted"
+            >
+              <KeyRound aria-hidden className="size-4" />
+              Change password
+            </NavLink>
+          )}
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={signOut} disabled={logout.isPending}>
             <LogOut aria-hidden className="size-4" />

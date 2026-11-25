@@ -69,6 +69,7 @@ addressed; avoid them as natural keys.
 |---|---|---|---|---|
 | POST | `/auth/login` | – | yes (anonymous token) | 200 `{user}` + cookies |
 | POST | `/auth/logout` | yes | yes | 204 |
+| POST | `/auth/password` | yes | yes | 204 + new session and CSRF cookies |
 | GET | `/auth/me` | yes | – | 200 `{user}` |
 | GET | `/meta` | yes | – | 200 `MetaResponse` |
 | GET | `/models/{identity}/items` | yes | – | 200 `ListResponse` |
@@ -78,6 +79,7 @@ addressed; avoid them as natural keys.
 | DELETE | `/models/{identity}/items/{pk}` | yes | yes | 204 |
 | GET | `/models/{identity}/fields/{field}/choices` | yes | – | 200 `ChoicesResponse` |
 | GET | `/models/{identity}/items/{pk}/links` | yes | – | 200 `LinkCountsResponse` |
+| POST | `/models/{identity}/items/{pk}/password` | yes | yes | 204 |
 
 ### List query parameters
 
@@ -154,6 +156,29 @@ body is read:
   accounts or groups may deadlock; the loser gets `409 conflict`.
 - **Object-level hooks do not filter lists or choices** (v0.3 adds a
   list-query hook).
+
+### Passwords
+
+Both endpoints exist only when the auth backend provides the `accounts`
+capability with `password_endpoints` (otherwise `404`);
+`MetaResponse.capabilities.change_password` and
+`ModelMeta.account.set_password` say whether they are available. Bodies are
+strict (`extra="forbid"`, at most 1024 characters per password) and never
+echo a password.
+
+- `POST /auth/password` `{current_password, new_password}` changes the
+  signed-in admin's password. Each attempt counts against the login rate
+  limiters (`429` with `Retry-After` when exhausted). A wrong current
+  password is `422` at `["current_password"]`; a refused new password is
+  `422` at `["new_password"]` with one issue per reason (`type: "password"`),
+  including reusing the current password. On success (`204`) every other
+  session of the account is signed out, and the response sets a new session
+  cookie and a CSRF cookie bound to it.
+- `POST /models/{identity}/items/{pk}/password` `{new_password}` sets
+  another account's password (`204`; that account is signed out
+  everywhere). Only for the model holding the admin accounts (`404`
+  otherwise); needs every permission (`403`, checked before the record is
+  looked up); never for one's own account (`403`; use `/auth/password`).
 
 ### Choices
 
@@ -291,7 +316,8 @@ for create without view; see Authorization).
     // record cannot be deleted (the server answers 409 self_lockout).
     // admin_flag: the superuser-like flag only an admin holding every
     // permission may change (403 otherwise); null when not shown.
-    "account": { "protected_fields": ["is_active", "is_admin"], "admin_flag": "is_admin" }
+    "account": { "protected_fields": ["is_active", "is_admin"], "admin_flag": "is_admin",
+                 "set_password": false }
   }]
 }
 

@@ -59,6 +59,14 @@ function createRuntime(config: AppConfig) {
                   Component: (await import("@/features/record/RecordPages")).RecordRoute,
                 }),
               },
+              {
+                path: "account/password",
+                errorElement: <RouteError />,
+                lazy: async () => ({
+                  Component: (await import("@/features/account/ChangePasswordPage"))
+                    .ChangePasswordPage,
+                }),
+              },
               { path: "*", element: <NotFoundPage /> },
             ],
           },

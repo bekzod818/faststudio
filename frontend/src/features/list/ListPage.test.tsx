@@ -17,6 +17,7 @@ const META: MetaResponse = {
   title: "Admin",
   show_powered_by: true,
   user: { id: "1", username: "admin" },
+  capabilities: { change_password: false, sign_out_everywhere: false },
   models: [model],
 };
 

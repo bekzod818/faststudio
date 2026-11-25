@@ -9,6 +9,7 @@ import {
 import type { QueryParams } from "./client";
 
 import type {
+  ChangePasswordRequest,
   ChoicesResponse,
   JsonValue,
   LinkCountsResponse,
@@ -16,6 +17,7 @@ import type {
   LoginRequest,
   MetaResponse,
   Row,
+  SetPasswordRequest,
   UserResponse,
 } from "./contract.gen";
 import { useApi } from "./context";
@@ -218,6 +220,22 @@ export function useLogin() {
  * data with {@link useForgetSession}; clearing while the layout is still
  * mounted would make its queries refetch (and 401).
  */
+/** Change the signed-in admin's password (`POST /auth/password`, 204). */
+export function useChangePassword() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (body: ChangePasswordRequest) => api.post("/auth/password", body),
+  });
+}
+
+/** Set another account's password (`POST .../items/{pk}/password`, 204). */
+export function useSetPassword(identity: string, pk: string) {
+  const api = useApi();
+  return useMutation({
+    mutationFn: (body: SetPasswordRequest) => api.post(`${itemPath(identity, pk)}/password`, body),
+  });
+}
+
 export function useLogout() {
   const api = useApi();
   return useMutation({ mutationFn: () => api.post("/auth/logout") });
