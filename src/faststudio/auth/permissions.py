@@ -12,6 +12,8 @@ from faststudio.exceptions import ConfigurationError
 if TYPE_CHECKING:
     from faststudio.api._context import AdminContext
 
+__all__ = ["has_perm"]
+
 #: `request.state` attribute caching the signed-in user's permissions.
 _STATE_KEY = "faststudio_permissions"
 

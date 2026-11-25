@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapper
 
 from faststudio.auth.backend import AuthenticatedUser
-from faststudio.auth.capabilities import PermissionSchema
 from faststudio.exceptions import ConfigurationError
 
 __all__ = [
@@ -97,10 +96,6 @@ class AccountGuard(Protocol):
         """
         ...
 
-    def permission_schema(self) -> PermissionSchema | None:
-        """Return where users, groups and permissions are stored, if the backend has them."""
-        ...
-
     async def before_write(
         self, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
     ) -> PostWriteCheck | None:
@@ -133,7 +128,6 @@ class FlagAccountGuard:
         flags: Sequence[str],
         *,
         admin_flag: str | None = None,
-        schema: PermissionSchema | None = None,
     ) -> None:
         """Validate the model, its primary key and the flag columns.
 
@@ -163,7 +157,6 @@ class FlagAccountGuard:
         self._pk_field: str = pk_field
         self._flags: tuple[str, ...] = tuple(flags)
         self._admin_flag: str | None = admin_flag
-        self._schema: PermissionSchema | None = schema
 
     def _active_admin(self) -> ColumnElement[bool]:
         """Return the SQL condition for rows that may sign in (every flag is true)."""
@@ -183,10 +176,6 @@ class FlagAccountGuard:
     def admin_flag(self, model: type[Any]) -> str | None:
         """Return the superuser-like flag for guarded models."""
         return self._admin_flag if self.guards(model) else None
-
-    def permission_schema(self) -> PermissionSchema | None:
-        """Return the permission schema given at construction, if any."""
-        return self._schema
 
     def check_model(self, model: type[Any]) -> None:
         """Refuse other mappings of the user table: their writes could not be checked."""

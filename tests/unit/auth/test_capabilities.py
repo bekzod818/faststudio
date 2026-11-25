@@ -155,10 +155,14 @@ def test_capabilities_must_be_the_dataclass(
         _admin(app, engine, secret_key, backend)
 
 
-def test_valid_permissions_are_kept(app: FastAPI, engine: AsyncEngine, secret_key: str) -> None:
+def test_valid_permissions_are_kept(
+    app: FastAPI, engine: AsyncEngine, secret_key: str, caplog: pytest.LogCaptureFixture
+) -> None:
     resolver = _Resolver()
     backend = _backend(faststudio_capabilities=BackendCapabilities(permissions=resolver))
-    assert _admin(app, engine, secret_key, backend)._capabilities.permissions is resolver
+    with caplog.at_level("WARNING", logger="faststudio"):
+        assert _admin(app, engine, secret_key, backend)._capabilities.permissions is resolver
+    assert "no permission_schema: grants edited in the admin" in caplog.text
 
 
 # --------------------------------------------------------------------------- FlagAccountGuard
@@ -190,3 +194,22 @@ async def test_creating_an_account_never_locks_anyone_out() -> None:
     session: Any = None  # never touched for creates
     assert await guard.before_write(session, user, intent) is None
     assert guard.protected_fields(Team) == ("is_active", "is_admin")
+
+
+def test_legacy_methods_next_to_capabilities_are_reported(
+    app: FastAPI, engine: AsyncEngine, secret_key: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ModelUserBackend subclass overriding the removed methods: they are never called."""
+
+    class Legacy(ModelUserBackend):
+        async def before_write(self, *args: object) -> None:
+            del args
+
+    with caplog.at_level("WARNING", logger="faststudio"):
+        _admin(app, engine, secret_key, Legacy(AdminUser))
+    assert "Legacy defines before_write, which FastStudio no longer calls" in caplog.text
+
+
+def test_capability_dataclasses_are_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        BackendCapabilities(None, None)  # type: ignore[call-arg]

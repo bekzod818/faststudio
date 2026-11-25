@@ -95,6 +95,7 @@ USERS: dict[str, tuple[str, ...]] = {
     "creator": ("docs.create",),  # create without view (API only)
     "full_creator": ("docs.create", "docs.view", "folders.view", "badges.view"),
     "deleter": ("docs.delete",),  # delete without view (API only)
+    "curator": ("docs.view", "docs.delete"),
     "nobody": (),
 }
 GROUPED = "member"  # holds docs.view through a group
@@ -601,3 +602,13 @@ async def test_guard_checks_run_on_create_too(
     assert seen == ["create"]
     async with AsyncSession(db) as session:
         assert await session.scalar(select(func.count()).select_from(Doc)) == 4
+
+
+async def test_writes_to_records_hidden_from_retrieve_are_404(sign_in: SignIn) -> None:
+    """The object-level view hook applies to edit, delete and link counts too."""
+    editor = await sign_in("editor")
+    assert (await editor.patch("/models/docs/items/3", {})).status_code == 404
+    curator = await sign_in("curator")
+    assert (await curator.get("/models/docs/items/3/links")).status_code == 404
+    assert (await curator.delete("/models/docs/items/3")).status_code == 404
+    assert (await curator.delete("/models/docs/items/1")).status_code == 204

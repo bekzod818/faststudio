@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Table,
     cast,
+    literal,
     null,
     select,
     union,
@@ -162,9 +163,9 @@ class PermBackend:
                 "id",
                 ("is_active", "is_superuser"),
                 admin_flag="is_superuser",
-                schema=SCHEMA,
             ),
             permissions=self,
+            permission_schema=SCHEMA,
         )
 
     @property
@@ -221,14 +222,20 @@ class PermBackend:
         superusers = select(
             AuthUser.id.label("uid"), cast(null(), String(100)).label("codename")
         ).where(AuthUser.id.in_(keys), AuthUser.is_superuser.is_(True))
-        rows = (await session.execute(union(direct, grouped, superusers))).all()
+        # Every existing account gets an entry, also without any codename.
+        existing = select(
+            AuthUser.id.label("uid"), literal("", String(100)).label("codename")
+        ).where(AuthUser.id.in_(keys))
+        rows = (await session.execute(union(direct, grouped, superusers, existing))).all()
         result: dict[object, Permissions] = {}
         found: dict[Any, set[str]] = {}
         for uid, codename in rows:
             if codename is None:
                 result[uid] = ALL
-            else:
+            elif codename:
                 found.setdefault(uid, set()).add(codename)
+            else:
+                found.setdefault(uid, set())
         for uid, codenames in found.items():
             result.setdefault(uid, frozenset(codenames))
         return result

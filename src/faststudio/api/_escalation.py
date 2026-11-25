@@ -77,25 +77,27 @@ class EscalationRules:
     #: Relationship name on its side's model -> (kind, link).
     links: Mapping[Side, Mapping[str, tuple[Kind, ManyToManyLink]]]
     codename: Column[Any]
+    #: Mapped attribute holding the codename (may differ from the column name).
+    codename_attr: str = ""
     #: Association tables of the declared relationships (never registrable).
     tables: frozenset[Any] = field(default_factory=frozenset)
 
     @classmethod
     def from_capabilities(cls, capabilities: BackendCapabilities) -> EscalationRules | None:
-        """Validate the guard's `PermissionSchema` at startup (None without one).
+        """Validate `BackendCapabilities.permission_schema` at startup (None without one).
 
         Raises:
             ConfigurationError: on a relationship that is missing, not a plain
                 many-to-many or not between the declared models, an unknown
-                codename column, or a schema without a permission backend.
+                codename column, a schema without a permission backend, or an
+                account guard that does not cover the schema's user model.
 
         """
-        guard = capabilities.account_guard
-        schema: object = guard.permission_schema() if guard is not None else None
+        schema: object = capabilities.permission_schema
         if schema is None:
             return None
         if not isinstance(schema, PermissionSchema):  # untyped backends
-            msg = "AccountGuard.permission_schema() must return a PermissionSchema or None."
+            msg = "BackendCapabilities.permission_schema must be a PermissionSchema or None."
             raise ConfigurationError(msg)
         if capabilities.permissions is None:
             msg = "A PermissionSchema needs BackendCapabilities.permissions to resolve accounts."
@@ -136,7 +138,21 @@ class EscalationRules:
                 f"of {models['permission'].__name__}."
             )
             raise ConfigurationError(msg)
-        return cls(models=models, links=links, codename=codename, tables=frozenset(tables))
+        guard = capabilities.account_guard
+        if guard is None or not guard.guards(schema.user_model):
+            # "An account holding ALL" and resolve_accounts() keys refer to that model.
+            msg = (
+                "A PermissionSchema needs BackendCapabilities.account_guard covering its "
+                "user_model, so accounts holding every permission are protected."
+            )
+            raise ConfigurationError(msg)
+        return cls(
+            models=models,
+            links=links,
+            codename=codename,
+            codename_attr=schema.codename_field,
+            tables=frozenset(tables),
+        )
 
     def side_of(self, model: type[Any]) -> Side | None:
         """Return which side `model` is (a mapped subclass counts)."""
@@ -156,6 +172,16 @@ class EscalationRules:
 
         """
         mapper = sa_inspect(registered.model)
+        for side_model in self.models.values():
+            side_mapper = _mapper(side_model)
+            if set(mapper.tables) & set(side_mapper.tables) and not mapper.isa(side_mapper):
+                msg = (
+                    f"{registered.model.__name__} maps a table of {side_model.__name__}, which "
+                    "the backend's PermissionSchema declares. Register "
+                    f"{side_model.__name__} (or a subclass) instead, so the escalation rules "
+                    "apply to its writes (ADR-0011)."
+                )
+                raise ConfigurationError(msg)
         if set(mapper.tables) & self.tables:
             msg = (
                 f"{registered.model.__name__} maps a permission association table; writes "
@@ -180,7 +206,7 @@ class EscalationRules:
         """Lock rows of one side in primary-key order (no-op on SQLite)."""
         model = self.models[side]
         pk = _mapper(model).primary_key[0]
-        ordered = sorted(set(keys), key=repr)
+        ordered = _ordered(keys)
         for chunk in chunks(ordered):
             await session.execute(
                 select(pk).where(pk.in_(chunk)).order_by(pk).with_for_update(),
@@ -192,7 +218,7 @@ class EscalationRules:
         model = self.models["permission"]
         pk = _mapper(model).primary_key[0]
         found: set[str] = set()
-        for chunk in chunks(sorted(set(keys), key=repr)):
+        for chunk in chunks(_ordered(keys)):
             rows = await session.scalars(
                 select(self.codename).where(pk.in_(chunk)), bind_arguments=bind_to(model)
             )
@@ -213,7 +239,7 @@ class EscalationRules:
             group_fk, permission_fk = link.local_fk, link.remote_fk
         permission = self.models["permission"]
         pk = _mapper(permission).primary_key[0]
-        for chunk in chunks(sorted(set(groups), key=repr)):
+        for chunk in chunks(_ordered(groups)):
             rows = await session.scalars(
                 select(self.codename)
                 .join(link.secondary, permission_fk == pk)
@@ -252,8 +278,8 @@ class EscalationRules:
         gains: set[str] = set()
 
         if side == "permission":
-            current = None if pk is None else getattr(intent.obj, self.codename.key)
-            new = intent.changes.get(self.codename.key, current)
+            current = None if pk is None else getattr(intent.obj, self.codename_attr)
+            new = intent.changes.get(self.codename_attr, current)
             renamed = pk is not None and new != current
             if renamed and isinstance(new, str):
                 gains.add(new)  # everyone holding this permission now holds `new`
@@ -309,6 +335,15 @@ async def _new_for(
     return gained
 
 
+def _ordered(keys: Iterable[object]) -> list[Any]:
+    """Distinct primary keys in key order (locks are taken in this order), else by repr."""
+    distinct: list[Any] = list(set(keys))
+    try:
+        return sorted(distinct)
+    except TypeError:  # pragma: no cover - single-column keys of one model compare
+        return sorted(distinct, key=repr)
+
+
 def _mapper(model: type[Any]) -> Mapper[Any]:
     mapper = sa_inspect(model, raiseerr=False)
     if not isinstance(mapper, Mapper):
@@ -352,6 +387,11 @@ async def check_escalation(
         return  # holds everything (always so without a permission backend)
     guard = capabilities.account_guard
     if guard is not None and guard.guards(registered.model):
+        if intent.action != "create":
+            # Lock the account and re-read it: a concurrent promotion must not be
+            # judged from the copy loaded before any lock (no-op lock on SQLite,
+            # where the write lock serializes writers).
+            await session.refresh(intent.obj, with_for_update=True)
         flag = guard.admin_flag(registered.model)
         if flag is not None and flag in intent.changes:
             value = intent.changes[flag]
@@ -361,8 +401,10 @@ async def check_escalation(
                 raise _forbidden()
         if intent.action != "create":
             pk = getattr(intent.obj, registered.pk_field)
-            target = (await backend.resolve_accounts(session, [pk])).get(pk)
-            if isinstance(target, AllPermissions):
+            accounts = await backend.resolve_accounts(session, [pk])
+            # Fail closed: an account the backend does not report (e.g. keys of
+            # another type) could be one holding ALL.
+            if pk not in accounts or isinstance(accounts[pk], AllPermissions):
                 raise _forbidden()
     if rules is None:
         return

@@ -199,8 +199,9 @@ class ArticleAdmin(ModelAdmin, model=Article):
   classmethod.
 - **`faststudio.has_perm(request, codename)`** checks one codename. The
   permissions were resolved once for the request, so it runs no query.
-- **Object-level checks** (`obj`) run on retrieve (a refusal is a 404), edit
-  and delete (403). **They do not filter lists or choices**: do not rely on
+- **Object-level checks** (`obj`) run on retrieve, edit and delete. A record
+  `has_view_permission(request, obj)` refuses is a 404 for all three (and for
+  its link counts); an edit or delete refusal of a visible record is a 403. **They do not filter lists or choices**: do not rely on
   them to hide rows (a list-query hook is planned for v0.3).
 - **Related models:** an admin who may not view a model sees its keys instead
   of labels in other models' fields, cannot open its choices, and cannot set
@@ -211,7 +212,13 @@ class ArticleAdmin(ModelAdmin, model=Article):
 **Writing a permission backend.** Return a `BackendCapabilities` from a
 `faststudio_capabilities` property. `permissions` resolves a user to `ALL` or
 a frozenset of codenames (`resolve`, once per request; `resolve_accounts`, for
-the escalation rules). Keep it to one query; return `ALL` for superusers.
+the escalation rules). Keep each to one query and return `ALL` for
+superusers. `resolve_accounts` must return an entry for every requested
+account that exists, keyed by the same values (an account it leaves out is
+treated as possibly holding `ALL` and cannot be edited by others).
+`permission_schema` tells FastStudio where users, groups and permissions are
+stored; **without it, grants edited in the admin are not checked** (startup
+logs a warning).
 
 ```python
 from faststudio import ALL, BackendCapabilities, FlagAccountGuard
@@ -227,17 +234,17 @@ class MyBackend:
                 "id",
                 ("is_active", "is_superuser"),
                 admin_flag="is_superuser",
-                schema=PermissionSchema(
-                    user_model=User,
-                    permission_model=Permission,
-                    codename_field="codename",
-                    user_permissions="permissions",
-                    group_model=Group,
-                    user_groups="groups",
-                    group_permissions="permissions",
-                ),
             ),
             permissions=self,
+            permission_schema=PermissionSchema(
+                user_model=User,
+                permission_model=Permission,
+                codename_field="codename",
+                user_permissions="permissions",
+                group_model=Group,
+                user_groups="groups",
+                group_permissions="permissions",
+            ),
         )
 
     async def resolve(self, session, user): ...
@@ -252,7 +259,8 @@ from either side of a relationship. The check is deliberately conservative:
 adding a codename the admin lacks to a group is refused even if every member
 already holds it. Declare every writable side in the `PermissionSchema`:
 registering a writable many-to-many over a declared association table that
-the schema does not name fails at `register()`.
+the schema does not name, or another mapping of a declared table (an alias of
+the permission table, say), fails at `register()`.
 
 A backend that still implements 0.1.1's private guard methods (`guards`,
 `before_write`, `check_model`) without `faststudio_capabilities` fails at

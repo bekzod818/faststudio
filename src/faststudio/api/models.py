@@ -117,6 +117,10 @@ async def item_links(
     """
     await require(request, registered, "delete")
     obj = await load_or_404(session, registered, pk)
+    if registered.identity in await viewable(request) and not await allowed(
+        request, registered, "view", obj
+    ):
+        raise ApiError(404, "not_found")  # hidden from retrieve, so hidden here too
     await require(request, registered, "delete", obj)
     registry = get_context(request).registry
     pk_value = getattr(obj, registered.pk_field)

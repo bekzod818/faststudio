@@ -53,8 +53,10 @@ listed under **Changed** or **Removed** with migration notes.
   without `faststudio_capabilities` fail at startup instead of silently
   losing their guard. `ModelUserBackend` provides its guard through
   `faststudio_capabilities`; its private `guards`, `before_write`,
-  `check_model` and `protected_fields` methods are gone. Creates now reach
-  the account guard (`WriteIntent.action == "create"`).
+  `check_model` and `protected_fields` methods are gone, so a subclass that
+  overrode them must move its rules into an `AccountGuard` (startup logs a
+  warning while such methods exist). Creates now reach the account guard
+  (`WriteIntent.action == "create"`).
 - Deleting a record removes the links of its opted-in many-to-many fields,
   and of opted-in fields of other models pointing at it, instead of
   answering `409`. Relationships that are not opted in behave as before.

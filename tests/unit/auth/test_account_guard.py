@@ -89,7 +89,7 @@ def test_model_user_backend_provides_a_flag_account_guard() -> None:
     assert not guard.guards(Team)
     assert guard.admin_flag(AdminUser) == "is_admin"
     assert guard.admin_flag(Team) is None
-    assert guard.permission_schema() is None
+    assert backend.faststudio_capabilities.permission_schema is None
     assert guard_of(ModelUserBackend(AdminUser, is_admin_field=None)).admin_flag(AdminUser) is None
 
 

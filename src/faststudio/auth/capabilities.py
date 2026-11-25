@@ -94,13 +94,18 @@ class PermissionBackend(Protocol):
     ) -> Mapping[object, Permissions]:
         """Return the current permissions of the accounts with primary keys `keys`.
 
-        Used by the escalation rules to check the accounts a write affects.
-        Missing keys may be left out (they hold nothing).
+        `keys` are primary keys of the model the account guard covers (the
+        user model). Used by the escalation rules to check the accounts a
+        write affects, including "the target holds `ALL`". Return an entry
+        (possibly an empty frozenset) for **every requested key that exists**,
+        keyed by the same values: an account left out is treated as possibly
+        holding `ALL` when it is the target of a write (refused), and as
+        holding nothing when it would gain permissions.
         """
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PermissionSchema:
     """Where a backend stores users, groups and permissions (ADR-0011 §6).
 
@@ -129,15 +134,22 @@ class PermissionSchema:
     permission_users: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class BackendCapabilities:
     """The capabilities an auth backend provides; every field is optional.
 
     Attributes:
         account_guard: Protects the accounts that can sign in (ADR-0009).
         permissions: Per-user permissions. Without it every admin holds `ALL`.
+        permission_schema: Where users, groups and permissions are stored, so
+            core can enforce the escalation rules on writes to them. Needs
+            `permissions`, and an `account_guard` that covers its user model.
+
+    New capabilities arrive as new optional fields (ADR-0011): the protocols
+    above are frozen once released.
 
     """
 
     account_guard: AccountGuard | None = None
     permissions: PermissionBackend | None = None
+    permission_schema: PermissionSchema | None = None

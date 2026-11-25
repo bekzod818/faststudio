@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from datetime import timedelta
 from pathlib import Path
 from typing import TypeVar, cast
@@ -34,6 +35,7 @@ from faststudio.security.rate_limit import (
 )
 
 _T = TypeVar("_T")
+logger = logging.getLogger("faststudio")
 _A = TypeVar("_A", bound=type[ModelAdmin])
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -103,6 +105,13 @@ class Admin:
         self._auth_backend = _validate_auth_backend(auth_backend)
         self._capabilities = _resolve_capabilities(self._auth_backend)
         self._escalation = EscalationRules.from_capabilities(self._capabilities)
+        if self._capabilities.permissions is not None and self._escalation is None:
+            logger.warning(
+                "%s provides permissions but no permission_schema: grants edited in the "
+                "admin (users, groups, permissions) are not checked by the escalation "
+                "rules. Declare a PermissionSchema (ADR-0011).",
+                type(auth_backend).__name__,
+            )
         self._settings: Settings = resolve_settings(
             secret_key=secret_key,
             title=title,
@@ -233,6 +242,16 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
             )
             raise ConfigurationError(msg)
         return BackendCapabilities()
+    legacy = [name for name in _LEGACY_GUARD_METHODS if callable(getattr(backend, name, None))]
+    if legacy:
+        # E.g. a subclass of ModelUserBackend overriding the removed 0.1.1 methods:
+        # they are never called, the guard from faststudio_capabilities is.
+        logger.warning(
+            "%s defines %s, which FastStudio no longer calls (0.1.1 private guard "
+            "protocol); the account guard comes from faststudio_capabilities (ADR-0011).",
+            type(backend).__name__,
+            ", ".join(legacy),
+        )
     if not isinstance(capabilities, BackendCapabilities):
         msg = "faststudio_capabilities must be a faststudio.BackendCapabilities instance."
         raise ConfigurationError(msg)
@@ -240,7 +259,7 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
         capabilities.account_guard,
         AccountGuard,
         "account_guard",
-        sync=("guards", "check_model", "protected_fields", "admin_flag", "permission_schema"),
+        sync=("guards", "check_model", "protected_fields", "admin_flag"),
         coroutines=("before_write",),
     )
     _check_protocol(

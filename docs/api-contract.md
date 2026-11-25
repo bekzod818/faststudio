@@ -130,11 +130,11 @@ body is read:
 | `GET /meta` | lists only models the admin may view; `permissions` gives `view`, `create`, `edit`, `delete` per model |
 | `GET items` | view |
 | `GET items/{pk}` | view; a record the object-level hook refuses answers **`404`**, like a missing one |
-| `GET items/{pk}/links` | delete (also on the record) |
+| `GET items/{pk}/links` | delete (also on the record); a record hidden from retrieve is `404` |
 | `GET fields/{field}/choices` | create or edit on the model, and view on the target |
 | `POST items` | create |
-| `PATCH items/{pk}` | edit (also on the record); `edit` implies `view` |
-| `DELETE items/{pk}` | delete (also on the record; `404` if it does not exist) |
+| `PATCH items/{pk}` | edit (also on the record); `edit` implies `view`; a record hidden from retrieve is `404` |
+| `DELETE items/{pk}` | delete (also on the record; `404` if it does not exist or is hidden from retrieve) |
 
 - **Related models the admin may not view** (A1): their labels fall back to
   the key (`labels`, `many_labels`), `/meta` gives the field no target
@@ -149,7 +149,9 @@ body is read:
   editing or deleting an account that holds every permission, and any write
   that could give anyone a permission the admin does not hold (grants, group
   membership, from either side, or renaming a permission) are `403
-  forbidden`, before the account guard. Removals are always allowed.
+  forbidden`, before the account guard. Removals are always allowed. The
+  checks lock the rows they read, so two concurrent writes to related
+  accounts or groups may deadlock; the loser gets `409 conflict`.
 - **Object-level hooks do not filter lists or choices** (v0.3 adds a
   list-query hook).
 

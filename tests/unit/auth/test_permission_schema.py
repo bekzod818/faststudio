@@ -27,10 +27,16 @@ from tests.factories.auth_models import (
 )
 
 
-def _capabilities(schema: object, *, permissions: bool = True) -> BackendCapabilities:
+def _capabilities(
+    schema: object, *, permissions: bool = True, guard: bool = True
+) -> BackendCapabilities:
     backend = PermBackend()
-    guard = FlagAccountGuard(AuthUser, "id", ("is_active",), schema=schema)  # type: ignore[arg-type]
-    return BackendCapabilities(account_guard=guard, permissions=backend if permissions else None)
+    account_guard = FlagAccountGuard(AuthUser, "id", ("is_active",))
+    return BackendCapabilities(
+        account_guard=account_guard if guard else None,
+        permissions=backend if permissions else None,
+        permission_schema=schema,  # type: ignore[arg-type]
+    )
 
 
 def test_the_test_schema_compiles() -> None:
@@ -77,8 +83,23 @@ def test_a_schema_needs_a_permission_backend() -> None:
         EscalationRules.from_capabilities(_capabilities(SCHEMA, permissions=False))
 
 
+def test_a_schema_needs_a_guard_covering_its_users() -> None:
+    with pytest.raises(ConfigurationError, match="account_guard covering its user_model"):
+        EscalationRules.from_capabilities(_capabilities(SCHEMA, guard=False))
+    other = dataclasses.replace(
+        SCHEMA,
+        user_model=Folder,
+        user_permissions=None,
+        user_groups=None,
+        group_users=None,
+        permission_users=None,
+    )
+    with pytest.raises(ConfigurationError, match="account_guard covering its user_model"):
+        EscalationRules.from_capabilities(_capabilities(other))
+
+
 def test_a_schema_must_be_the_dataclass() -> None:
-    with pytest.raises(ConfigurationError, match="must return a PermissionSchema"):
+    with pytest.raises(ConfigurationError, match="must be a PermissionSchema"):
         EscalationRules.from_capabilities(_capabilities({"user_model": AuthUser}))
 
 
@@ -224,3 +245,133 @@ async def test_without_a_schema_only_the_account_rules_apply(auth_db: Any) -> No
             intent=intent,
             added={},
         )
+
+
+# --------------------------------------------------------------------------- review fixes (M17)
+
+
+def test_other_mappings_of_declared_tables_are_refused(admin: Admin) -> None:
+    """An alias of the permission table would let codenames change unchecked."""
+
+    class Base(DeclarativeBase):
+        pass
+
+    class PermissionRow(Base):
+        __table__ = AuthPermission.__table__
+
+    alias = type("PermissionRowAdmin", (ModelAdmin,), {"identity": "rows"}, model=PermissionRow)
+    with pytest.raises(ConfigurationError, match="maps a table of AuthPermission"):
+        admin.register(alias)
+
+
+async def test_a_codename_attribute_named_unlike_its_column(auth_db: Any) -> None:
+    from sqlalchemy import Table as _Table  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+    from sqlalchemy.orm import column_property  # noqa: PLC0415
+
+    from faststudio.auth.guard import WriteIntent  # noqa: PLC0415
+    from tests.factories.auth_models import group_permissions  # noqa: PLC0415
+
+    class Base(DeclarativeBase):
+        pass
+
+    table: _Table = AuthPermission.__table__  # type: ignore[assignment]
+
+    class XPermission(Base):
+        __table__ = table
+        __mapper_args__ = {"exclude_properties": ["codename"]}  # noqa: RUF012
+        code = column_property(table.c.codename)
+        groups = relationship(AuthGroup, secondary=group_permissions, overlaps="groups,permissions")
+
+    schema = dataclasses.replace(
+        SCHEMA,
+        permission_model=XPermission,
+        codename_field="code",
+        user_permissions=None,
+        permission_users=None,
+        group_permissions=None,
+        permission_groups="groups",
+    )
+    rules = EscalationRules.from_capabilities(_capabilities(schema))
+    assert rules is not None
+    registered: Any = SimpleNamespace(model=XPermission, pk_field="id")
+    intent = WriteIntent(
+        model=XPermission, obj=XPermission(), action="create", changes={"code": "x.y"}
+    )
+    async with AsyncSession(auth_db) as session:
+        gains = await rules.gains(session, PermBackend(), registered, intent, {"groups": [1]})
+        assert gains == {"x.y"}
+        existing = await session.get(XPermission, 1)
+        renamed = WriteIntent(
+            model=XPermission, obj=existing, action="update", changes={"code": "users.edit"}
+        )
+        assert await rules.gains(session, PermBackend(), registered, renamed, {}) == {"users.edit"}
+
+
+async def test_an_account_the_backend_does_not_report_is_refused(auth_db: Any) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from faststudio.api._escalation import check_escalation  # noqa: PLC0415
+    from faststudio.api.errors import ApiError  # noqa: PLC0415
+    from faststudio.auth.guard import WriteIntent  # noqa: PLC0415
+
+    class StringKeys(PermBackend):
+        async def resolve_accounts(self, session: Any, keys: Any) -> Any:
+            return {str(key): frozenset() for key in keys}  # wrong key type
+
+    capabilities = BackendCapabilities(
+        account_guard=FlagAccountGuard(AuthUser, "id", ("is_active",)),
+        permissions=StringKeys(),
+    )
+    registered: Any = SimpleNamespace(model=AuthUser, pk_field="id")
+    async with AsyncSession(auth_db) as session:
+        user = await session.get(AuthUser, 1)
+        intent = WriteIntent(model=AuthUser, obj=user, action="update", changes={"username": "x"})
+        with pytest.raises(ApiError) as refused:
+            await check_escalation(
+                session,
+                capabilities=capabilities,
+                rules=None,
+                actor=frozenset({"users.edit"}),
+                registered=registered,
+                intent=intent,
+                added={},
+            )
+        assert refused.value.status_code == 403
+
+
+async def test_the_target_account_is_re_read_under_lock(auth_db: Any) -> None:
+    """A promotion committed after the record was loaded is seen by the check."""
+    from sqlalchemy import update  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from faststudio.api._escalation import check_escalation  # noqa: PLC0415
+    from faststudio.api.errors import ApiError  # noqa: PLC0415
+    from faststudio.auth.guard import WriteIntent  # noqa: PLC0415
+
+    capabilities = BackendCapabilities(
+        account_guard=FlagAccountGuard(AuthUser, "id", ("is_active",), admin_flag="is_superuser"),
+        permissions=PermBackend(),
+    )
+    registered: Any = SimpleNamespace(model=AuthUser, pk_field="id")
+    async with AsyncSession(auth_db) as session:
+        stale = await session.get(AuthUser, 1)
+        assert stale is not None
+        assert stale.is_superuser is False
+        await session.commit()  # end the read; the loaded copy stays stale
+        async with auth_db.begin() as conn:  # a concurrent promotion
+            await conn.execute(update(AuthUser).values(is_superuser=True))
+        intent = WriteIntent(
+            model=AuthUser, obj=stale, action="update", changes={"is_superuser": False}
+        )
+        with pytest.raises(ApiError) as refused:
+            await check_escalation(
+                session,
+                capabilities=capabilities,
+                rules=None,
+                actor=frozenset({"users.edit"}),
+                registered=registered,
+                intent=intent,
+                added={},
+            )
+        assert refused.value.status_code == 403

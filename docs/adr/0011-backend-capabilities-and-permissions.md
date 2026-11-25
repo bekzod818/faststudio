@@ -140,9 +140,13 @@ and the definition of "admin".
 
 Decisions the plan left open, approved with the M17 plan:
 
-1. **Escalation logic lives in core.** The guard capability declares where
-   users, groups and permissions live (`PermissionSchema`: models, codename
-   column, relationship names of each writable side). Core reads and locks
+1. **Escalation logic lives in core.** The backend declares where users,
+   groups and permissions live with `BackendCapabilities.permission_schema`
+   (`PermissionSchema`: models, codename attribute, relationship names of
+   each writable side). It needs `permissions` and an `account_guard` that
+   covers its user model. (§6 says "the guard capability declares"; after
+   the architect review the schema moved to `BackendCapabilities`, so the
+   account guard keeps only account-safety concerns such as `admin_flag`.) Core reads and locks
    the association tables with its own many-to-many introspection
    (ADR-0010). The backend only resolves accounts
    (`PermissionBackend.resolve_accounts`). Core refuses to register a mapping
@@ -162,3 +166,18 @@ Decisions the plan left open, approved with the M17 plan:
 Also: creates reach the account guard (`WriteIntent.action == "create"`);
 `ModelUserBackend` provides its guard as `FlagAccountGuard` through
 `faststudio_capabilities`, and its private 0.1.1 guard methods are removed.
+
+**Protocol evolution (approved 2026-11-25).** Released capability protocols
+(`AccountGuard`, `PermissionBackend`) are frozen: adding a member to a
+`runtime_checkable` protocol breaks every third-party implementation. New
+behaviour arrives as a new optional `BackendCapabilities` field, or as a
+method with a documented default that core probes for. `BackendCapabilities`
+and `PermissionSchema` are keyword-only dataclasses, so new fields with
+defaults are additive.
+
+**Security review fixes (M17).** Other mappings of the user, group and
+permission tables are refused at `register()`; the codename is read through
+its mapped attribute; an account `resolve_accounts` does not report counts
+as holding `ALL` when it is the target; the target account is re-read under
+a lock before the flag and `ALL` checks; the object-level view hook also
+applies to edit, delete and link counts (404).

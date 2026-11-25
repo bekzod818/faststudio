@@ -16,7 +16,7 @@ from sqlalchemy.exc import DataError, IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
-from faststudio.api._authz import require, resolve_permissions, viewable
+from faststudio.api._authz import allowed, require, resolve_permissions, viewable
 from faststudio.api._db_errors import is_lock_conflict
 from faststudio.api._deps import DbSession, ModelDep
 from faststudio.api._escalation import check_escalation
@@ -376,6 +376,18 @@ async def _writing(
         raise ApiError(500, "internal_error") from None
 
 
+async def _require_visible(request: Request, registered: RegisteredModel, obj: object) -> None:
+    """Answer 404 for a record the object-level view hook hides, as retrieve does.
+
+    Only asked when the admin may view the model: without view (create or
+    delete without view, A6) there is no record-level visibility to apply.
+    """
+    if registered.identity in await viewable(request) and not await allowed(
+        request, registered, "view", obj
+    ):
+        raise ApiError(404, "not_found")
+
+
 async def _guard(
     request: Request, session: AsyncSession, user: AuthenticatedUser, intent: WriteIntent
 ) -> PostWriteCheck | None:
@@ -425,6 +437,7 @@ async def update_item(
     """Change the writable fields sent in the body; primary keys never change."""
     await require(request, registered, "edit")
     obj = await load_or_404(session, registered, pk)
+    await _require_visible(request, registered, obj)
     await require(request, registered, "edit", obj)
     registry, visible = get_context(request).registry, await viewable(request)
     sent = await _validated(request, registered.update_schema)
@@ -469,6 +482,7 @@ async def delete_item(
     """
     await require(request, registered, "delete")
     obj = await load_or_404(session, registered, pk)
+    await _require_visible(request, registered, obj)
     await require(request, registered, "delete", obj)
     async with _writing(session, registered, "delete"):
         registry = get_context(request).registry
