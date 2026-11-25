@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 from sqlalchemy import (
@@ -25,10 +25,12 @@ from faststudio.auth.capabilities import BackendCapabilities
 from faststudio.auth.guard import FlagAccountGuard
 from faststudio.auth.passwords import (
     dummy_verify_async,
+    hash_password_async,
     is_password_hash,
     prepare_dummy_hash,
     verify_password_async,
 )
+from faststudio.auth.validators import DEFAULT_VALIDATORS, PasswordValidator
 from faststudio.exceptions import ConfigurationError
 from faststudio.introspection._columns import base_type, is_text, mapped_columns
 from faststudio.introspection._types import value_type
@@ -93,11 +95,19 @@ class ModelUserBackend:
         password_field: str = "password_hash",  # noqa: S107 - a column name, not a password
         is_active_field: str | None = "is_active",
         is_admin_field: str | None = "is_admin",
+        password_validators: Sequence[PasswordValidator] = DEFAULT_VALIDATORS,
+        password_endpoints: bool = False,
     ) -> None:
         """Validate the model and column names; raises `ConfigurationError` on mistakes.
 
         Pass ``is_admin_field=None`` to let every active user sign in (only if
         every user of that table is meant to be an administrator).
+
+        `password_validators` check new passwords set through FastStudio (CLI
+        and, when enabled, the HTTP endpoints). ``password_endpoints=True``
+        enables ``POST /auth/password`` and the set-password endpoint; it is
+        off because every admin of this backend holds every permission, so
+        any admin could then reset another admin's password.
         """
         candidate = cast("object", model)  # untyped callers can pass anything
         mapper: object = (
@@ -144,10 +154,28 @@ class ModelUserBackend:
             raise ConfigurationError(msg)
         self._parse_pk = parser
         flags = tuple(f for f in (self._is_active_field, self._is_admin_field) if f is not None)
+        validators = tuple(cast("Sequence[object]", password_validators))
+        if isinstance(cast("object", password_validators), str) or not all(
+            isinstance(v, PasswordValidator) for v in validators
+        ):
+            msg = "ModelUserBackend: password_validators must be a sequence of PasswordValidator."
+            raise ConfigurationError(msg)
+        if not isinstance(cast("object", password_endpoints), bool):
+            msg = "ModelUserBackend: password_endpoints must be a bool."
+            raise ConfigurationError(msg)
+        inputs = [username_field, *(["email"] if is_text_column(columns.get("email")) else [])]
         self._capabilities = BackendCapabilities(
             account_guard=FlagAccountGuard(
                 model, self._pk_field, flags, admin_flag=self._is_admin_field
-            )
+            ),
+            accounts=_ModelAccounts(
+                model,
+                parse_pk=parser,
+                password_field=password_field,
+                input_fields=tuple(inputs),
+                validators=cast("tuple[PasswordValidator, ...]", validators),
+            ),
+            password_endpoints=password_endpoints,
         )
 
     @staticmethod
@@ -197,7 +225,10 @@ class ModelUserBackend:
 
     @property
     def faststudio_capabilities(self) -> BackendCapabilities:
-        """The account guard (ADR-0009); no permissions, so every admin holds `ALL`."""
+        """The account guard (ADR-0009) and password management.
+
+        There is no permission backend, so every admin holds `ALL`.
+        """
         return self._capabilities
 
     # ------------------------------------------------------------- AuthBackend
@@ -233,3 +264,63 @@ class ModelUserBackend:
         if row is None or not self._allowed(row):
             return None
         return self._user(row)
+
+
+def is_text_column(column: Column[Any] | None) -> bool:
+    """Return True for an existing string or text column."""
+    return column is not None and is_text(column)
+
+
+class _ModelAccounts:
+    """`AccountManager` over the host's user model (`ModelUserBackend`)."""
+
+    def __init__(
+        self,
+        model: type[Any],
+        *,
+        parse_pk: Callable[[str], Any],
+        password_field: str,
+        input_fields: tuple[str, ...],
+        validators: tuple[PasswordValidator, ...],
+    ) -> None:
+        self._model = model
+        self._parse_pk = parse_pk
+        self._password_field = password_field
+        self._input_fields = input_fields
+        self.password_validators: Sequence[PasswordValidator] = validators
+
+    async def _row(self, session: AsyncSession, account_id: str) -> Any:  # noqa: ANN401 - host model
+        try:
+            pk = self._parse_pk(account_id)
+        except ValueError:
+            return None
+        return await session.get(self._model, pk)
+
+    async def user_inputs(self, session: AsyncSession, account_id: str) -> Sequence[str]:
+        """Return the username (and email, if the model has one) of the account."""
+        row = await self._row(session, account_id)
+        if row is None:
+            return ()
+        values = (getattr(row, name) for name in self._input_fields)
+        return [value for value in values if isinstance(value, str) and value]
+
+    async def check_password(self, session: AsyncSession, account_id: str, password: str) -> bool:
+        """Verify `password`; missing accounts and unusable hashes take the same time."""
+        row = await self._row(session, account_id)
+        stored = getattr(row, self._password_field) if row is not None else None
+        if not isinstance(stored, str) or not is_password_hash(stored):
+            return await dummy_verify_async(password)
+        return await verify_password_async(stored, password)
+
+    async def set_password(self, session: AsyncSession, account_id: str, password: str) -> None:
+        """Hash and store `password` (the caller commits).
+
+        Raises:
+            LookupError: if the account does not exist.
+
+        """
+        row = await self._row(session, account_id)
+        if row is None:
+            msg = "No such account."
+            raise LookupError(msg)
+        setattr(row, self._password_field, await hash_password_async(password))

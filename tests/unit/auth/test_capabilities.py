@@ -213,3 +213,90 @@ def test_legacy_methods_next_to_capabilities_are_reported(
 def test_capability_dataclasses_are_keyword_only() -> None:
     with pytest.raises(TypeError):
         BackendCapabilities(None, None)  # type: ignore[call-arg]
+
+
+# --------------------------------------------------------------------------- accounts (M18a)
+
+
+class _Accounts:
+    def __init__(self, validators: object = ()) -> None:
+        self._validators = validators
+
+    @property
+    def password_validators(self) -> Any:
+        return self._validators
+
+    async def user_inputs(self, session: object, account_id: str) -> list[str]:
+        del session, account_id
+        return []
+
+    async def check_password(self, session: object, account_id: str, password: str) -> bool:
+        del session, account_id, password
+        return False
+
+    async def set_password(self, session: object, account_id: str, password: str) -> None:
+        del session, account_id, password
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "match"),
+    [
+        ({"accounts": object()}, "accounts must implement AccountManager"),
+        ({"accounts": _Accounts("strong")}, "sequence of PasswordValidator"),
+        ({"accounts": _Accounts([object()])}, "sequence of PasswordValidator"),
+        ({"accounts": _Accounts(), "password_endpoints": "yes"}, "must be a bool"),
+        ({"password_endpoints": True}, "needs accounts and an account_guard"),
+        (
+            {"accounts": _Accounts(), "password_endpoints": True},
+            "needs accounts and an account_guard",
+        ),
+    ],
+)
+def test_invalid_account_capabilities_are_refused(
+    app: FastAPI, engine: AsyncEngine, secret_key: str, capabilities: dict[str, Any], match: str
+) -> None:
+    backend = _backend(faststudio_capabilities=BackendCapabilities(**capabilities))
+    with pytest.raises(ConfigurationError, match=match):
+        _admin(app, engine, secret_key, backend)
+
+
+@pytest.mark.parametrize(
+    ("options", "match"),
+    [
+        ({"password_validators": "strong"}, "sequence of PasswordValidator"),
+        ({"password_validators": [object()]}, "sequence of PasswordValidator"),
+        ({"password_endpoints": 1}, "password_endpoints must be a bool"),
+    ],
+)
+def test_model_user_backend_password_options(options: dict[str, Any], match: str) -> None:
+    with pytest.raises(ConfigurationError, match=match):
+        ModelUserBackend(AdminUser, **options)
+
+
+async def test_model_user_backend_accounts(engine: AsyncEngine) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from faststudio import hash_password  # noqa: PLC0415
+    from tests.factories.models import Base  # noqa: PLC0415
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=[Base.metadata.tables["admin_users"]])
+    accounts: Any = ModelUserBackend(AdminUser).faststudio_capabilities.accounts
+    async with AsyncSession(engine) as session:
+        session.add_all(
+            [
+                AdminUser(id=1, username="ann", password_hash=hash_password("a long passphrase")),
+                AdminUser(id=2, username="sso", password_hash="!sso-only"),
+            ]
+        )
+        await session.flush()
+        assert await accounts.user_inputs(session, "1") == ["ann"]
+        assert await accounts.user_inputs(session, "99") == ()
+        assert await accounts.user_inputs(session, "not-an-int") == ()
+        assert await accounts.check_password(session, "1", "a long passphrase")
+        assert not await accounts.check_password(session, "2", "anything")  # unusable hash
+        assert not await accounts.check_password(session, "99", "anything")
+        await accounts.set_password(session, "2", "now a real password")
+        assert await accounts.check_password(session, "2", "now a real password")
+        with pytest.raises(LookupError):
+            await accounts.set_password(session, "99", "whatever it is")

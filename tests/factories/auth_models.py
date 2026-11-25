@@ -35,7 +35,13 @@ from faststudio.auth.capabilities import (
     PermissionSchema,
 )
 from faststudio.auth.guard import FlagAccountGuard
-from faststudio.auth.passwords import verify_password_async
+from faststudio.auth.passwords import (
+    dummy_verify_async,
+    hash_password,
+    is_password_hash,
+    verify_password_async,
+)
+from faststudio.auth.validators import DEFAULT_VALIDATORS
 
 
 class AuthBase(DeclarativeBase):
@@ -153,10 +159,35 @@ SCHEMA = PermissionSchema(
 )
 
 
+class PermAccounts:
+    """`AccountManager` over `AuthUser` (a test stand-in for contrib)."""
+
+    password_validators = DEFAULT_VALIDATORS
+
+    async def _row(self, session: AsyncSession, account_id: str) -> AuthUser | None:
+        return await session.get(AuthUser, int(account_id)) if account_id.isdigit() else None
+
+    async def user_inputs(self, session: AsyncSession, account_id: str) -> list[str]:
+        row = await self._row(session, account_id)
+        return [row.username] if row is not None else []
+
+    async def check_password(self, session: AsyncSession, account_id: str, password: str) -> bool:
+        row = await self._row(session, account_id)
+        if row is None or not is_password_hash(row.password_hash):
+            return await dummy_verify_async(password)
+        return await verify_password_async(row.password_hash, password)
+
+    async def set_password(self, session: AsyncSession, account_id: str, password: str) -> None:
+        row = await self._row(session, account_id)
+        if row is None:
+            raise LookupError(account_id)
+        row.password_hash = hash_password(password)
+
+
 class PermBackend:
     """Auth backend with users, groups and permissions (a test stand-in for contrib)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, password_endpoints: bool = False) -> None:
         self._capabilities = BackendCapabilities(
             account_guard=FlagAccountGuard(
                 AuthUser,
@@ -166,6 +197,8 @@ class PermBackend:
             ),
             permissions=self,
             permission_schema=SCHEMA,
+            accounts=PermAccounts(),
+            password_endpoints=password_endpoints,
         )
 
     @property

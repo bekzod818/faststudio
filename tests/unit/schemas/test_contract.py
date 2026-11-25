@@ -135,6 +135,7 @@ def test_meta_response_requires_version_one() -> None:
         "show_powered_by": True,
         "user": {"id": "1", "username": "a"},
         "models": [],
+        "capabilities": {"change_password": False, "sign_out_everywhere": False},
     }
     with pytest.raises(ValidationError):
         MetaResponse.model_validate(data)

@@ -39,7 +39,11 @@ RESPONSES: tuple[type[BaseModel], ...] = (
     contract.ErrorResponse,
     contract.SpaConfig,
 )
-REQUESTS: tuple[type[BaseModel], ...] = (contract.LoginRequest,)
+REQUESTS: tuple[type[BaseModel], ...] = (
+    contract.LoginRequest,
+    contract.ChangePasswordRequest,
+    contract.SetPasswordRequest,
+)
 # Literal unions emitted as named definitions so generated code can share them.
 NAMED_ENUMS: dict[str, list[str]] = {
     "FieldType": list(get_args(contract.FieldType)),

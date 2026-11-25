@@ -528,7 +528,12 @@ def _depends_on(dependant: Any, target: object) -> bool:
 
 
 #: Routes without a model, which need only a session (the 401 test covers them).
-SESSION_ONLY = {"/api/v1/auth/login", "/api/v1/auth/me", "/api/v1/auth/logout"}
+SESSION_ONLY = {
+    "/api/v1/auth/login",
+    "/api/v1/auth/me",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/password",  # one's own account only
+}
 
 
 def test_every_route_resolves_permissions(admin: Admin) -> None:

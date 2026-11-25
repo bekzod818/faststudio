@@ -33,7 +33,8 @@ def get_context(request: Request) -> AdminContext:
     return context
 
 
-def _cookie_path(request: Request) -> str:
+def cookie_path(request: Request) -> str:
+    """Path for admin cookies: the admin's mount point (proxy prefix included)."""
     path: str = request.scope.get(ADMIN_ROOT_KEY, request.scope.get("root_path", ""))
     return path or "/"
 
@@ -53,7 +54,7 @@ async def current_user(request: Request) -> AuthenticatedUser:
         if raw is not None:
             # Clear the dead session and its session-bound CSRF token together,
             # so the next login works with the fresh anonymous token.
-            path, secure = _cookie_path(request), context.settings.secure_cookies
+            path, secure = cookie_path(request), context.settings.secure_cookies
             cookies = [
                 expired_session_cookie(path=path, secure=secure),
                 csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure),
@@ -102,7 +103,7 @@ async def login(body: LoginRequest, request: Request) -> Response:
     await context.rate_limiter.reset(key)
     value, session = context.sessions.issue(user_id=user.id, auth_version=user.auth_version)
     secure = context.settings.secure_cookies
-    path = _cookie_path(request)
+    path = cookie_path(request)
     response = JSONResponse(_user_response(user).model_dump(mode="json"))
     response.headers.append(
         "set-cookie",
@@ -126,7 +127,7 @@ async def logout(request: Request) -> Response:
     """End the session (cookie cleared) and issue a fresh anonymous CSRF token."""
     context = get_context(request)
     secure = context.settings.secure_cookies
-    path = _cookie_path(request)
+    path = cookie_path(request)
     response = Response(status_code=204)
     response.headers.append("set-cookie", expired_session_cookie(path=path, secure=secure))
     response.headers.append(

@@ -86,3 +86,8 @@ async def verify_password_async(stored_hash: str, password: str) -> bool:
 async def dummy_verify_async(password: str) -> bool:
     """`dummy_verify` in a worker thread; always False."""
     return await anyio.to_thread.run_sync(dummy_verify, password, limiter=_limiter())
+
+
+async def hash_password_async(password: str) -> str:
+    """`hash_password` in a worker thread (argon2 is CPU-bound), sharing the limiter."""
+    return await anyio.to_thread.run_sync(hash_password, password, limiter=_limiter())
