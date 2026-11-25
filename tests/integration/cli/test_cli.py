@@ -630,5 +630,15 @@ def test_insert_statements_per_dialect() -> None:
     sql = str(statement.compile(dialect=mysql.dialect()))
     assert "ON DUPLICATE KEY UPDATE" in sql
     assert "IGNORE" not in sql  # data errors (truncation) must still raise
+    from sqlalchemy import Column, Integer, MetaData, String, Table  # noqa: PLC0415
+
+    keyed = Table(
+        "keyed_perms",
+        MetaData(),
+        Column("id", Integer, primary_key=True),
+        Column("code_name", String(100), key="codename", unique=True),
+    )
+    renamed = _insert_ignoring_duplicates(keyed, keyed.c.codename, "mysql")
+    assert "code_name = VALUES(code_name)" in str(renamed.compile(dialect=mysql.dialect()))
     plain = _insert_ignoring_duplicates(table, table.c.codename, "oracle")
     assert "IGNORE" not in str(plain)

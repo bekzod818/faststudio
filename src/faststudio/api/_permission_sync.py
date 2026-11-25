@@ -106,7 +106,7 @@ def _insert_ignoring_duplicates(table: Table, codename: Column[Any], dialect: st
         # Not INSERT IGNORE: that would also turn data errors (e.g. a codename
         # truncated to fit a short column) into warnings and store another codename.
         statement = mysql_insert(table)
-        return statement.on_duplicate_key_update({codename.name: statement.inserted[codename.name]})
+        return statement.on_duplicate_key_update({codename.key: statement.inserted[codename.key]})
     return insert(table)
 
 
