@@ -61,6 +61,7 @@ function setup(
       return Promise.resolve(options.responses[url]);
     }
     if (url === `/models/users/items/${row.pk}`) return Promise.resolve(row);
+    if (url.endsWith("/links")) return Promise.resolve({ items: [] });
     if (url === "/models/users/items")
       return Promise.resolve({ items: [ROW], total: 1, page: 1, page_size: 2 });
     return Promise.reject(new ApiError(404, "not_found", "Not found."));
@@ -507,7 +508,26 @@ describe("many-to-many fields", () => {
   });
 
   it("says when the link count could not be loaded", async () => {
-    setup("/models/users/items/7", { meta: withGroups(), row });
+    setup("/models/users/items/7", {
+      meta: withGroups(),
+      row,
+      client: {
+        get: vi.fn((url: string) =>
+          url.endsWith("/links")
+            ? Promise.reject(new ApiError(500, "internal_error", "Boom."))
+            : url === "/meta"
+              ? Promise.resolve({
+                  schema_version: "1",
+                  version: "0",
+                  title: "Admin",
+                  show_powered_by: true,
+                  user: { id: "1", username: "admin" },
+                  models: [withGroups()],
+                })
+              : Promise.resolve(row),
+        ) as unknown as ApiClient["get"],
+      },
+    });
     await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
     expect(
@@ -515,12 +535,29 @@ describe("many-to-many fields", () => {
     ).toBeVisible();
   });
 
-  it("does not ask for link counts when no many-to-many field involves the model", async () => {
+  it("asks the server, which knows every affected field, and shows nothing extra for none", async () => {
     const { get } = setup("/models/users/items/7");
     await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
-    expect(screen.getByRole("dialog", { name: "Delete User 7?" })).toHaveTextContent(
-      "This cannot be undone.",
-    );
-    expect(get.mock.calls.some(([url]) => url.endsWith("/links"))).toBe(false);
+    const dialog = screen.getByRole("dialog", { name: "Delete User 7?" });
+    await waitFor(() => {
+      expect(get).toHaveBeenCalledWith("/models/users/items/7/links", expect.anything());
+    });
+    await waitFor(() => {
+      expect(dialog).toHaveAccessibleDescription("This cannot be undone.");
+    });
+    expect(within(dialog).queryByText(/Counting/)).toBeNull();
+  });
+
+  it("shows a field whose target model is not registered read-only", async () => {
+    const orphan = {
+      ...groups,
+      relation: { target_identity: null, target_field: "id", value_type: "integer" as const },
+    };
+    const base = model();
+    setup("/models/users/items/7", { meta: { ...base, fields: [...base.fields, orphan] }, row });
+    const chips = await screen.findByRole("list", { name: "Selected Groups" });
+    expect(within(chips).getByText("Staff")).toBeVisible();
+    expect(within(chips).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Groups" })).toBeNull();
   });
 });

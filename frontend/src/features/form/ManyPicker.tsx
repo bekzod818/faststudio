@@ -131,7 +131,8 @@ export function ManyPicker({
       move(event.key === "Home" ? 0 : items.length - 1);
     } else if (event.key === "Enter" && open) {
       event.preventDefault(); // never submit the form while choosing
-      toggle(active);
+      // The list may still show the previous search's options: wait for the new ones.
+      if (!pages.isPlaceholderData) toggle(active);
     } else if (event.key === "Escape" && open) {
       event.preventDefault();
       close();
@@ -147,7 +148,8 @@ export function ManyPicker({
   };
 
   const optionId = (index: number) => `${listId}-option-${String(index)}`;
-  const labelOf = (key: string) => labels[key] ?? key;
+  // The record may be refetched with keys this picker never saw: use its labels too.
+  const labelOf = (key: string) => labels[key] ?? initialLabels?.[key] ?? key;
 
   const status = pages.isPending
     ? "Loading…"

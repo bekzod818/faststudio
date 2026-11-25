@@ -34,17 +34,6 @@ function BackToList({ model }: { model: ModelMeta }) {
   );
 }
 
-/** Whether deleting a record of `identity` can remove many-to-many links (ADR-0010 §6). */
-function involvesLinks(models: ModelMeta[], identity: string): boolean {
-  return models.some((model) =>
-    model.fields.some(
-      (field) =>
-        field.type === "many_to_many" &&
-        (model.identity === identity || field.relation?.target_identity === identity),
-    ),
-  );
-}
-
 function linkText(link: LinkCount, own: string, models: ModelMeta[]): string {
   const count = `${String(link.count)} ${link.count === 1 ? "link" : "links"}`;
   if (link.identity === own) return `${count} in ${link.label}`;
@@ -60,13 +49,15 @@ function DeleteDescription({
 }: {
   identity: string;
   models: ModelMeta[];
-  links: ReturnType<typeof useLinkCounts> | null;
+  links: ReturnType<typeof useLinkCounts>;
 }) {
-  const removed = links?.data?.items.filter((link) => link.count > 0) ?? [];
+  const removed = links.data?.items.filter((link) => link.count > 0) ?? [];
   return (
     <>
-      {links?.isPending === true && <p>Counting the links this delete removes…</p>}
-      {links?.isError === true && <p>Could not count the links this delete removes.</p>}
+      {links.isPending && links.fetchStatus !== "idle" && (
+        <p>Counting the links this delete removes…</p>
+      )}
+      {links.isError && <p>Could not count the links this delete removes.</p>}
       {removed.length > 0 && (
         <>
           <p>This also removes:</p>
@@ -134,8 +125,8 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
   const userId = meta?.user.id;
   const models = meta?.models ?? [];
   const [confirming, setConfirming] = useState(false);
-  const linked = involvesLinks(models, model.identity);
-  const links = useLinkCounts(model.identity, pk, confirming && linked);
+  // Always asked: the server knows every field a delete affects (inheritance included).
+  const links = useLinkCounts(model.identity, pk, confirming);
   const title = `${model.name} ${pk}`;
 
   if (item.isPending) return <p role="status">Loading…</p>;
@@ -213,13 +204,7 @@ function RecordPage({ model, pk }: { model: ModelMeta; pk: string }) {
       <ConfirmDialog
         open={confirming}
         title={`Delete ${title}?`}
-        description={
-          <DeleteDescription
-            identity={model.identity}
-            models={models}
-            links={linked ? links : null}
-          />
-        }
+        description={<DeleteDescription identity={model.identity} models={models} links={links} />}
         confirmLabel={remove.isPending ? "Deleting…" : "Delete"}
         destructive
         busy={remove.isPending}

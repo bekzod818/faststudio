@@ -163,7 +163,8 @@ export function FieldInput(props: FieldInputProps) {
           value={Array.isArray(value) ? value : []}
           initialLabels={props.manyLabels}
           maxItems={field.max_items}
-          disabled={disabled}
+          // Without a registered target there are no options to choose from.
+          disabled={disabled || field.relation?.target_identity == null}
           invalid={invalid}
           describedBy={describedBy}
           inputRef={props.inputRef}

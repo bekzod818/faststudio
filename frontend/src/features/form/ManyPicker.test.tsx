@@ -191,4 +191,66 @@ describe("ManyPicker", () => {
     setup({ initial: ["7"] });
     expect(within(chips()).getByText("7")).toBeVisible();
   });
+
+  it("labels keys that arrive after mount from the record's labels", () => {
+    const client = fakeClient();
+    const view = (keys: string[], labels: Record<string, string>) => (
+      <ConfigProvider value={DEV_CONFIG}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ApiProvider client={client}>
+            <ManyPicker
+              id="tags"
+              label="Tags"
+              identity="posts"
+              field="tags"
+              value={keys}
+              initialLabels={labels}
+              maxItems={null}
+              disabled
+              onChange={() => undefined}
+            />
+          </ApiProvider>
+        </QueryClientProvider>
+      </ConfigProvider>
+    );
+    const { rerender } = render(view(["1"], { "1": "Tag 01" }));
+    rerender(view(["1", "9"], { "1": "Tag 01", "9": "Tag 09" })); // refetched record
+    expect(within(chips()).getByText("Tag 09")).toBeVisible();
+  });
+
+  it("ignores Enter while the previous search's options are still shown", async () => {
+    let release: () => void = () => undefined;
+    const get = vi.fn((_url: string, options?: GetOptions) => {
+      const q = String(options?.params?.q ?? "");
+      const items = TAGS.filter((tag) => tag.label.includes(q)).slice(0, 20);
+      if (q === "") return Promise.resolve<ChoicesResponse>({ items, total: items.length });
+      return new Promise<ChoicesResponse>((resolve) => {
+        release = () => {
+          resolve({ items, total: items.length });
+        };
+      });
+    });
+    render(
+      <ConfigProvider value={DEV_CONFIG}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ApiProvider client={fakeClient({ get: get as unknown as ApiClient["get"] })}>
+            <Harness initial={[]} maxItems={null} disabled={false} />
+          </ApiProvider>
+        </QueryClientProvider>
+      </ConfigProvider>,
+    );
+    const box = screen.getByRole("combobox", { name: "Tags" });
+    box.focus();
+    await screen.findByRole("option", { name: /Tag 01/ });
+    await userEvent.type(box, "Tag 4");
+    await waitFor(() => {
+      expect(get).toHaveBeenCalledTimes(2); // the search is in flight, old options shown
+    });
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+    expect(value()).toBe("");
+    release();
+    expect(await screen.findByRole("option", { name: /Tag 40/ })).toBeVisible();
+    await userEvent.keyboard("{Home}{Enter}");
+    expect(value()).toBe("40");
+  });
 });
