@@ -55,7 +55,8 @@ export function useItem(identity: string, pk: string) {
 function invalidateAfterWrite(queryClient: ReturnType<typeof useQueryClient>): void {
   void queryClient.invalidateQueries({ queryKey: ["list"] });
   void queryClient.invalidateQueries({ queryKey: ["choices"] });
-  void queryClient.invalidateQueries({ queryKey: ["links"] });
+  // Marked stale only: refetching now could ask for a record that was just deleted.
+  void queryClient.invalidateQueries({ queryKey: ["links"], refetchType: "none" });
 }
 
 export function useCreateItem(identity: string) {
@@ -99,6 +100,7 @@ export function useDeleteItem(identity: string, pk: string) {
   const forget = () => {
     void queryClient.cancelQueries({ queryKey: queryKeys.item(identity, pk) });
     queryClient.removeQueries({ queryKey: queryKeys.item(identity, pk) });
+    queryClient.removeQueries({ queryKey: queryKeys.links(identity, pk) });
   };
   return { ...mutation, forget };
 }
