@@ -39,9 +39,6 @@ export interface ApiClientOptions {
   reauthenticate?: () => Promise<ReauthOutcome>;
 }
 
-/** Writes that start or end a session: a 401 there is never retried. */
-const SESSION_PATHS = new Set(["/auth/login", "/auth/logout", "/auth/sign-out-everywhere"]);
-
 /** Query parameters; `undefined` values are skipped. */
 export type QueryParams = Record<string, string | number | undefined>;
 
@@ -56,7 +53,20 @@ export interface ApiClient {
   post<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T = undefined>(path: string): Promise<T>;
+  /**
+   * Abort every request in flight and wait until each has settled. Called
+   * before a request that ends the session (logout, sign out everywhere, a
+   * password change): with `session_idle_timeout` any response may renew
+   * the session cookie, and a late one must not bring the session back.
+   */
+  abortAll(): Promise<void>;
 }
+
+/** Writes that start or end a session: a 401 there is never retried. */
+export const LOGIN_PATH = "/auth/login";
+export const LOGOUT_PATH = "/auth/logout";
+export const SIGN_OUT_EVERYWHERE_PATH = "/auth/sign-out-everywhere";
+const SESSION_PATHS = new Set([LOGIN_PATH, LOGOUT_PATH, SIGN_OUT_EVERYWHERE_PATH]);
 
 function isErrorBody(
   value: unknown,
@@ -89,6 +99,33 @@ function queryString(params: QueryParams | undefined): string {
  */
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const inFlight = new Map<AbortController, Promise<unknown>>();
+
+  /** Fetch with our own abort controller, also following the caller's signal. */
+  function tracked(url: string, init: RequestInit, signal: AbortSignal | undefined) {
+    const controller = new AbortController();
+    if (signal !== undefined) {
+      if (signal.aborted) controller.abort(signal.reason);
+      else
+        signal.addEventListener(
+          "abort",
+          () => {
+            controller.abort(signal.reason);
+          },
+          { once: true },
+        );
+    }
+    const pending = doFetch(url, { ...init, signal: controller.signal });
+    const settled = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    inFlight.set(controller, settled);
+    void settled.then(() => {
+      inFlight.delete(controller);
+    });
+    return { pending, aborted: () => controller.signal.aborted };
+  }
 
   async function request<T>(
     method: string,
@@ -104,17 +141,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (token !== undefined) headers.set(CSRF_HEADER, token);
     }
     const init: RequestInit = { method, headers, credentials: "same-origin" };
-    if (signal !== undefined) init.signal = signal;
     if (body !== undefined) {
       headers.set("content-type", "application/json");
       init.body = JSON.stringify(body);
     }
     let response: Response;
+    const call = tracked(`${options.apiUrl}${path}${queryString(params)}`, init, signal);
     try {
-      response = await doFetch(`${options.apiUrl}${path}${queryString(params)}`, init);
+      response = await call.pending;
     } catch (error) {
       // Let TanStack Query recognise its own cancellations.
-      if (signal?.aborted) throw error;
+      if (signal?.aborted || call.aborted()) throw error;
       throw new ApiError(0, "network_error", "The server could not be reached.");
     }
     if (response.status === 204) return undefined as T;
@@ -148,5 +185,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body) => request("POST", path, body),
     patch: (path, body) => request("PATCH", path, body),
     delete: (path) => request("DELETE", path),
+    abortAll: async () => {
+      const settling = [...inFlight].map(([controller, settled]) => {
+        controller.abort();
+        return settled;
+      });
+      await Promise.all(settling);
+    },
   };
 }

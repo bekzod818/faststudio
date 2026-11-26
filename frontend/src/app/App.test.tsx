@@ -28,12 +28,26 @@ const NOT_AUTHENTICATED = { error: { code: "not_authenticated", message: "Sign i
 
 describe("App", () => {
   let routes: Record<string, () => Response>;
+  /** Paths whose response never arrives; aborting rejects them (logged in `events`). */
+  let hanging: Set<string>;
+  let events: string[];
   let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>>;
 
   beforeEach(() => {
     routes = {};
-    fetchMock = vi.fn((input: string) => {
+    hanging = new Set();
+    events = [];
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
       const path = input.replace(/^\/admin\/api\/v1/u, "");
+      events.push(`${init?.method ?? "GET"} ${path}`);
+      if (hanging.has(path)) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            events.push(`aborted ${path}`);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        });
+      }
       const handler = routes[path];
       return Promise.resolve(
         handler ? handler() : json(404, { error: { code: "not_found", message: "x" } }),
@@ -108,6 +122,22 @@ describe("App", () => {
       });
     },
   );
+
+  it("aborts requests in flight before signing out (a late one could renew the session)", async () => {
+    routes["/auth/me"] = () => json(200, ME);
+    routes["/auth/logout"] = () => new Response(null, { status: 204 });
+    hanging.add("/meta"); // e.g. a slow read still running when Sign out is clicked
+    window.history.replaceState(null, "", "/admin/");
+    render(<App config={CONFIG} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/admin/login");
+    });
+    const logout = events.indexOf("POST /auth/logout");
+    expect(logout).toBeGreaterThan(-1);
+    expect(events.indexOf("aborted /meta")).toBeGreaterThan(-1);
+    expect(events.indexOf("aborted /meta")).toBeLessThan(logout);
+  });
 
   it("signs out everywhere after confirmation", async () => {
     routes["/auth/me"] = () => json(200, ME);

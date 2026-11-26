@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import secrets
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
@@ -31,6 +30,7 @@ from faststudio.auth.passwords import (
     prepare_dummy_hash,
     verify_password_async,
 )
+from faststudio.auth.session import new_session_token
 from faststudio.auth.validators import DEFAULT_VALIDATORS, PasswordValidator
 from faststudio.exceptions import ConfigurationError
 from faststudio.introspection._columns import base_type, is_text, mapped_columns
@@ -38,13 +38,8 @@ from faststudio.introspection._types import value_type
 
 logger = logging.getLogger("faststudio.auth")
 
-#: `secrets.token_urlsafe(32)` is 43 characters: the shortest session token column.
-MIN_SESSION_TOKEN_LENGTH = 43
-
-
-def new_session_token() -> str:
-    """Return a random session token (32 bytes, URL-safe)."""
-    return secrets.token_urlsafe(32)
+# `new_session_token()` is 43 characters: the shortest session token column.
+_MIN_SESSION_TOKEN_LENGTH = 43
 
 
 def _parse_int(raw: str) -> int:
@@ -157,7 +152,8 @@ class ModelUserBackend:
         self._token_field = self._token(
             columns,
             session_token_field,
-            {username_field, password_field, is_active_field, is_admin_field},
+            # The input fields feed the password-similarity checks: never a token.
+            {username_field, password_field, is_active_field, is_admin_field, "email"},
         )
         if not _is_unique(self._username):
             logger.warning(
@@ -231,7 +227,7 @@ class ModelUserBackend:
         if not isinstance(cast("object", name), str) or name in taken:
             msg = (
                 "ModelUserBackend: session_token_field must name a column of its own "
-                "(not the username, password or a flag)."
+                "(not the username, password, email or a flag)."
             )
             raise ConfigurationError(msg)
         column = self._column(columns, "session_token_field", name)
@@ -239,10 +235,10 @@ class ModelUserBackend:
             msg = "ModelUserBackend: session_token_field must not be the primary key."
             raise ConfigurationError(msg)
         length = getattr(base_type(column.type), "length", None)
-        if not is_text(column) or (length is not None and length < MIN_SESSION_TOKEN_LENGTH):
+        if not is_text(column) or (length is not None and length < _MIN_SESSION_TOKEN_LENGTH):
             msg = (
                 "ModelUserBackend: session_token_field must be a string column of at "
-                f"least {MIN_SESSION_TOKEN_LENGTH} characters (or unbounded)."
+                f"least {_MIN_SESSION_TOKEN_LENGTH} characters (or unbounded)."
             )
             raise ConfigurationError(msg)
         return name

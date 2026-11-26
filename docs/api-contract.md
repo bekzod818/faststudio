@@ -55,7 +55,13 @@ built, a `503` placeholder page is served.
 - `POST /auth/login` accepts an anonymous token; on success it sets
   `faststudio_session` and a new token bound to the session.
 - Every other unsafe request needs the session-bound token. Missing or wrong
-  tokens get `403 csrf_failed` before routing (also for unknown paths).
+  tokens get `403 csrf_failed` before routing (also for unknown paths). If
+  the request carries a session cookie that is no longer valid (expired,
+  idle, tampered), it gets `401 not_authenticated` instead, also before
+  routing, with that cookie cleared and an anonymous token set.
+- A `401 not_authenticated` answer to an unsafe request means nothing was
+  executed, so a client may sign in again and resend the same request (the
+  admin UI does this once).
 - `POST /auth/logout` clears the session and issues a new anonymous token.
 - Any `401 not_authenticated` caused by an invalid session also clears it.
 

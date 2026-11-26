@@ -9,7 +9,10 @@
  * the same account signs in.
  */
 
+import type { QueryClient } from "@tanstack/react-query";
+
 import type { ReauthOutcome } from "@/api/client";
+import { queryKeys } from "@/api/hooks";
 
 export interface ReauthStore {
   /** Ask for a sign-in; concurrent callers share one dialog and outcome. */
@@ -52,4 +55,18 @@ export function createReauthStore(): ReauthStore {
       };
     },
   };
+}
+
+/**
+ * The API client's `reauthenticate` option: only a signed-in admin is asked;
+ * for anonymous visitors the usual flow (the login page) runs.
+ */
+export function createReauthenticate(
+  queryClient: QueryClient,
+  store: ReauthStore,
+): () => Promise<ReauthOutcome> {
+  return () =>
+    queryClient.getQueryData(queryKeys.me) === undefined
+      ? Promise.resolve("cancel")
+      : store.request();
 }

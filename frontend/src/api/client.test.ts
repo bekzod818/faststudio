@@ -123,11 +123,38 @@ describe("api client", () => {
     const controller = new AbortController();
     const abort = new DOMException("aborted", "AbortError");
     const fetchMock = vi.fn<typeof fetch>((_input, init) => {
-      expect(init?.signal).toBe(controller.signal);
+      expect(init?.signal?.aborted).toBe(false);
       controller.abort();
+      expect(init?.signal?.aborted).toBe(true); // the caller's signal is followed
       return Promise.reject(abort);
     });
     const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
     await expect(api.get("/x", { signal: controller.signal })).rejects.toBe(abort);
+  });
+
+  it("aborts every request in flight and waits for them (ADR-0013)", async () => {
+    const events: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>(
+      (input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            events.push(`aborted ${input as string}`);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
+    const read = api.get("/models/a/items");
+    const write = api.patch("/models/a/items/1", { x: 1 });
+    await api.abortAll();
+    events.push("drained");
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    await expect(write).rejects.toMatchObject({ name: "AbortError" });
+    expect(events).toEqual([
+      "aborted /api/models/a/items",
+      "aborted /api/models/a/items/1",
+      "drained",
+    ]);
+    await api.abortAll(); // nothing left: resolves at once
   });
 });

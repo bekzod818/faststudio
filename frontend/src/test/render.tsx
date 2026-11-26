@@ -15,6 +15,7 @@ export function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
     post: vi.fn().mockRejectedValue(new Error("unexpected POST")),
     patch: vi.fn().mockRejectedValue(new Error("unexpected PATCH")),
     delete: vi.fn().mockRejectedValue(new Error("unexpected DELETE")),
+    abortAll: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

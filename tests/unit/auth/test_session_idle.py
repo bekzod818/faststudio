@@ -114,6 +114,14 @@ def test_absolute_expiry_still_applies_after_refreshes() -> None:
     assert manager.remaining(data) == 0
 
 
+def test_remaining_lifetime_never_exceeds_max_age() -> None:
+    clock = Clock()
+    manager = SessionManager(SECRET, max_age=2 * HOUR, idle_timeout=HOUR, clock=clock)
+    _, data = manager.issue(user_id="7", auth_version="av")
+    clock.now -= 30  # another worker's clock is behind: the issue time is "in the future"
+    assert manager.remaining(data) == 2 * HOUR
+
+
 def test_remaining_lifetime() -> None:
     clock = Clock()
     manager = SessionManager(SECRET, max_age=2 * HOUR, idle_timeout=HOUR, clock=clock)
@@ -126,6 +134,7 @@ def test_remaining_lifetime() -> None:
     "payload",
     [
         ["7", "av", "sid", 1_000_000, 999_999],  # seen before issued_at
+        ["7", "av", "sid", 1_000_000, -1],  # never coerced into the issue time
         ["7", "av", "sid", 1_000_000, 1_000_000 + 61],  # seen beyond the allowed skew
         ["7", "av", "sid", 1_000_000, "1000000"],  # wrong type
         ["7", "av", "sid", 1_000_000, True],  # bool is not an int here

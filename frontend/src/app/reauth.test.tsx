@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiError, createApiClient, type ReauthOutcome } from "@/api/client";
@@ -10,7 +10,7 @@ import { getToasts, toast } from "@/lib/toast";
 import { testModel } from "@/test/fixtures";
 import { renderRoutes } from "@/test/render";
 
-import { createReauthStore } from "./reauth";
+import { createReauthenticate, createReauthStore } from "./reauth";
 import { ReauthDialog } from "./ReauthDialog";
 
 const ME = { user: { id: "1", username: "admin" } };
@@ -44,6 +44,45 @@ describe("reauth store", () => {
     await expect(first).resolves.toBe("retry");
     expect(store.isOpen()).toBe(false);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the app's reauthenticate option", () => {
+  it("asks only a signed-in admin", async () => {
+    const store = createReauthStore();
+    const queryClient = new QueryClient();
+    const reauthenticate = createReauthenticate(queryClient, store);
+    await expect(reauthenticate()).resolves.toBe("cancel"); // anonymous: login page
+    expect(store.isOpen()).toBe(false);
+    queryClient.setQueryData(queryKeys.me, ME);
+    const outcome = reauthenticate();
+    expect(store.isOpen()).toBe(true);
+    store.settle("retry");
+    await expect(outcome).resolves.toBe("retry");
+  });
+
+  it("lets two pending writes share one sign-in and retry once each", async () => {
+    const store = createReauthStore();
+    let signedIn = false;
+    const fetchMock = vi.fn((_input: string, init?: RequestInit) =>
+      Promise.resolve(signedIn ? json(200, { ok: init?.method }) : json(401, NOT_AUTHENTICATED)),
+    );
+    const client = createApiClient({
+      apiUrl: "/api",
+      fetch: fetchMock as unknown as typeof fetch,
+      reauthenticate: store.request,
+    });
+    const first = client.patch("/models/a/items/1", { x: 1 });
+    const second = client.delete("/models/b/items/2");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    expect(store.isOpen()).toBe(true);
+    signedIn = true;
+    store.settle("retry");
+    await expect(first).resolves.toEqual({ ok: "PATCH" });
+    await expect(second).resolves.toEqual({ ok: "DELETE" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -196,6 +235,7 @@ function setupForm(login: () => Response, path = "/models/users/items/7") {
           </>
         ),
       },
+      { path: "/models/:identity", element: <p>List</p> },
       { path: "/", element: <p>Dashboard</p> },
     ],
     { client, path, queryClient },
@@ -307,5 +347,22 @@ describe("a save that meets an ended session", () => {
       (s) => s.path === "/models/users/items" && s.method === "POST",
     );
     expect(second?.body).toEqual(first?.body);
+  });
+});
+
+describe("a delete that meets an ended session", () => {
+  it("opens the sign-in over the confirmation and deletes after it", async () => {
+    const { sent, router } = setupForm(() => json(200, ME));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    const confirm = screen.getByRole("dialog", { name: "Delete User 7?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Delete" }));
+    const signIn = await screen.findByRole("dialog", { name: "Sign in to continue" });
+    expect(confirm).toBeVisible(); // still open (busy) underneath
+    await userEvent.type(within(signIn).getByLabelText("Password"), "secret passphrase");
+    await userEvent.click(within(signIn).getByRole("button", { name: "Sign in and save" }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/models/users");
+    });
+    expect(sent.filter((s) => s.method === "DELETE")).toHaveLength(2);
   });
 });

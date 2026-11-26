@@ -9,7 +9,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from faststudio._spa import ADMIN_ROOT_KEY
+from faststudio._spa import ADMIN_ROOT_KEY, admin_cookie_path
 from faststudio.api._paths import LOGIN_PATH
 from faststudio.api.errors import error_response
 from faststudio.auth.cookies import csrf_cookie, expired_session_cookie, single_cookie
@@ -68,13 +68,14 @@ class CsrfMiddleware:
         send = self._issuing_send(scope, send, session_id, refresh=refresh)
         is_api = relative == "/api" or relative.startswith("/api/")
         if is_api and scope["method"] in UNSAFE_METHODS:
+            # A duplicated (tossed) session cookie reads as absent here, so it
+            # still meets the token check below (403), as before.
             if raw_session and session is None and relative != LOGIN_PATH:
                 response = error_response(401, "not_authenticated")
                 response.headers.append(
                     "set-cookie",
                     expired_session_cookie(
-                        path=scope.get(ADMIN_ROOT_KEY, scope.get("root_path", "")) or "/",
-                        secure=self.context.settings.secure_cookies,
+                        path=admin_cookie_path(scope), secure=self.context.settings.secure_cookies
                     ),
                 )
                 await response(scope, receive, send)  # plus a fresh anonymous token
@@ -104,7 +105,7 @@ class CsrfMiddleware:
         if not refresh:
             return send
         settings = self.context.settings
-        path: str = scope.get(ADMIN_ROOT_KEY, scope.get("root_path", "")) or "/"
+        path = admin_cookie_path(scope)
         prefix = f"{CSRF_COOKIE}=".encode()
 
         async def issuing_send(message: Message) -> None:

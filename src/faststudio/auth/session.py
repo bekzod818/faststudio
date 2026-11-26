@@ -14,8 +14,8 @@ SESSION_COOKIE = "faststudio_session"
 _SALT = "faststudio.session"
 # Tolerated clock skew for cookies issued "in the future" (multiple servers).
 _MAX_SKEW_SECONDS = 60
-#: A sliding refresh is due after min(idle_timeout / 4, this many seconds).
-MAX_REFRESH_INTERVAL = 5 * 60
+# A sliding refresh is due after min(idle_timeout / 4, this many seconds).
+_MAX_REFRESH_INTERVAL = 5 * 60
 _V01_ITEMS = 4  # [user_id, auth_version, session_id, issued_at]
 _IDLE_ITEMS = 5  # ... + last seen, written only when an idle timeout is configured
 
@@ -29,12 +29,16 @@ class SessionData:
     session_id: str = field(repr=False)
     issued_at: int
     #: Last activity (refresh time); the issue time for v0.1-format cookies.
-    seen: int = -1
+    seen: int
 
-    def __post_init__(self) -> None:
-        """Default `seen` to the issue time."""
-        if self.seen < 0:
-            object.__setattr__(self, "seen", self.issued_at)
+
+def new_session_token() -> str:
+    """Return a random per-account session token (32 bytes, 43 URL-safe characters).
+
+    Rotating an account's token ends all of its sessions (ADR-0013); used by
+    `ModelUserBackend(session_token_field=...)` and `faststudio.contrib.auth`.
+    """
+    return secrets.token_urlsafe(32)
 
 
 def _is_int(value: object) -> bool:
@@ -77,7 +81,8 @@ class SessionManager:
 
     def issue(self, *, user_id: str, auth_version: str) -> tuple[str, SessionData]:
         """Return a new signed cookie value and its data, with a fresh random session id."""
-        data = SessionData(user_id, auth_version, secrets.token_urlsafe(16), int(self._clock()))
+        now = int(self._clock())
+        data = SessionData(user_id, auth_version, secrets.token_urlsafe(16), now, now)
         return self._dumps(data), data
 
     def load(self, value: str | None) -> SessionData | None:
@@ -118,7 +123,7 @@ class SessionManager:
         """Return True if the cookie should slide (idle timeout only, never every request)."""
         if self.idle_timeout is None:
             return False
-        interval = min(self.idle_timeout / 4, MAX_REFRESH_INTERVAL)
+        interval = min(self.idle_timeout / 4, _MAX_REFRESH_INTERVAL)
         return self._clock() - data.seen >= interval
 
     def refresh(self, data: SessionData) -> str:
@@ -130,4 +135,6 @@ class SessionManager:
 
     def remaining(self, data: SessionData) -> int:
         """Return the seconds left before the absolute expiry (the cookie's Max-Age)."""
-        return max(0, int(self.max_age - (self._clock() - data.issued_at)))
+        # Capped: an issue time slightly in the future (clock skew) must not
+        # make the browser keep the cookie longer than max_age.
+        return min(self.max_age, max(0, int(self.max_age - (self._clock() - data.issued_at))))

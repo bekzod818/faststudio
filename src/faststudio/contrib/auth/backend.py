@@ -29,12 +29,12 @@ from faststudio.auth.passwords import (
     prepare_dummy_hash,
     verify_password_async,
 )
+from faststudio.auth.session import new_session_token
 from faststudio.auth.validators import DEFAULT_VALIDATORS, PasswordValidator
 from faststudio.contrib.auth.admins import SECRET_FIELDS, group_admin, permission_admin, user_admin
 from faststudio.contrib.auth.models import (
     AuthModels,
     UserMixin,
-    new_session_token,
     normalize_username,
 )
 

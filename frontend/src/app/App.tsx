@@ -3,13 +3,12 @@ import { useState } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { createApiClient } from "@/api/client";
-import { queryKeys } from "@/api/hooks";
 import { ApiProvider } from "@/api/provider";
 import { RequireAuth } from "@/app/auth/RequireAuth";
 import { PageLoading, RouteError } from "@/app/RouteError";
 import { Layout } from "@/app/Layout";
 import { QUERY_DEFAULTS } from "@/app/query";
-import { createReauthStore } from "@/app/reauth";
+import { createReauthenticate, createReauthStore } from "@/app/reauth";
 import { ReauthDialog } from "@/app/ReauthDialog";
 import { createUnauthorizedHandler } from "@/app/session";
 import { ThemeProvider } from "@/app/theme/ThemeProvider";
@@ -82,11 +81,7 @@ function createRuntime(config: AppConfig) {
       basename: config.baseUrl,
       reauthenticating: reauth.isOpen,
     }),
-    // Only a signed-in admin is asked; anonymous visitors go to the login page.
-    reauthenticate: () =>
-      queryClient.getQueryData(queryKeys.me) === undefined
-        ? Promise.resolve("cancel")
-        : reauth.request(),
+    reauthenticate: createReauthenticate(queryClient, reauth),
   });
   return { router, queryClient, client, reauth };
 }

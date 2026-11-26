@@ -54,4 +54,6 @@ cookie stays the 4-item format above, and 4-item cookies are always
 accepted. "Sign out everywhere" revokes every session of an account
 without server-side state, through a random per-account token that is part
 of `auth_version`. A stolen cookie in active use is still valid until
-`session_max_age` unless the user signs out everywhere.
+`session_max_age` unless the user signs out everywhere. An unsafe API request
+whose session cookie is present but no longer valid is `401` before the CSRF
+token check (see the ADR-0013 implementation notes).

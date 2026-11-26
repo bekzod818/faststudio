@@ -1,7 +1,7 @@
 """The shipped package has no test-only hooks (M20; threat model T1).
 
 Tests control session time only by passing ``clock=`` to `SessionManager`
-from test code (pytest fixtures, the Playwright launcher in `frontend/e2e`).
+from test code (pytest fixtures, the Playwright launcher tests/e2e/idle_server.py).
 The package itself must never read an environment variable or flag that
 shifts time or bypasses a check, nor offer a route for it. This test scans
 whatever `faststudio` is imported, so the wheel smoke job checks the
@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,16 +32,53 @@ def _relative(path: Path) -> str:
     return path.relative_to(PACKAGE).as_posix()
 
 
+_ENV_NAMES = frozenset({"environ", "environb", "getenv", "getenvb", "putenv", "argv"})
+
+
 def _env_access(tree: ast.AST) -> list[int]:
-    """Line numbers of `os.environ`, `os.getenv`, `os.putenv` or `sys.argv` uses."""
+    """Line numbers of environment or argv access, however spelled.
+
+    Attribute access (`os.environ`, `os.getenvb`, `sys.argv`), imports of
+    those names, and `getattr(..., "environ")`-style string lookups.
+    """
     lines = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv", "argv"}:
+        if isinstance(node, ast.Attribute) and node.attr in _ENV_NAMES:
             lines.append(node.lineno)
         elif isinstance(node, ast.ImportFrom) and node.module in {"os", "sys"}:
-            names = {alias.name for alias in node.names}
-            if names & {"environ", "getenv", "putenv", "argv"}:
+            if {alias.name for alias in node.names} & _ENV_NAMES:
                 lines.append(node.lineno)
+        elif isinstance(node, ast.Constant) and node.value in _ENV_NAMES:
+            lines.append(node.lineno)
+    return lines
+
+
+def _clock_writes(tree: ast.AST) -> list[int]:
+    """Writes of a `_clock` attribute other than `self._clock = clock` (the parameter)."""
+    lines = []
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign | ast.AugAssign):
+            targets, value = [node.target], node.value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "object.__setattr__"}
+        ) or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "__setattr__"
+        ):
+            if any(isinstance(a, ast.Constant) and a.value == "_clock" for a in node.args):
+                lines.append(node.lineno)
+            continue
+        if any(isinstance(t, ast.Attribute) and t.attr == "_clock" for t in targets):
+            from_parameter = isinstance(value, ast.Name) and value.id == "clock"
+            if not from_parameter or isinstance(node, ast.AugAssign):
+                lines.append(targets[0].lineno)
     return lines
 
 
@@ -68,13 +106,7 @@ def test_sessions_always_use_the_real_clock() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and any(k.arg == "clock" for k in node.keywords):
                 offenders.append(f"{_relative(path)}:{node.lineno}")
-            if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Attribute) and target.attr == "_clock"
-                for target in node.targets
-            ):
-                from_parameter = isinstance(node.value, ast.Name) and node.value.id == "clock"
-                if not from_parameter:
-                    offenders.append(f"{_relative(path)}:{node.lineno}")
+        offenders.extend(f"{_relative(path)}:{line}" for line in _clock_writes(tree))
     assert offenders == []
     assert SessionManager("k" * 48, max_age=60)._clock is time.time
 
@@ -107,3 +139,35 @@ def test_no_route_sets_time_or_bypasses_checks(
         "/api/v1/models/{identity}/items/{pk}/password",
         "/assets",
     ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os\nx = os.environb",
+        "import os\nx = os.getenvb(b'X')",
+        "import os\nx = getattr(os, 'environ')",
+        "from os import environ",
+        "import sys\nx = sys.argv",
+    ],
+)
+def test_the_environment_scan_catches(source: str) -> None:
+    assert _env_access(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "m._clock = lambda: 0",
+        "m._clock: object = fake",
+        "m._clock += 5",
+        "setattr(m, '_clock', fake)",
+        "object.__setattr__(m, '_clock', fake)",
+    ],
+)
+def test_the_clock_scan_catches(source: str) -> None:
+    assert _clock_writes(ast.parse(source))
+
+
+def test_the_clock_scan_allows_the_constructor() -> None:
+    assert _clock_writes(ast.parse("self._clock = clock")) == []

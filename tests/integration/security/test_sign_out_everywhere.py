@@ -18,7 +18,6 @@ from sqlalchemy.pool import StaticPool
 
 from faststudio import Admin, ConfigurationError, ModelAdmin, ModelUserBackend, hash_password
 from faststudio.auth.capabilities import BackendCapabilities, SessionRevocation
-from faststudio.auth.model_backend import MIN_SESSION_TOKEN_LENGTH
 from tests.integration.security._accounts import ORIGIN, PASSWORD
 
 API = "/admin/api/v1"
@@ -120,7 +119,7 @@ async def test_with_a_token_column_every_session_ends(
         assert (await other.get(f"{API}/auth/me")).status_code == 200
     token = await _token(engine, 1)
     assert token is not None
-    assert len(token) >= MIN_SESSION_TOKEN_LENGTH  # the first rotation sets a value
+    assert len(token) >= 43  # the first rotation sets a value
     assert await _token(engine, 2) == ""
 
 
@@ -169,7 +168,7 @@ async def test_createadmin_sets_a_fresh_token(engine: AsyncEngine) -> None:
         await session.commit()
     token = await _token(engine, int(account_id))
     assert token is not None
-    assert len(token) >= MIN_SESSION_TOKEN_LENGTH
+    assert len(token) >= 43
     with pytest.raises(ValueError, match="session_token"):
         async with AsyncSession(engine) as session:
             await accounts.create_admin(
@@ -251,6 +250,7 @@ def test_the_token_column_is_a_secret_field(
         ("password_hash", "a column of its own"),
         ("username", "a column of its own"),
         ("is_active", "a column of its own"),
+        ("email", "a column of its own"),
     ],
 )
 def test_invalid_token_columns_are_refused(field: str, match: str) -> None:
@@ -295,3 +295,6 @@ async def test_an_account_deleted_meanwhile_gets_401(
         http = await _client(stack, app, "ann")
         response = await http.post(SIGN_OUT, headers=_headers(http))
         assert response.status_code == 401
+        cookies = response.headers.get_list("set-cookie")
+        assert any(c.startswith("faststudio_session=") and "Max-Age=0" in c for c in cookies)
+        assert any(c.startswith("faststudio_csrftoken=") for c in cookies)

@@ -6,7 +6,7 @@ import inspect
 import logging
 from datetime import timedelta
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import TypeVar, cast, overload
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -154,7 +154,7 @@ class Admin:
             static_dir=_STATIC_DIR,
             sessions=SessionManager(
                 self._settings.secret_key,
-                max_age=int(self._settings.session_max_age.total_seconds()),
+                max_age=_seconds(self._settings.session_max_age),
                 idle_timeout=_seconds(self._settings.session_idle_timeout),
             ),
             csrf=CsrfTokens(self._settings.secret_key),
@@ -249,6 +249,10 @@ class _TrailingSlashRedirect:
         await RedirectResponse(target, status_code=307)(scope, receive, send)
 
 
+@overload
+def _seconds(duration: timedelta) -> int: ...
+@overload
+def _seconds(duration: None) -> None: ...
 def _seconds(duration: timedelta | None) -> int | None:
     return None if duration is None else int(duration.total_seconds())
 

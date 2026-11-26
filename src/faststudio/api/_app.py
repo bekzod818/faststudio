@@ -57,6 +57,8 @@ def wrap_admin_app(app: ASGIApp, context: AdminContext) -> ASGIApp:
 
     The headers layer stays outermost so a response carrying a refreshed
     session cookie is `Cache-Control: no-store` like every other one.
+    `current_user` relies on the refresh layer for the sliding idle timeout:
+    without it, `offer_refresh` does nothing and idle sessions simply expire.
     """
     return SecurityHeadersMiddleware(
         AdminRootRecorder(SessionRefreshMiddleware(SameOriginGuard(CsrfMiddleware(app, context))))

@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import type { QueryParams } from "./client";
+import { LOGIN_PATH, LOGOUT_PATH, SIGN_OUT_EVERYWHERE_PATH, type QueryParams } from "./client";
 
 import type {
   ChangePasswordRequest,
@@ -206,7 +206,7 @@ export function useLogin() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: LoginRequest) => api.post<UserResponse>("/auth/login", body),
+    mutationFn: (body: LoginRequest) => api.post<UserResponse>(LOGIN_PATH, body),
     onSuccess: (data) => {
       // Queries only: clearing the MutationCache would drop this mutation's own state.
       queryClient.removeQueries();
@@ -224,7 +224,11 @@ export function useLogin() {
 export function useChangePassword() {
   const api = useApi();
   return useMutation({
-    mutationFn: (body: ChangePasswordRequest) => api.post("/auth/password", body),
+    mutationFn: async (body: ChangePasswordRequest) => {
+      // A late response could otherwise replace the session it re-issues.
+      await api.abortAll();
+      return api.post("/auth/password", body);
+    },
   });
 }
 
@@ -238,13 +242,25 @@ export function useSetPassword(identity: string, pk: string) {
 
 export function useLogout() {
   const api = useApi();
-  return useMutation({ mutationFn: () => api.post("/auth/logout") });
+  return useMutation({
+    mutationFn: async () => {
+      // A response still in flight may carry a renewed session cookie: it must
+      // never arrive after the logout and bring the session back.
+      await api.abortAll();
+      return api.post(LOGOUT_PATH);
+    },
+  });
 }
 
 /** End every session of the signed-in admin (`POST /auth/sign-out-everywhere`, 204). */
 export function useSignOutEverywhere() {
   const api = useApi();
-  return useMutation({ mutationFn: () => api.post("/auth/sign-out-everywhere") });
+  return useMutation({
+    mutationFn: async () => {
+      await api.abortAll();
+      return api.post(SIGN_OUT_EVERYWHERE_PATH);
+    },
+  });
 }
 
 /** Cancel and drop every cached query (the previous admin's data). */

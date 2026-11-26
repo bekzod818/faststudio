@@ -133,6 +133,7 @@ def test_idle_timeout_accepted(timeout: int | timedelta) -> None:
         (timedelta(0), "session_idle_timeout must be at least 60 seconds"),
         (8 * 3600 + 1, "session_idle_timeout must not exceed session_max_age"),
         (timedelta(hours=9), "session_idle_timeout must not exceed session_max_age"),
+        (10**15, "session_idle_timeout is too large"),
     ],
 )
 def test_invalid_idle_timeout(timeout: int | timedelta, message: str) -> None:

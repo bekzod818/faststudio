@@ -84,7 +84,11 @@ def _duration(name: str, value: object) -> timedelta:
     if isinstance(value, timedelta):
         duration = value
     elif isinstance(value, int) and not isinstance(value, bool):
-        duration = timedelta(seconds=value)
+        try:
+            duration = timedelta(seconds=value)
+        except OverflowError:
+            msg = f"{name} is too large."
+            raise ConfigurationError(msg) from None
     else:
         msg = f"{name} must be int seconds or timedelta, got {type(value).__name__}."
         raise ConfigurationError(msg)

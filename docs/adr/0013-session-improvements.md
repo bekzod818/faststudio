@@ -70,7 +70,10 @@ planned for v0.3. v0.2 should narrow the gap without adding storage.
 - With the idle timeout enabled, v0.1 workers reject the 5-item cookie, so
   enable it only after every worker runs 0.2. This is documented.
 
-## Implementation notes (M20, 2026-11-26, maintainer-approved)
+## Implementation notes (M20, 2026-11-26)
+
+These follow the maintainer-approved M20 plan, except where marked
+**pending maintainer approval**.
 
 - `session_idle_timeout` and `session_max_age` both accept int seconds or a
   `timedelta` (bool refused; at least 60 seconds, as `session_max_age`
@@ -91,7 +94,17 @@ planned for v0.3. v0.2 should narrow the gap without adding storage.
   password in a dialog and retries; a different account discards the form.
 - Tests control time only by passing `clock=` to `SessionManager` from test
   code; the package has no time-shifting hook (a test checks this).
-- An unsafe request with a session cookie that no longer loads (expired,
-  idle) is `401 not_authenticated` before the CSRF check (previously `403
+- **Pending maintainer approval (deviation D1):** an unsafe request with a
+  session cookie that no longer loads (expired, idle) is
+  `401 not_authenticated` before the CSRF check (previously `403
   csrf_failed`, since its token was bound to the dead session). This is what
   lets the UI offer the in-place sign-in; nothing runs in either case.
+- **Logout and concurrent refreshes.** With the idle timeout, any
+  authenticated response may renew the cookie, so a response still in
+  flight when the admin signs out could otherwise bring the session back.
+  The SPA aborts every request in flight, and waits for them, before it
+  sends logout, sign out everywhere or a password change. Residual risk
+  (stateless sessions): a request from *another tab* that is in flight
+  during the logout can still renew the cookie; "sign out everywhere" ends
+  such a session for good. Likewise another tab may sign in as a different
+  account between the in-place sign-in and the retried write.

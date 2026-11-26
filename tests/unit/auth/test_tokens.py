@@ -124,7 +124,9 @@ def test_csrf_token_from_other_secret_is_rejected(secret: str) -> None:
 
 
 def test_session_data_repr_hides_ids() -> None:
-    data = SessionData(user_id="42", auth_version="secret-av", session_id="secret-sid", issued_at=1)
+    data = SessionData(
+        user_id="42", auth_version="secret-av", session_id="secret-sid", issued_at=1, seen=1
+    )
     assert "secret-sid" not in repr(data)
     assert "secret-av" not in repr(data)
 

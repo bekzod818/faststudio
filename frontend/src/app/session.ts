@@ -22,6 +22,12 @@ export function loginPath(pathname: string, search = ""): string {
   return `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
 }
 
+/** Cancel and drop every cached query: nothing of the previous session may show. */
+export function forgetSession(queryClient: QueryClient): void {
+  void queryClient.cancelQueries();
+  queryClient.removeQueries();
+}
+
 interface RouterLike {
   state: { location: { pathname: string; search: string } };
   navigate: (to: string, options: { replace: boolean; state: unknown }) => Promise<void>;
@@ -43,8 +49,7 @@ export function createUnauthorizedHandler(options: {
     const { queryClient } = options;
     if (queryClient.getQueryData(queryKeys.me) === undefined) return;
     if (options.reauthenticating?.() === true) return;
-    void queryClient.cancelQueries();
-    queryClient.removeQueries();
+    forgetSession(queryClient);
     const router = options.router();
     const { pathname, search } = router.state.location;
     const path = appPath(pathname, options.basename);

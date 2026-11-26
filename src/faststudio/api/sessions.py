@@ -16,10 +16,9 @@ from fastapi.responses import Response
 
 from faststudio.api._deps import DbSession
 from faststudio.api._paths import API_PREFIX
-from faststudio.api.auth import CurrentUser, cookie_path, current_user, get_context
+from faststudio.api.auth import CurrentUser, current_user, ended_session_cookies, get_context
 from faststudio.api.errors import ApiError
 from faststudio.api.write import writing
-from faststudio.auth.cookies import csrf_cookie, expired_session_cookie
 
 logger = logging.getLogger("faststudio.auth")
 
@@ -38,14 +37,12 @@ async def sign_out_everywhere(request: Request, user: CurrentUser, session: DbSe
         try:
             await revocation.rotate_session_token(session, user.id)
         except LookupError:  # deleted meanwhile: its sessions are dead anyway
-            raise ApiError(401, "not_authenticated") from None
+            raise ApiError(
+                401, "not_authenticated", set_cookies=ended_session_cookies(request)
+            ) from None
         await session.flush()
     logger.info("Account %s signed out everywhere", user.id)
-    secure = context.settings.secure_cookies
-    path = cookie_path(request)
     response = Response(status_code=204)
-    response.headers.append("set-cookie", expired_session_cookie(path=path, secure=secure))
-    response.headers.append(
-        "set-cookie", csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure)
-    )
+    for cookie in ended_session_cookies(request):
+        response.headers.append("set-cookie", cookie)
     return response

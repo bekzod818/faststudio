@@ -17,6 +17,7 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table, eve
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column, relationship, validates
 
+from faststudio.auth.session import new_session_token
 from faststudio.exceptions import ConfigurationError
 
 __all__ = [
@@ -46,11 +47,6 @@ def normalize_username(username: str) -> str:
 def unusable_password() -> str:
     """Return a stored value no password ever matches (not an argon2 hash)."""
     return "!" + secrets.token_urlsafe(16)
-
-
-def new_session_token() -> str:
-    """Return a random token; changing it signs the account out everywhere (ADR-0013)."""
-    return secrets.token_urlsafe(32)
 
 
 def _normalized_default(context: Any) -> str:  # noqa: ANN401 - SQLAlchemy context

@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import { ApiError } from "@/api/client";
+import { ApiError, LOGIN_PATH } from "@/api/client";
 import type { UserResponse } from "@/api/contract.gen";
 import { useApi } from "@/api/context";
 import { queryKeys } from "@/api/hooks";
 import type { ReauthStore } from "@/app/reauth";
+import { forgetSession } from "@/app/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,7 +66,7 @@ export function ReauthDialog({ store, router }: { store: ReauthStore; router: ()
     setError(null);
     let data: UserResponse;
     try {
-      data = await api.post<UserResponse>("/auth/login", { username, password });
+      data = await api.post<UserResponse>(LOGIN_PATH, { username, password });
     } catch (failure) {
       setPassword("");
       setBusy(false);
@@ -81,8 +82,7 @@ export function ReauthDialog({ store, router }: { store: ReauthStore; router: ()
       return;
     }
     // Another account: nothing of the previous one may be saved or shown.
-    void queryClient.cancelQueries();
-    queryClient.removeQueries();
+    forgetSession(queryClient);
     queryClient.setQueryData(queryKeys.me, data);
     finish("discard");
     toast.info(`Signed in as ${data.user.username}. The unsaved changes were discarded.`);
