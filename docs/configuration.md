@@ -156,24 +156,34 @@ For several workers, pass a shared `rate_limiter` implementing
 
 FastStudio uses SQLAlchemy's async engines and is tested in CI on:
 
-| Database | Version | Driver (URL prefix) | Notes |
-|---|---|---|---|
-| SQLite | the one bundled with Python 3.11–3.13 | `aiosqlite` (`sqlite+aiosqlite://`) | Enable foreign keys (below). One writer at a time. |
-| PostgreSQL | 17 | `asyncpg` (`postgresql+asyncpg://`) | Tested at READ COMMITTED, REPEATABLE READ and SERIALIZABLE. |
-| MySQL | 8.4 LTS | `aiomysql[rsa]` (`mysql+aiomysql://`) | Tested at READ COMMITTED, REPEATABLE READ (the default) and SERIALIZABLE. |
+| Database | Version | Driver (URL prefix) |
+|---|---|---|
+| SQLite | the one bundled with Python 3.11–3.13 | `aiosqlite` (`sqlite+aiosqlite://`) |
+| PostgreSQL | 17 | `asyncpg` (`postgresql+asyncpg://`) |
+| MySQL | 8.4 LTS | `aiomysql[rsa]` (`mysql+aiomysql://`) |
 
+The servers' default isolation level (READ COMMITTED on PostgreSQL,
+REPEATABLE READ on MySQL) is tested throughout. The concurrency tests also
+run the account rules (ADR-0009) at READ COMMITTED, REPEATABLE READ and
+SERIALIZABLE on both servers, and many-to-many writes at all three levels on
+both.
+
+- **SQLite:** enable foreign keys (below). One writer at a time.
+- **Concurrent writes** that lose a race (a lock conflict, a deadlock or a
+  serialization failure) get `409 conflict` on both servers. Under
+  SERIALIZABLE, InnoDB turns plain reads into shared locks, so concurrent
+  edits of the same accounts deadlock more often; one request still wins.
 - **MySQL 8.4** authenticates with `caching_sha2_password` by default, which
-  needs the `cryptography` package on the client: install `aiomysql[rsa]`
-  (or plain `aiomysql` plus `cryptography`).
-- **MySQL collations.** The default `utf8mb4_0900_ai_ci` is case- and
-  accent-insensitive, so a unique username column already refuses `Ann` next
-  to `ANN`; `faststudio checkusers` then only ever finds drift, never
-  collisions. Concurrent writes that lose a lock race get `409 conflict`, as
-  on PostgreSQL; under SERIALIZABLE, InnoDB turns plain reads into shared
-  locks, so concurrent edits of the same admin accounts deadlock more often
-  (still `409`, never a broken invariant).
-- MariaDB uses the same SQL paths (`ON DUPLICATE KEY UPDATE`, lock-conflict
-  codes) but is not tested in CI.
+  needs the `cryptography` package on the client: install
+  `"aiomysql[rsa]>=0.3"` (or `aiomysql` plus `cryptography`).
+- **MySQL collations.** With the default `utf8mb4_0900_ai_ci`, comparisons
+  are case- and accent-insensitive: a unique username column refuses `Ann`
+  next to `ANN`, and signing in as `jose` finds `José`. That collation
+  predates newer Unicode case pairs (e.g. Georgian capital letters), so
+  `faststudio checkusers` can still find collisions; keep running it. With
+  a binary collation (`utf8mb4_bin`), usernames compare as on PostgreSQL.
+- **MariaDB** is not tested. It shares the MySQL SQL paths, but its error
+  codes and snapshot behaviour differ in places, so test your setup.
 - Other databases with an async SQLAlchemy driver may work; FastStudio uses
   a savepoint per insert where it cannot rely on an "insert, skip
   duplicates" statement.

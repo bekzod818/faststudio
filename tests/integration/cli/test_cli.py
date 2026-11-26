@@ -404,44 +404,63 @@ def test_concurrent_syncs_tolerate_each_other(terminal: FakeTerminal, db: str) -
 # --------------------------------------------------------------------------- checkusers
 
 
-def _check_mysql_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
-    """MySQL's default collation (utf8mb4_0900_ai_ci) already treats 'Ann' and 'ANN'
-    (and full-width or ligature forms) as equal: the unique username index refuses
-    the collision itself, so only drift is left for checkusers to repair."""
+ANN_SMALL = "\u10d0nn"  # Georgian letter AN (mkhedruli) + "nn"
+ANN_CAPITAL = "\u1c90nn"  # Georgian capital letter AN (mtavruli) + "nn"
+
+
+def test_mysql_collation_refuses_case_variants(terminal: FakeTerminal, db: str) -> None:
+    """On MySQL the default collation already refuses 'Ann' next to 'ANN' (1062)."""
+    if not db.startswith("mysql"):
+        return  # binary comparisons elsewhere: checkusers reports such pairs
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
     table = AUTH.user.__table__  # type: ignore[attr-defined]
-
-    def row(pk: int, username: str, normalized: str) -> dict[str, object]:
-        return {
-            "id": pk,
-            "username": username,
-            "username_normalized": normalized,
-            "password_hash": "!",
-            "session_token": str(pk) * 43,
-        }
 
     async def seed() -> None:
         engine = create_async_engine(db)
         try:
             async with engine.begin() as conn:
-                await conn.execute(insert(table), [row(1, "Ann", "ann"), row(2, "Bob", "stale")])
-            with pytest.raises(IntegrityError):
+                await conn.execute(
+                    insert(table),
+                    [
+                        {
+                            "id": 1,
+                            "username": "Ann",
+                            "username_normalized": "ann",
+                            "password_hash": "!",
+                            "session_token": "a" * 43,
+                        }
+                    ],
+                )
+            with pytest.raises(IntegrityError) as caught:
                 async with engine.begin() as conn:
-                    await conn.execute(insert(table), [row(3, "ANN", "ann-old")])
+                    await conn.execute(
+                        insert(table),
+                        [
+                            {
+                                "id": 2,
+                                "username": "ANN",
+                                "username_normalized": "ann2",
+                                "password_hash": "!",
+                                "session_token": "b" * 43,
+                            }
+                        ],
+                    )
+            orig = caught.value.orig
+            assert orig is not None
+            assert orig.args[0] == 1062  # duplicate key on the username index
         finally:
             await engine.dispose()
 
     _run(seed())
-    assert cli(terminal, "checkusers", "--app", f"{APP}:contrib") == 1
-    assert "Stale normalized username: 'Bob' (id 2)" in terminal.text
-    assert "Collision" not in terminal.text
-    assert cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix", "--yes") == 0
-    rows = dict(_run(_query(db, select(AUTH.user.id, AUTH.user.username_normalized))))
-    assert rows == {1: "ann", 2: "bob"}
+    del terminal
 
 
 def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
+    """Two usernames with one sign-in key. Georgian small/capital letters: NFKC and
+    casefold (Unicode 15) merge them, while MySQL's utf8mb4_0900_ai_ci (UCA 9.0)
+    still tells them apart, so the collision exists on every tested database."""
+
     async def seed() -> None:
         engine = create_async_engine(db)
         async with engine.begin() as conn:
@@ -451,8 +470,8 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
                 [
                     {
                         "id": 1,
-                        "username": "Ann",
-                        "username_normalized": "ann",
+                        "username": ANN_SMALL,
+                        "username_normalized": ANN_SMALL,
                         "password_hash": "!",
                         "session_token": "a" * 43,
                     },
@@ -465,7 +484,7 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
                     },
                     {
                         "id": 3,
-                        "username": "ANN",
+                        "username": ANN_CAPITAL,
                         "username_normalized": "ann-old",
                         "password_hash": "!",
                         "session_token": "c" * 43,
@@ -474,14 +493,11 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
             )
         await engine.dispose()
 
-    if db.startswith("mysql"):
-        _check_mysql_refuses_collisions(terminal, db)
-        return
     _run(seed())
     assert cli(terminal, "checkusers", "--app", f"{APP}:contrib") == 1
-    assert "Collision on 'ann'" in terminal.text
+    assert f"Collision on {ANN_SMALL!r}" in terminal.text
     assert "Stale normalized username: 'Bob' (id 2)" in terminal.text
-    assert "'ANN' (id 3) (collides: fix by renaming)" in terminal.text
+    assert f"{ANN_CAPITAL!r} (id 3) (collides: fix by renaming)" in terminal.text
 
     terminal.tty = False
     assert cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix") == 2
@@ -492,7 +508,7 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
         cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix", "--yes") == 1
     )  # collision
     rows = dict(_run(_query(db, select(AUTH.user.id, AUTH.user.username_normalized))))
-    assert rows == {1: "ann", 2: "bob", 3: "ann-old"}  # Bob fixed; the collision untouched
+    assert rows == {1: ANN_SMALL, 2: "bob", 3: "ann-old"}  # Bob fixed; the collision untouched
 
     async def rename() -> None:
         engine = create_async_engine(db)

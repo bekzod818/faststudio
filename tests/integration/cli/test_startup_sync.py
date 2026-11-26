@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from tests.integration.cli.apps import NoteAdmin
 
 
 @pytest.fixture(params=["sqlite", mysql_param("mysql")])
-async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncEngine:
+async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     if request.param == "mysql":
         engine = create_async_engine(throwaway(MYSQL_URL))
     else:
@@ -30,7 +31,10 @@ async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncEngine:
     async with engine.begin() as conn:
         await conn.run_sync(ContribBase.metadata.drop_all)
         await conn.run_sync(ContribBase.metadata.create_all)
-    return engine
+    try:
+        yield engine
+    finally:  # also when a test fails before its own dispose()
+        await engine.dispose()
 
 
 async def _codenames(db: AsyncEngine) -> set[str]:

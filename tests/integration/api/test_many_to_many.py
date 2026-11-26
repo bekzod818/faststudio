@@ -135,6 +135,7 @@ class ArticleAdmin(ModelAdmin, model=Article):
         ),
         mysql_param("mysql"),  # InnoDB's default, REPEATABLE READ
         mysql_param("mysql-read-committed"),
+        mysql_param("mysql-serializable"),
     ]
 )
 def database(request: pytest.FixtureRequest, tmp_path: Path) -> str:
@@ -155,7 +156,11 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
         }[database]
         engine = create_async_engine(POSTGRES_URL, isolation_level=isolation)
     elif database.startswith("mysql"):
-        isolation = "READ COMMITTED" if database == "mysql-read-committed" else "REPEATABLE READ"
+        isolation = {
+            "mysql": "REPEATABLE READ",
+            "mysql-read-committed": "READ COMMITTED",
+            "mysql-serializable": "SERIALIZABLE",
+        }[database]
         engine = create_async_engine(throwaway(MYSQL_URL), isolation_level=isolation)
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/m2m.db")

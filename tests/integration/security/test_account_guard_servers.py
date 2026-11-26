@@ -107,7 +107,7 @@ def _one_wins(results: Sequence[httpx.Response]) -> httpx.Response:
 
 
 @pytest.mark.usefixtures("backend")
-async def test_rules_hold_on_postgres(
+async def test_rules_hold_on_servers(
     sign_in: Callable[[str], Awaitable[Client]], db: AsyncEngine
 ) -> None:
     alice = await sign_in("alice")
@@ -126,7 +126,8 @@ async def test_concurrent_demotions_leave_one_admin(
 ) -> None:
     """READ COMMITTED: the loser waits, re-reads and gets last_admin.
 
-    REPEATABLE READ / SERIALIZABLE: PostgreSQL aborts the loser (40001), a conflict.
+    REPEATABLE READ / SERIALIZABLE on PostgreSQL abort the loser (40001), a conflict;
+    the outcome per server and level is `_expected_loser`.
     """
     alice, bob = await sign_in("alice"), await sign_in("bob")
     synchronize_writes(backend, monkeypatch)

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from starlette.requests import Request
 
-from faststudio import Admin, AuthenticatedUser, BackendCapabilities, ConfigurationError
+from faststudio import ALL, Admin, AuthenticatedUser, BackendCapabilities, ConfigurationError
 from faststudio.contrib.auth import DatabaseAuthBackend
 from faststudio.contrib.auth import backend as backend_module
 from tests._stubs import StubAuthBackend
@@ -77,6 +77,9 @@ async def test_account_manager_edges(tmp_path: Path) -> None:
             with pytest.raises(LookupError):
                 await backend.set_password(session, "9", "whatever it is")
             assert await backend.resolve_accounts(session, [1, 9]) == {1: frozenset()}
+            session.add(AUTH.user(id=2, username="root", is_superuser=True))
+            await session.flush()
+            assert await backend.resolve_accounts(session, [1, 2]) == {1: frozenset(), 2: ALL}
             user = AuthenticatedUser(id="1", username="ann", auth_version="unknown")
             assert await backend.resolve(session, user) == frozenset()  # not cached: queried
     finally:

@@ -128,8 +128,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync
-      - name: Let the test user create triggers (binary logging is on)
-        run: docker exec "${{ job.services.mysql.id }}" mysql -uroot -pfaststudio-ci-root-only -e "SET PERSIST log_bin_trust_function_creators = 1"
+      - name: Let the test user create triggers (throwaway CI server; binary logging is on)
+        run: docker exec "${{ job.services.mysql.id }}" mysql -uroot -pfaststudio-ci-root-only -e "SET GLOBAL log_bin_trust_function_creators = 1"
       - name: MySQL tests (must run, not skip)
         shell: bash  # -eo pipefail: a failing pytest fails the step despite tee
         run: uv run pytest -m mysql -q | tee pytest.log && ! grep -q "skipped" pytest.log

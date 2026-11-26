@@ -41,7 +41,7 @@ inside the Python wheel.
 ## Quickstart
 
 ```bash
-pip install faststudio aiosqlite uvicorn   # aiosqlite: or asyncpg / "aiomysql[rsa]"
+pip install faststudio aiosqlite uvicorn   # aiosqlite: or asyncpg / "aiomysql[rsa]>=0.3"
 ```
 
 Tested in CI with SQLite (Python 3.11–3.13, `aiosqlite`), PostgreSQL 17

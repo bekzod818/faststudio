@@ -464,6 +464,46 @@ async def test_superuser_accounts_are_off_limits(sign_in: SignIn) -> None:
     assert (await root.delete(f"/models/users/items/{SU2}")).status_code == 204
 
 
+@pytest.mark.parametrize(
+    ("method", "body"),
+    [("patch", {"is_active": False}), ("patch", {"username": "x"}), ("delete", None)],
+)
+async def test_a_promotion_committed_meanwhile_is_seen(
+    sign_in: SignIn,
+    db: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    body: object,
+) -> None:
+    """Alice becomes a superuser after the manager's request loaded her, before the
+    lock: the write must still be refused (MySQL REPEATABLE READ: the locked re-read
+    is current, a plain snapshot read is not)."""
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from faststudio.api import write as write_module  # noqa: PLC0415
+
+    manager = await sign_in("manager")
+    original = vars(write_module)["check_escalation"]
+
+    async def promote_meanwhile(*args: object, **kwargs: object) -> None:
+        async with db.begin() as conn:  # root's concurrent promotion commits
+            await conn.execute(
+                update(AuthUser).where(AuthUser.id == ALICE).values(is_superuser=True)
+            )
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(write_module, "check_escalation", promote_meanwhile)
+    path = f"/models/users/items/{ALICE}"
+    response = await (manager.delete(path) if method == "delete" else manager.patch(path, body))
+    assert response.status_code in {403, 409}, response.text  # never a write
+    async with AsyncSession(db) as session:
+        alice = await session.get(AuthUser, ALICE)
+        assert alice is not None
+        # Untouched. (Where writers serialize, e.g. SQLite during a delete, the
+        # promotion itself is refused instead; either way the write never lands.)
+        assert (alice.username, alice.is_active) == ("alice", True)
+
+
 async def test_a_grant_takes_effect_on_the_next_request(sign_in: SignIn, db: AsyncEngine) -> None:
     manager = await sign_in("manager")
     response = await manager.patch(f"/models/users/items/{ALICE}", {"groups": [READERS]})

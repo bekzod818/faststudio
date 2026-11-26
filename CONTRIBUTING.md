@@ -47,8 +47,11 @@ those tests is skipped.
   `rsa` extra brings `cryptography`, which MySQL 8.4's default
   `caching_sha2_password` authentication needs.
 - One MySQL test creates a trigger. With binary logging on (the default), a
-  user without SUPER needs `SET PERSIST log_bin_trust_function_creators = 1`
-  (run once as root; the CI job does this).
+  user without SUPER may not. **Only on a throwaway local test server**, run
+  `SET GLOBAL log_bin_trust_function_creators = 1` as root (or start the
+  container with `--log-bin-trust-function-creators=1`); the CI job does the
+  same on its throwaway service. Never change this on a server holding real
+  data: FastStudio itself never needs it.
 - Do not share one `*_test` database between test runs that execute at the
   same time: each run drops the tables.
 
