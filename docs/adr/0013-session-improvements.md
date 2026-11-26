@@ -110,9 +110,12 @@ during M20 were approved by the maintainer on 2026-11-26.
   during the logout can still renew the cookie; "sign out everywhere" ends
   such a session for good. Likewise another tab may sign in as a different
   account between the in-place sign-in and the retried write.
-- **Gate details (v0.2 item 5).** A sign-in passes the gate: it starts a
-  new session and never renews the old one, and a queued sign-out still
-  runs after it. This lets the in-place sign-in work while a password change
-  waits for it, even with a sign-out queued behind. A session-ending POST is
-  given up after 30 s (`network_error`), so a server that never answers
-  cannot keep every other request blocked.
+- **Gate details (v0.2 item 5).** The in-place sign-in's login (and only
+  that one, while it is pending) passes the gate: it starts a new session
+  and never renews the old one, and a *queued* sign-out still runs after it.
+  This lets the in-place sign-in work while a password change waits for it,
+  even with a sign-out queued behind. Other logins, e.g. from the login
+  page, wait like every other request. A session-ending POST, headers and
+  body, is given up after 30 s (`network_error`: "the change may or may not
+  have been applied"), so a server that never answers cannot keep every
+  other request blocked.

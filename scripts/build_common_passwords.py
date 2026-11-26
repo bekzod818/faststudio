@@ -55,7 +55,7 @@ def download() -> bytes:
             break
         # URLError covers HTTP errors; IncompleteRead and OSError cover a
         # connection dropped mid-body.
-        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+        except (http.client.HTTPException, OSError) as exc:  # URLError is an OSError
             if attempt == ATTEMPTS:
                 msg = f"cannot download {URL} after {ATTEMPTS} attempts ({exc})"
                 raise SystemExit(msg) from None
@@ -100,7 +100,9 @@ def compress(text: str) -> bytes:
 
 def main(argv: list[str]) -> int:
     """Write the list, or with ``--check`` compare it with a fresh build."""
-    parser = argparse.ArgumentParser(prog="build_common_passwords.py", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="build_common_passwords.py", description=__doc__, allow_abbrev=False
+    )
     parser.add_argument(
         "--check", action="store_true", help="verify the committed list; write nothing"
     )

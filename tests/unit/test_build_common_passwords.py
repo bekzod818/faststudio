@@ -95,7 +95,16 @@ def test_an_oversized_download_is_refused(
         script.download()
 
 
-def test_unknown_arguments_never_rewrite_the_file(script: ModuleType) -> None:
+@pytest.mark.parametrize("argv", [["--chek"], ["--chec"], ["--check", "-v"]])
+def test_unknown_arguments_never_rewrite_the_file(
+    script: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str]
+) -> None:
+    """Abbreviations are refused too; nothing is downloaded or written."""
+    output = tmp_path / "list.txt.gz"
+    monkeypatch.setattr(script, "OUTPUT", output)
+    calls = _serve(monkeypatch, script, urllib.error.URLError("must not be called"))
     with pytest.raises(SystemExit) as exited:
-        script.main(["--chek"])
+        script.main(argv)
     assert exited.value.code == 2
+    assert calls == []
+    assert not output.exists()

@@ -91,18 +91,38 @@ public_router = APIRouter(prefix=API_PREFIX)
 protected_router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(current_user)])
 
 
-def rate_limit_username(username: str) -> str:
-    """Normalize a username for rate-limit keys (accents removed, NFKC, case-folded).
+#: Letters MySQL's utf8mb4_0900_ai_ci equates with plain ones although Unicode
+#: gives them no decomposition (stroke letters, ligatures).
+_FOLDED_LETTERS = str.maketrans(
+    {"ø": "o", "ł": "l", "đ": "d", "ð": "d", "ħ": "h", "ŧ": "t", "æ": "ae", "œ": "oe"}
+)
+#: Dropped from rate-limit keys: marks (accents, iota subscript, combining
+#: grapheme joiner) and format characters (soft hyphen, zero-width space and
+#: joiners, bidi marks), which accent-insensitive collations ignore.
+_DROPPED_CATEGORIES = frozenset({"Mn", "Me", "Cf"})
+_TATWEEL = "\u0640"  # Arabic elongation: ignored by MySQL's collation
 
-    Variants a database collation may treat as equal share one bucket:
-    "Admin" / " admin" / full-width letters, and "José" / "jose", which
-    MySQL's default utf8mb4_0900_ai_ci (accent-insensitive) signs in as the
-    same account. Folding more than the database only makes the limit
-    stricter, never looser.
+
+def rate_limit_username(username: str) -> str:
+    """Normalize a username for rate-limit keys.
+
+    Spellings a supported database's collation may sign in as one account
+    share one bucket: case and width ("Admin", full-width letters), accents
+    ("José" / "jose"), invisible characters (a soft hyphen or zero-width
+    space inside the name) and stroke letters or ligatures ("bjørn" /
+    "bjorn"), as MySQL's default utf8mb4_0900_ai_ci compares them. On
+    PostgreSQL, which compares exactly, this only makes the limit stricter.
     """
+    # Marks go before casefold, which would expand some of them (the Greek
+    # iota subscript into a full iota); stroke letters are mapped after it.
     decomposed = unicodedata.normalize("NFKD", username)
-    unaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return unicodedata.normalize("NFKC", unaccented).casefold().strip()
+    kept = "".join(
+        c
+        for c in decomposed
+        if c != _TATWEEL and unicodedata.category(c) not in _DROPPED_CATEGORIES
+    )
+    folded = unicodedata.normalize("NFKC", kept).casefold()
+    return folded.translate(_FOLDED_LETTERS).strip()
 
 
 def _user_response(user: AuthenticatedUser) -> UserResponse:

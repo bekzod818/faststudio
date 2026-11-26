@@ -104,9 +104,10 @@ listed under **Changed** or **Removed** with migration notes.
 
 ### Changed
 
-- The login rate limit treats spellings that differ only in accents as one
-  username (e.g. `José` and `jose`, which MySQL's default collation signs
-  in as the same account), in addition to case and width.
+- The login rate limit treats spellings that MySQL's default collation
+  signs in as one account as one username: besides case and width, also
+  accents (`José` / `jose`), invisible characters (soft hyphen, zero-width
+  space) and stroke letters (`ø` / `o`).
 - The admin UI's first download is about a quarter smaller (main script
   505 kB → 375 kB, gzip 160 kB → 121 kB): the login page and its form
   libraries load only when needed.
