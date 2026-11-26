@@ -1,7 +1,8 @@
 """The example application.
 
     export FASTSTUDIO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-    python -m examples.basic.create_admin admin
+    python -m examples.basic   # first start creates the tables; Ctrl-C
+    faststudio createadmin --app examples.basic.app:create_app --username admin
     python -m examples.basic   # or: uvicorn examples.basic.app:create_app --factory
 
 The database defaults to ``./example.db`` (``FASTSTUDIO_EXAMPLE_DATABASE_URL``
@@ -31,7 +32,7 @@ class UserAdmin(ModelAdmin, model=User):
     search_fields = ("username", "email")
     list_filter = ("is_active", "is_admin")
     # Never show or accept password hashes. Accounts (and passwords) are
-    # created with `python -m examples.basic.create_admin`.
+    # created with `faststudio createadmin --app examples.basic.app:create_app`.
     exclude = ("password_hash",)
     readonly_fields = ("created_at",)
     can_create = False

@@ -1,6 +1,10 @@
-"""Create an admin account (or reset its password).
+"""Restore access: create the account, or re-enable it as an admin (and reset its password).
 
     python -m examples.basic.create_admin USERNAME
+
+To create admins and change passwords, use the CLI instead:
+``faststudio createadmin --app examples.basic.app:create_app``. This module is
+for lockouts, which the CLI does not repair (it never changes flags).
 
 The password is read interactively (twice). Uses the same database as the
 app (FASTSTUDIO_EXAMPLE_DATABASE_URL, default ./example.db).

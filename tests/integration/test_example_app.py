@@ -243,3 +243,33 @@ def test_create_admin_cli_reports_database_errors_without_details(
     err = capsys.readouterr().err
     assert err.strip() == "Could not save the admin (DatabaseError)."
     assert "not a database" not in err  # the driver's message stays hidden
+
+
+@pytest.mark.usefixtures("secret")
+async def test_the_cli_manages_the_example_through_its_app_factory(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`faststudio createadmin --app examples.basic.app:create_app` (item 2)."""
+    import asyncio  # noqa: PLC0415
+
+    from faststudio.cli import CliIO, main  # noqa: PLC0415
+
+    monkeypatch.setenv("FASTSTUDIO_EXAMPLE_DATABASE_URL", database_url)
+    async with _started(create_app(database_url)):
+        pass  # the first start creates the tables and the demo data
+    passwords = [PASSWORD, PASSWORD]
+    out: list[str] = []
+    io = CliIO(
+        read_line=lambda _prompt: "",
+        read_password=lambda _prompt: passwords.pop(0),
+        is_tty=lambda: True,
+        write=out.append,
+        error=out.append,
+    )
+    argv = ["createadmin", "--app", "examples.basic.app:create_app", "--username", USERNAME]
+    # main() runs its own event loop: keep it off this test's loop.
+    code = await asyncio.to_thread(main, argv, io=io)
+    assert code == 0, out
+    assert out[-1].startswith(f"Created admin {USERNAME!r}")
+    async with _started(create_app(database_url)) as client:
+        assert (await _sign_in(client)).status_code == 200

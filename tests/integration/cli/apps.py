@@ -77,7 +77,7 @@ def no_accounts() -> Admin:
 
 
 not_an_admin = object()
-fastapi_app = FastAPI()  # callable, but not an Admin factory
+fastapi_app = FastAPI()  # an application with no Admin mounted
 
 
 def env_secret() -> Admin:
@@ -103,3 +103,96 @@ def binds_only() -> Admin:
     return Admin(
         FastAPI(), session_maker=maker, auth_backend=DatabaseAuthBackend(AUTH), secret_key=SECRET
     )
+
+
+def host_app() -> FastAPI:
+    """An application factory with one mounted Admin (like examples/basic)."""
+    app = FastAPI()
+    admin = Admin(
+        app,
+        engine=create_async_engine(DATABASE_URL),
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=SECRET,
+    )
+    admin.register(NoteAdmin)
+    return app
+
+
+#: The same application as a module-level object; tests set it once DATABASE_URL is known.
+mounted_app: FastAPI | None = None
+
+
+def no_admin_app() -> FastAPI:
+    """A FastAPI application without FastStudio."""
+    return FastAPI()
+
+
+def two_admins_app() -> FastAPI:
+    """Two Admins mounted on one application: ambiguous."""
+    app = FastAPI()
+    for base_url in ("/admin", "/staff"):
+        Admin(
+            app,
+            engine=create_async_engine(DATABASE_URL),
+            auth_backend=StubAuthBackend(),
+            secret_key=SECRET,
+            base_url=base_url,
+        )
+    return app
+
+
+def not_an_app() -> object:
+    """A factory returning something else."""
+    return {"app": "nope"}
+
+
+def needs_arguments(database_url: str) -> Admin:
+    """Not a zero-argument factory."""
+    return Admin(
+        FastAPI(),
+        engine=create_async_engine(database_url),
+        auth_backend=StubAuthBackend(),
+        secret_key=SECRET,
+    )
+
+
+def buggy_factory() -> Admin:
+    """A real factory with a bug inside: a TypeError while it runs."""
+    msg = "unsupported operand type(s) for +: 'int' and 'str'"
+    raise TypeError(msg)
+
+
+def nested_app() -> FastAPI:
+    """The admin's application mounted inside another one."""
+    outer = FastAPI()
+    outer.mount("/backoffice", host_app())
+    return outer
+
+
+#: A builtin without an inspectable signature (dict): called, returns a dict.
+builtin_factory = dict
+
+
+def wrapped_nested_app() -> FastAPI:
+    """The admin's application mounted inside another one, behind middleware."""
+    from starlette.middleware.gzip import GZipMiddleware  # noqa: PLC0415
+
+    outer = FastAPI()
+    outer.mount("/backoffice", GZipMiddleware(host_app()))
+    return outer
+
+
+def cyclic_app() -> FastAPI:
+    """An application mounted into itself (pathological): the search must end."""
+    app = host_app()
+    app.mount("/loop", app)
+    return app
+
+
+def router_mounted_app() -> FastAPI:
+    """The admin's application inside Mount(routes=[...]) (a bare Router)."""
+    from starlette.routing import Mount  # noqa: PLC0415
+
+    outer = FastAPI()
+    outer.router.routes.append(Mount("/staff", routes=[Mount("/area", app=host_app())]))
+    return outer

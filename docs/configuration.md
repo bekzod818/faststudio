@@ -363,10 +363,13 @@ guard too (`WriteIntent.action == "create"`).
 
 ## Command line (`faststudio`)
 
-The `faststudio` command manages accounts and permissions. `--app` names your
-`Admin` instance, or a function returning one (`module.path:attr`, imported
-from the current directory). It never creates tables: run your migrations
-first.
+The `faststudio` command manages accounts and permissions. `--app`
+(`module.path:attr`, imported from the current directory) names your `Admin`
+instance, your FastAPI application, or a zero-argument factory returning
+either (e.g. `main:create_app`). For an application, the one `Admin` mounted
+on it is used; with none or several mounted, the command stops and lists
+them (point `--app` at the `Admin` itself then). The application's lifespan
+never runs, and the CLI never creates tables: run your migrations first.
 
 | Command | Does |
 |---|---|
@@ -383,7 +386,15 @@ first.
   changed), 2 usage error (bad arguments, `--app` not found, input needed
   without a terminal). Database errors are reported by type only.
 - `Admin(..., sync_permissions_on_startup=True)` runs the sync (never
-  `--prune`) on the first admin request instead.
+  `--prune`) on the first admin request instead. Several workers or
+  replicas starting at once are fine: concurrent inserts of the same
+  permission are skipped, and a deadlock victim is retried after a short
+  backoff (at most 5 attempts within about 2 seconds), without logging.
+  Other failures, lock-wait timeouts included, are logged (type only) and
+  retried after 30 seconds; requests are served meanwhile.
+- `--app` calls a factory but never starts the application: what its
+  lifespan sets up (for example a database URL fetched at startup) is not
+  seen. Point `--app` at an `Admin` built with the right engine in that case.
 
 ## Users, groups and permissions (`contrib.auth`)
 

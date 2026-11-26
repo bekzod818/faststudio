@@ -158,6 +158,7 @@ addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
   "e2e: wheel-install smoke tests (slow, need a built wheel)",
   "postgres: need a PostgreSQL server (FASTSTUDIO_TEST_POSTGRES_URL)",
+  "mysql: need a MySQL server (FASTSTUDIO_TEST_MYSQL_URL)",
 ]
 filterwarnings = ["error"]
 

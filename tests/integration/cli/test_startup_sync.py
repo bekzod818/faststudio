@@ -125,3 +125,162 @@ async def test_a_finished_sync_is_not_repeated() -> None:
     )
     wrapper.done = True
     await wrapper._sync()  # returns before touching the database
+
+
+class _DeadlockError(Exception):
+    """A driver error with MySQL's deadlock number (1213)."""
+
+    def __init__(self) -> None:
+        super().__init__(1213, "Deadlock found when trying to get lock")
+
+
+@pytest.mark.parametrize(("conflicts", "logged"), [(1, False), (4, False), (5, True)])
+async def test_a_lost_race_is_retried_after_a_short_backoff(  # noqa: PLR0917 - fixtures and parameters
+    app: FastAPI,
+    db: AsyncEngine,
+    secret_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    conflicts: int,
+    logged: bool,
+) -> None:
+    """A deadlock victim (another process won): retried a few times, not logged."""
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+    Admin(
+        app,
+        engine=db,
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=secret_key,
+        sync_permissions_on_startup=True,
+    )
+    real = plan_sync
+    calls = {"n": 0}
+
+    async def contended(*args: object) -> object:
+        calls["n"] += 1
+        if calls["n"] <= conflicts:
+            raise OperationalError("INSERT ...", {}, _DeadlockError())
+        return await real(*args)  # type: ignore[arg-type]
+
+    async def no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("faststudio.api._startup_sync.plan_sync", contended)
+    monkeypatch.setattr("faststudio.api._startup_sync._sleep", no_wait)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://t") as http:
+        with caplog.at_level("WARNING", logger="faststudio"):
+            assert (await http.get("/admin/api/v1/auth/me")).status_code == 401
+    if logged:  # still contended after every attempt: the usual retry later
+        assert "Permission sync failed (OperationalError); retrying later." in caplog.text
+        assert calls["n"] == 5
+        assert await _codenames(db) == set()
+    else:
+        assert caplog.text == ""
+        assert calls["n"] == conflicts + 1
+        assert "faststudio_user.view" in await _codenames(db)
+    await db.dispose()
+
+
+async def test_other_database_errors_are_not_retried_at_once(
+    app: FastAPI,
+    db: AsyncEngine,
+    secret_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+
+    Admin(
+        app,
+        engine=db,
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=secret_key,
+        sync_permissions_on_startup=True,
+    )
+    calls = {"n": 0}
+
+    async def missing_table(*_args: object) -> object:
+        calls["n"] += 1
+        raise ProgrammingError("SELECT ...", {}, Exception("no such table"))
+
+    monkeypatch.setattr("faststudio.api._startup_sync.plan_sync", missing_table)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://t") as http:
+        with caplog.at_level("WARNING", logger="faststudio"):
+            await http.get("/admin/api/v1/auth/me")
+    assert calls["n"] == 1
+    assert "Permission sync failed (ProgrammingError); retrying later." in caplog.text
+    await db.dispose()
+
+
+class _LockWaitTimeoutError(Exception):
+    """MySQL's lock-wait timeout (1205): it already waited."""
+
+    def __init__(self) -> None:
+        super().__init__(1205, "Lock wait timeout exceeded")
+
+
+async def test_lock_wait_timeouts_are_not_retried_at_once(
+    app: FastAPI,
+    db: AsyncEngine,
+    secret_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Retrying a timeout would hold every admin request for several timeouts."""
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+    Admin(
+        app,
+        engine=db,
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=secret_key,
+        sync_permissions_on_startup=True,
+    )
+    calls = {"n": 0}
+
+    async def waited(*_args: object) -> object:
+        calls["n"] += 1
+        raise OperationalError("INSERT ...", {}, _LockWaitTimeoutError())
+
+    monkeypatch.setattr("faststudio.api._startup_sync.plan_sync", waited)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://t") as http:
+        with caplog.at_level("WARNING", logger="faststudio"):
+            await http.get("/admin/api/v1/auth/me")
+    assert calls["n"] == 1
+    assert "Permission sync failed (OperationalError); retrying later." in caplog.text
+    await db.dispose()
+
+
+async def test_retries_stop_within_the_time_budget(
+    app: FastAPI,
+    db: AsyncEngine,
+    secret_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+    Admin(
+        app,
+        engine=db,
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=secret_key,
+        sync_permissions_on_startup=True,
+    )
+    calls = {"n": 0}
+    clock = {"now": 1000.0}
+
+    async def deadlocked(*_args: object) -> object:
+        calls["n"] += 1
+        raise OperationalError("INSERT ...", {}, _DeadlockError())
+
+    async def slow_sleep(seconds: float) -> None:
+        clock["now"] += seconds + 1.0  # each wait takes a second longer than planned
+
+    monkeypatch.setattr("faststudio.api._startup_sync.plan_sync", deadlocked)
+    monkeypatch.setattr("faststudio.api._startup_sync._sleep", slow_sleep)
+    monkeypatch.setattr("faststudio.api._startup_sync._monotonic", lambda: clock["now"])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://t") as http:
+        await http.get("/admin/api/v1/auth/me")
+    assert calls["n"] == 2  # the third attempt would start after the 2 s budget
+    await db.dispose()

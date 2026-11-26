@@ -11,7 +11,7 @@ from typing import TypeVar, cast, overload
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
@@ -46,6 +46,41 @@ _T = TypeVar("_T")
 logger = logging.getLogger("faststudio")
 _A = TypeVar("_A", bound=type[ModelAdmin])
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+#: Attribute on the admin's `Mount` route pointing back at its `Admin`, so
+#: `faststudio --app main:app` can find it (lives exactly as long as the app).
+_ADMIN_ATTR = "_faststudio_admin"
+
+
+def mounted_admins(app: FastAPI) -> list[Admin]:
+    """Return the Admins mounted on `app` or its mounted sub-apps (private; for the CLI).
+
+    Follows mounts and ASGI middleware wrappers (their ``app`` attribute);
+    each application is visited once, so a mount cycle cannot loop.
+    """
+    found: dict[int, Admin] = {}
+    seen: set[int] = set()
+    pending: list[object] = [app]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        # An application has a router; Mount(routes=[...]) gives a bare Router.
+        router = getattr(current, "router", None) or current
+        wrapped = getattr(current, "app", None)  # e.g. CORSMiddleware(sub_app)
+        if wrapped is not None and router is current:
+            pending.append(wrapped)
+        for route in getattr(router, "routes", ()):
+            if not isinstance(route, Mount):
+                continue
+            admin = getattr(route, _ADMIN_ATTR, None)
+            if isinstance(admin, Admin):
+                found[id(admin)] = admin
+            else:
+                pending.append(route.app)  # e.g. app.mount("/api", sub_app)
+    return sorted(found.values(), key=lambda admin: admin._settings.base_url)
 
 
 class Admin:
@@ -190,7 +225,10 @@ class Admin:
                 registry=self._registry,
                 session_maker=self._session_maker,
             )
-        app.mount(base_url, mounted, name="faststudio")
+        # Built here, not with app.mount(), to tag this very route for the CLI.
+        route = Mount(base_url, app=mounted, name="faststudio")
+        setattr(route, _ADMIN_ATTR, self)
+        app.router.routes.append(route)
         if self._capabilities.register_admins is not None:
             # The backend's own models (e.g. contrib.auth users and groups).
             self._capabilities.register_admins(self)

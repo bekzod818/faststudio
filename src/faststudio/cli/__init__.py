@@ -1,8 +1,9 @@
 """The ``faststudio`` command line (ADR-0012).
 
 Commands: ``createadmin``, ``changepassword``, ``syncpermissions`` and
-``checkusers``, each with ``--app module.path:attr`` naming an `Admin` (or a
-zero-argument factory returning one). Passwords are only ever read from an
+``checkusers``, each with ``--app module.path:attr`` naming an `Admin`, a
+FastAPI application with one `Admin` mounted, or a zero-argument factory
+returning either. Passwords are only ever read from an
 interactive prompt, twice; ``--yes`` answers confirmations, never passwords.
 
 Exit codes: 0 success, 1 the command refused or failed, 2 usage error (bad
@@ -37,7 +38,10 @@ def _parser() -> argparse.ArgumentParser:
             "--app",
             required=True,
             metavar="MODULE:ATTR",
-            help="the Admin instance or a zero-argument factory, e.g. main:admin",
+            help=(
+                "the Admin, the FastAPI app it is mounted on, or a zero-argument "
+                "factory of either, e.g. main:admin or main:create_app"
+            ),
         )
         return sub
 
