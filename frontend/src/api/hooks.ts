@@ -1,4 +1,5 @@
 import {
+  type QueryClient,
   keepPreviousData,
   useInfiniteQuery,
   useMutation,
@@ -6,7 +7,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { LOGIN_PATH, LOGOUT_PATH, SIGN_OUT_EVERYWHERE_PATH, type QueryParams } from "./client";
+import {
+  LOGIN_PATH,
+  LOGOUT_PATH,
+  PASSWORD_PATH,
+  SIGN_OUT_EVERYWHERE_PATH,
+  type QueryParams,
+} from "./client";
 
 import type {
   ChangePasswordRequest,
@@ -216,20 +223,24 @@ export function useLogin() {
 }
 
 /**
- * Ends the session. The caller navigates away first and then drops cached
- * data with {@link useForgetSession}; clearing while the layout is still
- * mounted would make its queries refetch (and 401).
+ * POST a request that ends or replaces the session: query retries are
+ * cancelled first, then `ApiClient.endSession` drains and gates the rest.
  */
-/** Change the signed-in admin's password (`POST /auth/password`, 204). */
-export function useChangePassword() {
+function useEndSession(): <T = undefined>(path: string, body?: unknown) => Promise<T> {
   const api = useApi();
   const queryClient = useQueryClient();
+  return async (path, body) => {
+    await queryClient.cancelQueries(); // also stops their retries
+    return api.endSession(path, body);
+  };
+}
+
+/** Change the signed-in admin's password (`POST /auth/password`, 204). */
+export function useChangePassword() {
+  const endSession = useEndSession();
   return useMutation({
-    mutationFn: async (body: ChangePasswordRequest) => {
-      // A late response could otherwise replace the session it re-issues.
-      await queryClient.cancelQueries(); // also stops their retries
-      return api.endSession("/auth/password", body);
-    },
+    // A late response could otherwise replace the session it re-issues.
+    mutationFn: (body: ChangePasswordRequest) => endSession(PASSWORD_PATH, body),
   });
 }
 
@@ -241,36 +252,36 @@ export function useSetPassword(identity: string, pk: string) {
   });
 }
 
+/**
+ * Ends the session. The caller navigates away first and then drops cached
+ * data with {@link useForgetSession}; clearing while the layout is still
+ * mounted would make its queries refetch (and 401).
+ */
 export function useLogout() {
-  const api = useApi();
-  const queryClient = useQueryClient();
+  const endSession = useEndSession();
   return useMutation({
-    mutationFn: async () => {
-      // A response still in flight, or a retry, may carry a renewed session
-      // cookie: it must never arrive after the logout and bring it back.
-      await queryClient.cancelQueries();
-      return api.endSession(LOGOUT_PATH);
-    },
+    // A response still in flight, or a retry, may carry a renewed session
+    // cookie: it must never arrive after the logout and bring it back.
+    mutationFn: () => endSession(LOGOUT_PATH),
   });
 }
 
 /** End every session of the signed-in admin (`POST /auth/sign-out-everywhere`, 204). */
 export function useSignOutEverywhere() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async () => {
-      await queryClient.cancelQueries();
-      return api.endSession(SIGN_OUT_EVERYWHERE_PATH);
-    },
-  });
+  const endSession = useEndSession();
+  return useMutation({ mutationFn: () => endSession(SIGN_OUT_EVERYWHERE_PATH) });
 }
 
 /** Cancel and drop every cached query (the previous admin's data). */
 export function useForgetSession(): () => void {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.cancelQueries();
-    queryClient.removeQueries();
+    forgetSession(queryClient);
   };
+}
+
+/** Cancel and drop every cached query: nothing of the previous session may show. */
+export function forgetSession(queryClient: QueryClient): void {
+  void queryClient.cancelQueries();
+  queryClient.removeQueries();
 }

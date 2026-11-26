@@ -155,13 +155,14 @@ describe("api client", () => {
     const read = api.get("/models/a/items");
     const write = api.patch("/models/a/items/1", { x: 1 });
     const logout = api.endSession("/auth/logout");
-    await expect(read).rejects.toMatchObject({ name: "AbortError" });
-    await expect(write).rejects.toMatchObject({ name: "AbortError" });
+    // Not a network failure (no error toast, no retry): the session is ending.
+    await expect(read).rejects.toMatchObject({ code: "session_ending" });
+    await expect(write).rejects.toMatchObject({ code: "session_ending" });
     await vi.waitFor(() => {
       expect(events).toContain("POST /api/auth/logout");
     });
     // While the logout is on its way nothing else is sent (no retry, no click).
-    await expect(api.get("/models/a/items")).rejects.toMatchObject({ code: "network_error" });
+    await expect(api.get("/models/a/items")).rejects.toMatchObject({ code: "session_ending" });
     finishLogout(new Response(null, { status: 204 }));
     await expect(logout).resolves.toBeUndefined();
     expect(events).toEqual([
@@ -209,5 +210,31 @@ describe("api client", () => {
     ]);
     expect(onUnauthorized).not.toHaveBeenCalled();
     await expect(api.get("/later")).resolves.toBeUndefined(); // the gate is open again
+  });
+
+  it("queues a second endSession instead of aborting the first", async () => {
+    const sent: string[] = [];
+    let finishFirst: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      sent.push(url);
+      if (url.endsWith("/auth/password")) {
+        init?.signal?.addEventListener("abort", () => sent.push("aborted password"));
+        return new Promise<Response>((resolve) => {
+          finishFirst = resolve;
+        });
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
+    const change = api.endSession("/auth/password", { x: 1 });
+    const logout = api.endSession("/auth/logout");
+    await vi.waitFor(() => {
+      expect(sent).toEqual(["/api/auth/password"]);
+    });
+    finishFirst(new Response(null, { status: 204 }));
+    await expect(change).resolves.toBeUndefined();
+    await expect(logout).resolves.toBeUndefined();
+    expect(sent).toEqual(["/api/auth/password", "/api/auth/logout"]);
   });
 });

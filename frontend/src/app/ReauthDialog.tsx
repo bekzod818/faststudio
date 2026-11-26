@@ -4,9 +4,8 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEven
 import { ApiError, LOGIN_PATH } from "@/api/client";
 import type { UserResponse } from "@/api/contract.gen";
 import { useApi } from "@/api/context";
-import { queryKeys } from "@/api/hooks";
+import { forgetSession, queryKeys } from "@/api/hooks";
 import type { ReauthStore } from "@/app/reauth";
-import { forgetSession } from "@/app/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -129,6 +129,7 @@ describe("App", () => {
     routes["/auth/logout"] = () =>
       new Promise((resolve) => {
         setTimeout(() => {
+          events.push("logout answered");
           resolve(new Response(null, { status: 204 }));
         }, 1500);
       });
@@ -146,8 +147,11 @@ describe("App", () => {
     expect(logout).toBeGreaterThan(-1);
     expect(events.indexOf("aborted /meta")).toBeGreaterThan(-1);
     expect(events.indexOf("aborted /meta")).toBeLessThan(logout);
-    // Nothing that carries the old session cookie after the logout was sent.
-    expect(events.slice(logout + 1).filter((e) => !e.startsWith("aborted"))).toEqual([]);
+    // Nothing is sent while the logout is on its way (it would still carry the
+    // old cookie); afterwards the cookie is cleared, so later reads are harmless.
+    const answered = events.indexOf("logout answered");
+    expect(answered).toBeGreaterThan(logout);
+    expect(events.slice(logout + 1, answered).filter((e) => !e.startsWith("aborted"))).toEqual([]);
   }, 10_000);
 
   it("signs out everywhere after confirmation", async () => {

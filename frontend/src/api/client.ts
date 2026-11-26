@@ -12,7 +12,7 @@ export const CSRF_HEADER = "X-FastStudio-CSRF";
 export type ReauthOutcome = "retry" | "discard" | "cancel";
 
 /** Client-side codes in addition to the server's `ErrorCode`s. */
-export type ClientErrorCode = ErrorCode | "network_error";
+export type ClientErrorCode = ErrorCode | "network_error" | "session_ending";
 
 /** A failed API call, carrying the contract's error body. */
 export class ApiError extends Error {
@@ -68,6 +68,7 @@ export interface ApiClient {
 export const LOGIN_PATH = "/auth/login";
 export const LOGOUT_PATH = "/auth/logout";
 export const SIGN_OUT_EVERYWHERE_PATH = "/auth/sign-out-everywhere";
+export const PASSWORD_PATH = "/auth/password";
 const SESSION_PATHS = new Set([LOGIN_PATH, LOGOUT_PATH, SIGN_OUT_EVERYWHERE_PATH]);
 
 function isErrorBody(
@@ -103,6 +104,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const inFlight = new Map<AbortController, Promise<unknown>>();
   let closing = 0;
+  /** The previous endSession(): a second one waits instead of aborting its POST. */
+  let ending: Promise<unknown> = Promise.resolve();
 
   /** Abort every request in flight and wait until each has settled. */
   async function drain(): Promise<void> {
@@ -116,17 +119,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   /** Fetch with our own abort controller, also following the caller's signal. */
   function tracked(url: string, init: RequestInit, signal: AbortSignal | undefined) {
     const controller = new AbortController();
-    if (signal !== undefined) {
-      if (signal.aborted) controller.abort(signal.reason);
-      else
-        signal.addEventListener(
-          "abort",
-          () => {
-            controller.abort(signal.reason);
-          },
-          { once: true },
-        );
-    }
+    const follow = () => {
+      controller.abort(signal?.reason);
+    };
+    if (signal?.aborted === true) follow();
+    else signal?.addEventListener("abort", follow, { once: true });
     const pending = doFetch(url, { ...init, signal: controller.signal });
     const settled = pending.then(
       () => undefined,
@@ -135,6 +132,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     inFlight.set(controller, settled);
     void settled.then(() => {
       inFlight.delete(controller);
+      signal?.removeEventListener("abort", follow);
     });
     return { pending, aborted: () => controller.signal.aborted };
   }
@@ -150,7 +148,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     const { params, signal } = getOptions;
     if (closing > 0 && !endingSession) {
       // Nothing may reach the server (and renew the cookie) while the session ends.
-      throw new ApiError(0, "network_error", "The session is ending.");
+      throw new ApiError(0, "session_ending", "The session is ending.");
     }
     const headers = new Headers({ accept: "application/json" });
     if (method !== "GET") {
@@ -168,7 +166,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       response = await call.pending;
     } catch (error) {
       // Let TanStack Query recognise its own cancellations.
-      if (signal?.aborted || call.aborted()) throw error;
+      if (signal?.aborted) throw error;
+      // Aborted by endSession(): neither a network failure nor worth a retry.
+      if (call.aborted()) throw new ApiError(0, "session_ending", "The session is ending.");
       throw new ApiError(0, "network_error", "The server could not be reached.");
     }
     if (response.status === 204) return undefined as T;
@@ -213,14 +213,18 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body) => request("POST", path, body),
     patch: (path, body) => request("PATCH", path, body),
     delete: (path) => request("DELETE", path),
-    endSession: async <T>(path: string, body?: unknown): Promise<T> => {
+    endSession: <T>(path: string, body?: unknown): Promise<T> => {
       closing += 1;
-      try {
-        await drain();
-        return await request<T>("POST", path, body, {}, false, true);
-      } finally {
-        closing -= 1;
-      }
+      const run = ending.then(async () => {
+        try {
+          await drain();
+          return await request<T>("POST", path, body, {}, false, true);
+        } finally {
+          closing -= 1;
+        }
+      });
+      ending = run.catch(() => undefined);
+      return run;
     },
   };
 }

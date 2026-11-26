@@ -72,8 +72,8 @@ planned for v0.3. v0.2 should narrow the gap without adding storage.
 
 ## Implementation notes (M20, 2026-11-26)
 
-These follow the maintainer-approved M20 plan, except where marked
-**pending maintainer approval**.
+These follow the maintainer-approved M20 plan. Deviations reviewed
+during M20 were approved by the maintainer on 2026-11-26.
 
 - `session_idle_timeout` and `session_max_age` both accept int seconds or a
   `timedelta` (bool refused; at least 60 seconds, as `session_max_age`
@@ -94,7 +94,7 @@ These follow the maintainer-approved M20 plan, except where marked
   password in a dialog and retries; a different account discards the form.
 - Tests control time only by passing `clock=` to `SessionManager` from test
   code; the package has no time-shifting hook (a test checks this).
-- **Pending maintainer approval (deviation D1):** an unsafe request with a
+- **Approved deviation (D1, 2026-11-26):** an unsafe request with a
   session cookie that no longer loads (expired, idle) is
   `401 not_authenticated` before the CSRF check (previously `403
   csrf_failed`, since its token was bound to the dead session). This is what

@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 
-import { queryKeys } from "@/api/hooks";
+import { forgetSession, queryKeys } from "@/api/hooks";
 import { toast } from "@/lib/toast";
 import { SKIP_GUARD } from "@/lib/unsaved";
 
@@ -20,12 +20,6 @@ export function appPath(pathname: string, basename: string): string {
 /** The login route, remembering where to come back to. */
 export function loginPath(pathname: string, search = ""): string {
   return `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
-}
-
-/** Cancel and drop every cached query: nothing of the previous session may show. */
-export function forgetSession(queryClient: QueryClient): void {
-  void queryClient.cancelQueries();
-  queryClient.removeQueries();
 }
 
 interface RouterLike {
