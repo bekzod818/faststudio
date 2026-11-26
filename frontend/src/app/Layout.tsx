@@ -1,9 +1,9 @@
-import { KeyRound, LogOut } from "lucide-react";
+import { KeyRound, LogOut, MonitorX } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate, useNavigation } from "react-router-dom";
 
 import { ApiError } from "@/api/client";
-import { useForgetSession, useLogout, useMe, useMeta } from "@/api/hooks";
+import { useForgetSession, useLogout, useMe, useMeta, useSignOutEverywhere } from "@/api/hooks";
 import { modelIcon } from "@/app/icons";
 import { ThemeToggle } from "@/app/theme/ThemeToggle";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,8 @@ export function Layout() {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const signOutEverywhere = useSignOutEverywhere();
+  const [confirmEverywhere, setConfirmEverywhere] = useState(false);
 
   const leave = async () => {
     try {
@@ -45,6 +47,21 @@ export function Layout() {
         // An already-expired session is handled by the unauthorized handler.
         if (error instanceof ApiError && error.code === "not_authenticated") return;
         toast.error("Sign-out failed. Try again.");
+      },
+    });
+  };
+
+  const endEverySession = () => {
+    signOutEverywhere.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmEverywhere(false);
+        toast.success("Signed out on every device.");
+        void leave();
+      },
+      onError: (error) => {
+        setConfirmEverywhere(false);
+        if (error instanceof ApiError && error.code === "not_authenticated") return;
+        toast.error("Signing out everywhere failed. Try again.");
       },
     });
   };
@@ -89,6 +106,19 @@ export function Layout() {
             </NavLink>
           )}
           <ThemeToggle />
+          {meta.data?.capabilities.sign_out_everywhere === true && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setConfirmEverywhere(true);
+              }}
+              disabled={signOutEverywhere.isPending}
+            >
+              <MonitorX aria-hidden className="size-4" />
+              Sign out everywhere
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={signOut} disabled={logout.isPending}>
             <LogOut aria-hidden className="size-4" />
             Sign out
@@ -114,6 +144,22 @@ export function Layout() {
           onConfirm={signOut}
           onCancel={() => {
             setConfirmSignOut(false);
+          }}
+        />
+        <ConfirmDialog
+          open={confirmEverywhere}
+          title="Sign out everywhere?"
+          description={
+            hasUnsavedChanges()
+              ? "This ends your sessions in every browser and on every device, including this one. Your unsaved changes will be lost."
+              : "This ends your sessions in every browser and on every device, including this one."
+          }
+          confirmLabel="Sign out everywhere"
+          destructive
+          busy={signOutEverywhere.isPending}
+          onConfirm={endEverySession}
+          onCancel={() => {
+            setConfirmEverywhere(false);
           }}
         />
         {meta.data?.show_powered_by !== false && (

@@ -10,9 +10,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
-from faststudio._spa import ADMIN_ROOT_KEY
+from faststudio._spa import admin_cookie_path
 from faststudio.api._context import AdminContext
 from faststudio.api._paths import API_PREFIX
+from faststudio.api._session_refresh import offer_refresh
 from faststudio.api.errors import ApiError
 from faststudio.auth.backend import AuthenticatedUser
 from faststudio.auth.cookies import (
@@ -35,8 +36,21 @@ def get_context(request: Request) -> AdminContext:
 
 def cookie_path(request: Request) -> str:
     """Path for admin cookies: the admin's mount point (proxy prefix included)."""
-    path: str = request.scope.get(ADMIN_ROOT_KEY, request.scope.get("root_path", ""))
-    return path or "/"
+    return admin_cookie_path(request.scope)
+
+
+def ended_session_cookies(request: Request) -> list[str]:
+    """`Set-Cookie` values ending a session: no session, a fresh anonymous CSRF token.
+
+    Used by logout, sign out everywhere and every 401 for a dead session, so
+    the next login works with the anonymous token.
+    """
+    context = get_context(request)
+    path, secure = cookie_path(request), context.settings.secure_cookies
+    return [
+        expired_session_cookie(path=path, secure=secure),
+        csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure),
+    ]
 
 
 async def current_user(request: Request) -> AuthenticatedUser:
@@ -50,16 +64,22 @@ async def current_user(request: Request) -> AuthenticatedUser:
         or user is None
         or not hmac.compare_digest(user.auth_version.encode(), session.auth_version.encode())
     ):
-        cookies: list[str] = []
-        if raw is not None:
-            # Clear the dead session and its session-bound CSRF token together,
-            # so the next login works with the fresh anonymous token.
-            path, secure = cookie_path(request), context.settings.secure_cookies
-            cookies = [
-                expired_session_cookie(path=path, secure=secure),
-                csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure),
-            ]
+        # Clear the dead session and its session-bound CSRF token together.
+        cookies = ended_session_cookies(request) if raw is not None else []
         raise ApiError(401, "not_authenticated", set_cookies=cookies)
+    sessions = context.sessions
+    if sessions.refresh_due(session):
+        # Sliding idle timeout: same session id (CSRF stays bound) and issue
+        # time, so the absolute expiry is unchanged; Max-Age is what is left.
+        offer_refresh(
+            request.scope,
+            session_cookie(
+                sessions.refresh(session),
+                path=cookie_path(request),
+                max_age=sessions.remaining(session),
+                secure=context.settings.secure_cookies,
+            ),
+        )
     return user
 
 
@@ -125,12 +145,7 @@ async def me(user: CurrentUser) -> UserResponse:
 @protected_router.post("/auth/logout", status_code=204)
 async def logout(request: Request) -> Response:
     """End the session (cookie cleared) and issue a fresh anonymous CSRF token."""
-    context = get_context(request)
-    secure = context.settings.secure_cookies
-    path = cookie_path(request)
     response = Response(status_code=204)
-    response.headers.append("set-cookie", expired_session_cookie(path=path, secure=secure))
-    response.headers.append(
-        "set-cookie", csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure)
-    )
+    for cookie in ended_session_cookies(request):
+        response.headers.append("set-cookie", cookie)
     return response

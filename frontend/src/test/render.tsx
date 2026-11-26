@@ -10,13 +10,16 @@ import { DEV_CONFIG, type AppConfig } from "@/lib/config";
 import { ConfigProvider } from "@/lib/ConfigProvider";
 
 export function fakeClient(overrides: Partial<ApiClient> = {}): ApiClient {
-  return {
+  const client: ApiClient = {
     get: vi.fn().mockRejectedValue(new Error("unexpected GET")),
     post: vi.fn().mockRejectedValue(new Error("unexpected POST")),
     patch: vi.fn().mockRejectedValue(new Error("unexpected PATCH")),
     delete: vi.fn().mockRejectedValue(new Error("unexpected DELETE")),
+    // Session-ending POSTs go through `post`, so tests can mock one method.
+    endSession: (path, body) => client.post(path, body),
     ...overrides,
   };
+  return client;
 }
 
 export function renderRoutes(

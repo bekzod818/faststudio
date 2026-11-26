@@ -26,6 +26,11 @@ def verify(wheel: Path) -> list[str]:
         problems.append("no JavaScript bundle under faststudio/static/assets/")
     if any(n.endswith(".map") for n in names):
         problems.append("source maps must not ship in the wheel")
+    # Only the package and its metadata: never tests, examples or E2E launchers.
+    tops = {name.split("/", 1)[0] for name in names}
+    stray = sorted(t for t in tops if t != "faststudio" and not t.endswith(".dist-info"))
+    if stray:
+        problems.append(f"unexpected top-level entries: {', '.join(stray)}")
     return problems
 
 

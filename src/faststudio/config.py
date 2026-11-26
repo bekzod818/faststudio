@@ -63,6 +63,8 @@ class Settings:
     #: Lists never skip this many rows or more (OFFSET); see query/_params.py.
     max_list_offset: int
     show_powered_by: bool
+    #: Sessions also end after this long without a request (ADR-0013); None = off.
+    session_idle_timeout: timedelta | None = None
 
     @property
     def api_url(self) -> str:
@@ -77,16 +79,36 @@ def _require_type(name: str, value: object, expected: type) -> None:
         raise ConfigurationError(msg)
 
 
+def _duration(name: str, value: object) -> timedelta:
+    """Normalize int seconds or a timedelta (never bool) and check the minimum."""
+    if isinstance(value, timedelta):
+        duration = value
+    elif isinstance(value, int) and not isinstance(value, bool):
+        try:
+            duration = timedelta(seconds=value)
+        except OverflowError:
+            msg = f"{name} is too large."
+            raise ConfigurationError(msg) from None
+    else:
+        msg = f"{name} must be int seconds or timedelta, got {type(value).__name__}."
+        raise ConfigurationError(msg)
+    if duration < MIN_SESSION_MAX_AGE:
+        msg = f"{name} must be at least {MIN_SESSION_MAX_AGE.total_seconds():.0f} seconds."
+        raise ConfigurationError(msg)
+    return duration
+
+
 def resolve_settings(
     *,
     secret_key: str | None,
     title: str,
     base_url: str,
-    session_max_age: timedelta,
+    session_max_age: int | timedelta,
     secure_cookies: bool,
     max_page_size: int,
     max_list_offset: int,
     show_powered_by: bool,
+    session_idle_timeout: int | timedelta | None = None,
 ) -> Settings:
     """Validate raw options and return :class:`Settings`.
 
@@ -95,7 +117,12 @@ def resolve_settings(
 
     """
     _require_type("title", title, str)
-    _require_type("session_max_age", session_max_age, timedelta)
+    max_age = _duration("session_max_age", session_max_age)
+    idle = (
+        None
+        if session_idle_timeout is None
+        else _duration("session_idle_timeout", session_idle_timeout)
+    )
     _require_type("secure_cookies", secure_cookies, bool)
     _require_type("max_page_size", max_page_size, int)
     _require_type("max_list_offset", max_list_offset, int)
@@ -107,8 +134,8 @@ def resolve_settings(
     if any(unicodedata.category(ch) in {"Cc", "Cf"} for ch in clean_title):
         msg = "title must not contain control or invisible formatting characters."
         raise ConfigurationError(msg)
-    if session_max_age < MIN_SESSION_MAX_AGE:
-        msg = f"session_max_age must be at least {MIN_SESSION_MAX_AGE.total_seconds():.0f} seconds."
+    if idle is not None and idle > max_age:
+        msg = "session_idle_timeout must not exceed session_max_age."
         raise ConfigurationError(msg)
     if not 1 <= max_page_size <= MAX_PAGE_SIZE_LIMIT:
         msg = f"max_page_size must be between 1 and {MAX_PAGE_SIZE_LIMIT}."
@@ -120,7 +147,8 @@ def resolve_settings(
         secret_key=resolve_secret_key(secret_key),
         title=clean_title,
         base_url=normalize_base_url(base_url),
-        session_max_age=session_max_age,
+        session_max_age=max_age,
+        session_idle_timeout=idle,
         secure_cookies=secure_cookies,
         max_page_size=max_page_size,
         max_list_offset=max_list_offset,

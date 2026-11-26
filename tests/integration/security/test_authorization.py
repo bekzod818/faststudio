@@ -533,6 +533,7 @@ SESSION_ONLY = {
     "/api/v1/auth/me",
     "/api/v1/auth/logout",
     "/api/v1/auth/password",  # one's own account only
+    "/api/v1/auth/sign-out-everywhere",  # one's own sessions only
 }
 
 

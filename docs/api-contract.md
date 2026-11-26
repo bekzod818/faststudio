@@ -55,7 +55,13 @@ built, a `503` placeholder page is served.
 - `POST /auth/login` accepts an anonymous token; on success it sets
   `faststudio_session` and a new token bound to the session.
 - Every other unsafe request needs the session-bound token. Missing or wrong
-  tokens get `403 csrf_failed` before routing (also for unknown paths).
+  tokens get `403 csrf_failed` before routing (also for unknown paths). If
+  the request carries a session cookie that is no longer valid (expired,
+  idle, tampered), it gets `401 not_authenticated` instead, also before
+  routing, with that cookie cleared and an anonymous token set.
+- A `401 not_authenticated` answer to an unsafe request means nothing was
+  executed, so a client may sign in again and resend the same request (the
+  admin UI does this once).
 - `POST /auth/logout` clears the session and issues a new anonymous token.
 - Any `401 not_authenticated` caused by an invalid session also clears it.
 
@@ -181,6 +187,24 @@ echo a password.
   checked before the record is looked up), then the edit hook on the
   record (`403`; a record hidden from retrieve is `404`); never for one's
   own account (`403`; use `/auth/password`).
+
+### Sessions
+
+`POST /auth/sign-out-everywhere` (no body) ends every session of the
+signed-in admin, this one included. It exists only when the auth backend
+provides `session_revocation` (otherwise `404`);
+`MetaResponse.capabilities.sign_out_everywhere` says whether it does. It
+needs a session (`401`) and the CSRF header. On success (`204`) the session
+cookie is cleared and an anonymous CSRF cookie is set, as on logout; every
+other session of the account gets `401` on its next request.
+
+With `session_idle_timeout`, any authenticated API response may carry a
+renewed `faststudio_session` cookie (same session, later last-seen time;
+`Max-Age` is the remaining absolute lifetime). Responses are always
+`Cache-Control: no-store`. A `401` never renews the cookie. A write whose
+session cookie has expired is `401 not_authenticated` (not `403
+csrf_failed`); the response clears that cookie and sets an anonymous CSRF
+cookie, so the client can sign in again and resend the write.
 
 ### Choices
 

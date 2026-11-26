@@ -18,6 +18,14 @@ from faststudio.schemas.contract import SCHEMA_VERSION, SpaConfig
 HEAD_MARKER = "<!-- faststudio:head -->"
 #: Scope key holding the admin mount root as the browser sees it (proxy prefix + base_url).
 ADMIN_ROOT_KEY = "faststudio.admin_root"
+
+
+def admin_cookie_path(scope: Scope) -> str:
+    """Path for admin cookies: the browser-visible admin root (proxy prefix included)."""
+    path: str = scope.get(ADMIN_ROOT_KEY, scope.get("root_path", ""))
+    return path or "/"
+
+
 _TITLE = re.compile(r"<title>.*?</title>", re.DOTALL)
 _JSON_ESCAPES = {"<": "\\u003c", ">": "\\u003e", "&": "\\u0026"}
 # First path segments that never fall back to the SPA.

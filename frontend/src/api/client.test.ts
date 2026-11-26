@@ -123,11 +123,118 @@ describe("api client", () => {
     const controller = new AbortController();
     const abort = new DOMException("aborted", "AbortError");
     const fetchMock = vi.fn<typeof fetch>((_input, init) => {
-      expect(init?.signal).toBe(controller.signal);
+      expect(init?.signal?.aborted).toBe(false);
       controller.abort();
+      expect(init?.signal?.aborted).toBe(true); // the caller's signal is followed
       return Promise.reject(abort);
     });
     const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
     await expect(api.get("/x", { signal: controller.signal })).rejects.toBe(abort);
+  });
+
+  it("ends a session only after every request in flight settled (ADR-0013)", async () => {
+    const events: string[] = [];
+    let finishLogout: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      events.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/auth/logout")) {
+        return new Promise<Response>((resolve) => {
+          finishLogout = resolve;
+        });
+      }
+      if (url.endsWith("/later")) return Promise.resolve(jsonResponse(200, { ok: true }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          events.push(`aborted ${url}`);
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+    const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
+    const read = api.get("/models/a/items");
+    const write = api.patch("/models/a/items/1", { x: 1 });
+    const logout = api.endSession("/auth/logout");
+    // Not a network failure (no error toast, no retry): the session is ending.
+    await expect(read).rejects.toMatchObject({ code: "session_ending" });
+    await expect(write).rejects.toMatchObject({ code: "session_ending" });
+    await vi.waitFor(() => {
+      expect(events).toContain("POST /api/auth/logout");
+    });
+    // While the logout is on its way nothing else is sent (no retry, no click).
+    await expect(api.get("/models/a/items")).rejects.toMatchObject({ code: "session_ending" });
+    finishLogout(new Response(null, { status: 204 }));
+    await expect(logout).resolves.toBeUndefined();
+    expect(events).toEqual([
+      "GET /api/models/a/items",
+      "PATCH /api/models/a/items/1",
+      "aborted /api/models/a/items",
+      "aborted /api/models/a/items/1",
+      "POST /api/auth/logout",
+    ]);
+    await expect(api.get("/later")).resolves.toEqual({ ok: true }); // open again
+  });
+
+  it("lets the admin sign in again when a password change meets an ended session", async () => {
+    const sent: string[] = [];
+    let signedIn = false;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      sent.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/auth/login")) {
+        signedIn = true;
+        return Promise.resolve(jsonResponse(200, { user: { id: "1", username: "a" } }));
+      }
+      return Promise.resolve(
+        signedIn
+          ? new Response(null, { status: 204 })
+          : jsonResponse(401, { error: { code: "not_authenticated", message: "Sign in." } }),
+      );
+    });
+    const onUnauthorized = vi.fn();
+    const api = createApiClient({
+      apiUrl: "/api",
+      fetch: fetchMock,
+      onUnauthorized,
+      // The dialog: signs in through the same client while the change waits.
+      reauthenticate: async () => {
+        await api.post("/auth/login", { username: "a", password: "p" });
+        return "retry";
+      },
+    });
+    await expect(api.endSession("/auth/password", { x: 1 })).resolves.toBeUndefined();
+    expect(sent).toEqual([
+      "POST /api/auth/password",
+      "POST /api/auth/login",
+      "POST /api/auth/password",
+    ]);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    await expect(api.get("/later")).resolves.toBeUndefined(); // the gate is open again
+  });
+
+  it("queues a second endSession instead of aborting the first", async () => {
+    const sent: string[] = [];
+    let finishFirst: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      sent.push(url);
+      if (url.endsWith("/auth/password")) {
+        init?.signal?.addEventListener("abort", () => sent.push("aborted password"));
+        return new Promise<Response>((resolve) => {
+          finishFirst = resolve;
+        });
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
+    const change = api.endSession("/auth/password", { x: 1 });
+    const logout = api.endSession("/auth/logout");
+    await vi.waitFor(() => {
+      expect(sent).toEqual(["/api/auth/password"]);
+    });
+    finishFirst(new Response(null, { status: 204 }));
+    await expect(change).resolves.toBeUndefined();
+    await expect(logout).resolves.toBeUndefined();
+    expect(sent).toEqual(["/api/auth/password", "/api/auth/logout"]);
   });
 });

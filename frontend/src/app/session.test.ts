@@ -30,7 +30,7 @@ describe("unauthorized handler", () => {
     toast.clear();
   });
 
-  function setup(pathname: string, signedIn: boolean) {
+  function setup(pathname: string, signedIn: boolean, reauthenticating = false) {
     const queryClient = new QueryClient();
     if (signedIn) queryClient.setQueryData(queryKeys.me, { user: { id: "1", username: "a" } });
     const navigate = vi.fn().mockResolvedValue(undefined);
@@ -38,6 +38,7 @@ describe("unauthorized handler", () => {
       queryClient,
       basename: "/admin",
       router: () => ({ state: { location: { pathname, search: "?q=x" } }, navigate }),
+      reauthenticating: () => reauthenticating,
     });
     return { queryClient, navigate, handler };
   }
@@ -57,6 +58,14 @@ describe("unauthorized handler", () => {
     const { navigate, handler } = setup("/admin/", false);
     handler();
     expect(navigate).not.toHaveBeenCalled();
+    expect(getToasts()).toHaveLength(0);
+  });
+
+  it("waits while the in-place sign-in dialog is open (failed reads reload after it)", () => {
+    const { queryClient, navigate, handler } = setup("/admin/models/users", true, true);
+    handler();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.me)).toBeDefined(); // cache kept
     expect(getToasts()).toHaveLength(0);
   });
 

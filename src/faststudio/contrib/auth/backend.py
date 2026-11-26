@@ -29,9 +29,14 @@ from faststudio.auth.passwords import (
     prepare_dummy_hash,
     verify_password_async,
 )
+from faststudio.auth.session import new_session_token
 from faststudio.auth.validators import DEFAULT_VALIDATORS, PasswordValidator
 from faststudio.contrib.auth.admins import SECRET_FIELDS, group_admin, permission_admin, user_admin
-from faststudio.contrib.auth.models import AuthModels, UserMixin, normalize_username
+from faststudio.contrib.auth.models import (
+    AuthModels,
+    UserMixin,
+    normalize_username,
+)
 
 if TYPE_CHECKING:
     from faststudio import Admin
@@ -106,6 +111,7 @@ class DatabaseAuthBackend:
             ),
             accounts=self,
             username_audit=self,
+            session_revocation=self,
             password_endpoints=True,
             register_admins=self._register if register_admins else None,
         )
@@ -292,6 +298,20 @@ class DatabaseAuthBackend:
         session.add(row)
         await session.flush()
         return str(row.id)
+
+    # ------------------------------------------------------------- SessionRevocation
+
+    async def rotate_session_token(self, session: AsyncSession, account_id: str) -> None:
+        """Store a fresh session token, ending every session (the caller commits).
+
+        Raises:
+            LookupError: if the account does not exist.
+
+        """
+        row = await self._row(session, account_id)
+        if row is None:
+            raise LookupError(account_id)
+        row.session_token = new_session_token()
 
     # ------------------------------------------------------------- UsernameAudit
 

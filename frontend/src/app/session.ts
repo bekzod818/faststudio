@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 
-import { queryKeys } from "@/api/hooks";
+import { forgetSession, queryKeys } from "@/api/hooks";
 import { toast } from "@/lib/toast";
 import { SKIP_GUARD } from "@/lib/unsaved";
 
@@ -36,12 +36,14 @@ export function createUnauthorizedHandler(options: {
   queryClient: QueryClient;
   router: () => RouterLike;
   basename: string;
+  /** While the in-place sign-in dialog is open, failed reads wait for it. */
+  reauthenticating?: () => boolean;
 }): () => void {
   return () => {
     const { queryClient } = options;
     if (queryClient.getQueryData(queryKeys.me) === undefined) return;
-    void queryClient.cancelQueries();
-    queryClient.removeQueries();
+    if (options.reauthenticating?.() === true) return;
+    forgetSession(queryClient);
     const router = options.router();
     const { pathname, search } = router.state.location;
     const path = appPath(pathname, options.basename);

@@ -47,3 +47,13 @@ new tables or infrastructure, plus protection against CSRF.
 - No DB or Redis required for sessions.
 - Logout cannot revoke a stolen cookie before expiry; mitigated by HttpOnly,
   short lifetime and `auth_version`. Documented in the threat model.
+
+**Amendment (v0.2, ADR-0013).** The cookie gains a fifth item, the
+last-seen time, only when `session_idle_timeout` is set; without it the
+cookie stays the 4-item format above, and 4-item cookies are always
+accepted. "Sign out everywhere" revokes every session of an account
+without server-side state, through a random per-account token that is part
+of `auth_version`. A stolen cookie in active use is still valid until
+`session_max_age` unless the user signs out everywhere. An unsafe API request
+whose session cookie is present but no longer valid is `401` before the CSRF
+token check (see the ADR-0013 implementation notes).

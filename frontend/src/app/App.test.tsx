@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/api/client";
-import { toast } from "@/lib/toast";
+import { getToasts, toast } from "@/lib/toast";
 
 import { App } from "./App";
 import { shouldRetry } from "./query";
@@ -26,13 +27,27 @@ function json(status: number, body: unknown): Response {
 const NOT_AUTHENTICATED = { error: { code: "not_authenticated", message: "Sign in." } };
 
 describe("App", () => {
-  let routes: Record<string, () => Response>;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let routes: Record<string, () => Response | Promise<Response>>;
+  /** Paths whose response never arrives; aborting rejects them (logged in `events`). */
+  let hanging: Set<string>;
+  let events: string[];
+  let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>>;
 
   beforeEach(() => {
     routes = {};
-    fetchMock = vi.fn((input: string) => {
+    hanging = new Set();
+    events = [];
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
       const path = input.replace(/^\/admin\/api\/v1/u, "");
+      events.push(`${init?.method ?? "GET"} ${path}`);
+      if (hanging.has(path)) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            events.push(`aborted ${path}`);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        });
+      }
       const handler = routes[path];
       return Promise.resolve(
         handler ? handler() : json(404, { error: { code: "not_found", message: "x" } }),
@@ -80,6 +95,93 @@ describe("App", () => {
       });
     },
   );
+
+  const metaWith = (signOutEverywhere: boolean) => () =>
+    json(200, {
+      schema_version: "1",
+      version: "0",
+      title: "Test Admin",
+      show_powered_by: true,
+      user: ME.user,
+      models: [],
+      capabilities: { change_password: false, sign_out_everywhere: signOutEverywhere },
+    });
+
+  it.each([true, false])(
+    "offers sign out everywhere only when the backend does (%s)",
+    async (offered) => {
+      routes["/auth/me"] = () => json(200, ME);
+      routes["/meta"] = metaWith(offered);
+      window.history.replaceState(null, "", "/admin/");
+      render(<App config={CONFIG} />);
+      expect(await screen.findByRole("button", { name: "Sign out" })).toBeVisible();
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Sign out everywhere" }) !== null).toBe(
+          offered,
+        );
+      });
+    },
+  );
+
+  it("aborts requests in flight before signing out, and sends nothing until it is done", async () => {
+    routes["/auth/me"] = () => json(200, ME);
+    // Slower than TanStack's 1 s retry delay: an aborted query must not retry meanwhile.
+    routes["/auth/logout"] = () =>
+      new Promise((resolve) => {
+        setTimeout(() => {
+          events.push("logout answered");
+          resolve(new Response(null, { status: 204 }));
+        }, 1500);
+      });
+    hanging.add("/meta"); // e.g. a slow read still running when Sign out is clicked
+    window.history.replaceState(null, "", "/admin/");
+    render(<App config={CONFIG} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/admin/login");
+      },
+      { timeout: 4000 },
+    );
+    const logout = events.indexOf("POST /auth/logout");
+    expect(logout).toBeGreaterThan(-1);
+    expect(events.indexOf("aborted /meta")).toBeGreaterThan(-1);
+    expect(events.indexOf("aborted /meta")).toBeLessThan(logout);
+    // Nothing is sent while the logout is on its way (it would still carry the
+    // old cookie); afterwards the cookie is cleared, so later reads are harmless.
+    const answered = events.indexOf("logout answered");
+    expect(answered).toBeGreaterThan(logout);
+    expect(events.slice(logout + 1, answered).filter((e) => !e.startsWith("aborted"))).toEqual([]);
+  }, 10_000);
+
+  it("signs out everywhere after confirmation", async () => {
+    routes["/auth/me"] = () => json(200, ME);
+    routes["/meta"] = metaWith(true);
+    routes["/auth/sign-out-everywhere"] = () => new Response(null, { status: 204 });
+    window.history.replaceState(null, "", "/admin/");
+    render(<App config={CONFIG} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sign out everywhere?" });
+    expect(dialog).toHaveTextContent(/every browser and on every device/u);
+    const posted = () =>
+      fetchMock.mock.calls.filter(([url]) => url.endsWith("/auth/sign-out-everywhere"));
+    // Cancelling sends nothing.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(posted()).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog", { name: "Sign out everywhere?" })).getByRole(
+        "button",
+        { name: "Sign out everywhere" },
+      ),
+    );
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/admin/login");
+    });
+    expect(posted()).toHaveLength(1);
+    expect((posted()[0]?.[1] as RequestInit).method).toBe("POST");
+    expect(getToasts().map((t) => t.message)).toContain("Signed out on every device.");
+  });
 
   it("returns an expired session to login with the in-app path", async () => {
     routes["/auth/me"] = () => json(200, ME);

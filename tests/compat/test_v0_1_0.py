@@ -207,3 +207,33 @@ async def test_v0_1_0_every_admin_has_full_access(example_app: FastAPI, example_
             assert created.status_code == 201, created.text
             users = (await s.client.get(f"{API}/models/users/items")).json()
             assert {u["data"]["username"] for u in users["items"]} == {"demo-admin", "second-admin"}
+
+
+async def test_v0_1_0_session_cookies_are_unchanged(example_app: FastAPI) -> None:
+    """Without session_idle_timeout the cookie is the v0.1 layout, and v0.1 cookies load."""
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    from itsdangerous import URLSafeSerializer  # noqa: PLC0415
+
+    v01 = URLSafeSerializer(
+        os.environ["FASTSTUDIO_SECRET_KEY"],
+        salt="faststudio.session",
+        signer_kwargs={"digest_method": hashlib.sha256},
+    )
+    async with example_app.router.lifespan_context(example_app), _client(example_app) as s:
+        assert await s.sign_in("demo-admin", "a long demo passphrase") == 200
+        user_id, auth_version, session_id, issued_at = v01.loads(
+            s.client.cookies["faststudio_session"]
+        )
+        assert isinstance(session_id, str)
+        assert isinstance(issued_at, int)
+        # A cookie signed exactly as v0.1 signed it (another session id) is accepted.
+        crafted = v01.dumps([user_id, auth_version, "v01-session", int(time.time())])
+        [jar] = [c for c in s.client.cookies.jar if c.name == "faststudio_session"]
+        s.client.cookies.delete("faststudio_session")
+        s.client.cookies.set("faststudio_session", crafted, domain=jar.domain, path=jar.path)
+        assert s.client.cookies["faststudio_session"] == crafted
+        me = await s.client.get(f"{API}/auth/me")
+        assert me.status_code == 200
+        assert "faststudio_session" not in me.headers.get("set-cookie", "")  # no refresh

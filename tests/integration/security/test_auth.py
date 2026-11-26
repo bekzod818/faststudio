@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator, Callable
 from http.cookies import SimpleCookie
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from faststudio import Admin, InMemoryRateLimiter, ModelUserBackend, hash_password
+from faststudio import Admin, InMemoryRateLimiter, hash_password
 from faststudio.api._paths import LOGIN_PATH
 from faststudio.security.rate_limit import CLIENT_MAX_ATTEMPTS
-from tests.factories.models import AdminUser, Base
+from tests.factories.models import AdminUser
+from tests.integration.security._accounts import AuthAdminFactory
 
 CSRF_COOKIE = "faststudio_csrftoken"
 SESSION_COOKIE = "faststudio_session"
@@ -32,54 +30,6 @@ INVALID = {
         "details": None,
     }
 }
-
-
-@pytest.fixture
-async def db_engine() -> AsyncIterator[AsyncEngine]:
-    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=[Base.metadata.tables["admin_users"]])
-    maker = async_sessionmaker(engine)
-    async with maker() as session:
-        session.add_all(
-            [
-                AdminUser(username="admin", password_hash=hash_password("pw-admin"), is_admin=True),
-                AdminUser(username="staff", password_hash=hash_password("pw-staff")),
-                AdminUser(
-                    username="gone",
-                    password_hash=hash_password("pw-gone"),
-                    is_admin=True,
-                    is_active=False,
-                ),
-            ]
-        )
-        await session.commit()
-    yield engine
-    await engine.dispose()
-
-
-AuthAdminFactory = Callable[..., Admin]
-
-
-@pytest.fixture
-def make_auth_admin(
-    app: FastAPI,
-    db_engine: AsyncEngine,
-    secret_key: str,
-    static_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> AuthAdminFactory:
-    def factory(**options: Any) -> Admin:
-        monkeypatch.setattr("faststudio.admin._STATIC_DIR", static_dir)
-        return Admin(
-            app,
-            engine=db_engine,
-            auth_backend=ModelUserBackend(AdminUser),
-            secret_key=secret_key,
-            **options,
-        )
-
-    return factory
 
 
 @pytest.fixture

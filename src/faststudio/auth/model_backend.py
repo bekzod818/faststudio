@@ -30,12 +30,16 @@ from faststudio.auth.passwords import (
     prepare_dummy_hash,
     verify_password_async,
 )
+from faststudio.auth.session import new_session_token
 from faststudio.auth.validators import DEFAULT_VALIDATORS, PasswordValidator
 from faststudio.exceptions import ConfigurationError
 from faststudio.introspection._columns import base_type, is_text, mapped_columns
 from faststudio.introspection._types import value_type
 
 logger = logging.getLogger("faststudio.auth")
+
+# `new_session_token()` is 43 characters: the shortest session token column.
+_MIN_SESSION_TOKEN_LENGTH = 43
 
 
 def _parse_int(raw: str) -> int:
@@ -76,7 +80,8 @@ class ModelUserBackend:
 
     ``auth_version`` is derived from the password hash and both flags, so
     changing the password, deactivating the user or revoking admin rights
-    invalidates all of their sessions.
+    invalidates all of their sessions. With ``session_token_field``, a random
+    per-user token joins them and admins can "sign out everywhere".
 
     When the user model is registered in the admin, writes to it are guarded
     (ADR-0009): an admin cannot clear their own sign-in flags or delete their
@@ -97,6 +102,7 @@ class ModelUserBackend:
         is_admin_field: str | None = "is_admin",
         password_validators: Sequence[PasswordValidator] = DEFAULT_VALIDATORS,
         password_endpoints: bool = False,
+        session_token_field: str | None = None,
     ) -> None:
         """Validate the model and column names; raises `ConfigurationError` on mistakes.
 
@@ -108,6 +114,14 @@ class ModelUserBackend:
         enables ``POST /auth/password`` and the set-password endpoint; it is
         off because every admin of this backend holds every permission, so
         any admin could then reset another admin's password.
+
+        `session_token_field` names a string column (at least 43 characters,
+        or unbounded) holding a random token that is part of every session's
+        ``auth_version``: rotating it ("sign out everywhere") ends all of the
+        user's sessions. Turning it on changes every ``auth_version`` once,
+        which signs everybody out. NULL or empty values still sign in; the
+        first rotation sets one. Exclude the column from the user model's
+        admin (it is a secret field).
         """
         candidate = cast("object", model)  # untyped callers can pass anything
         mapper: object = (
@@ -135,6 +149,12 @@ class ModelUserBackend:
         self._password_field = password_field
         self._is_active_field = self._flag(columns, "is_active_field", is_active_field)
         self._is_admin_field = self._flag(columns, "is_admin_field", is_admin_field)
+        self._token_field = self._token(
+            columns,
+            session_token_field,
+            # The input fields feed the password-similarity checks: never a token.
+            {username_field, password_field, is_active_field, is_admin_field, "email"},
+        )
         if not _is_unique(self._username):
             logger.warning(
                 "ModelUserBackend: %s.%s is not declared unique; duplicate usernames "
@@ -164,9 +184,14 @@ class ModelUserBackend:
             msg = "ModelUserBackend: password_endpoints must be a bool."
             raise ConfigurationError(msg)
         inputs = [username_field, *(["email"] if _is_text_column(columns.get("email")) else [])]
+        token = self._token_field
         self._capabilities = BackendCapabilities(
             account_guard=FlagAccountGuard(
-                model, self._pk_field, flags, admin_flag=self._is_admin_field
+                model,
+                self._pk_field,
+                flags,
+                admin_flag=self._is_admin_field,
+                secret_fields=(token,) if token else (),
             ),
             accounts=_ModelAccounts(
                 model,
@@ -178,6 +203,10 @@ class ModelUserBackend:
                 password_field=password_field,
                 input_fields=tuple(inputs),
                 validators=cast("tuple[PasswordValidator, ...]", validators),
+                token_field=token,
+            ),
+            session_revocation=(
+                _TokenRevocation(model, parse_pk=parser, token_field=token) if token else None
             ),
             password_endpoints=password_endpoints,
         )
@@ -189,6 +218,30 @@ class ModelUserBackend:
             msg = f"ModelUserBackend: {option}={name!r} is not a column of the model."
             raise ConfigurationError(msg)
         return column
+
+    def _token(
+        self, columns: dict[str, Column[Any]], name: str | None, taken: set[str | None]
+    ) -> str | None:
+        if name is None:
+            return None
+        if not isinstance(cast("object", name), str) or name in taken:
+            msg = (
+                "ModelUserBackend: session_token_field must name a column of its own "
+                "(not the username, password, email or a flag)."
+            )
+            raise ConfigurationError(msg)
+        column = self._column(columns, "session_token_field", name)
+        if column.primary_key:
+            msg = "ModelUserBackend: session_token_field must not be the primary key."
+            raise ConfigurationError(msg)
+        length = getattr(base_type(column.type), "length", None)
+        if not is_text(column) or (length is not None and length < _MIN_SESSION_TOKEN_LENGTH):
+            msg = (
+                "ModelUserBackend: session_token_field must be a string column of at "
+                f"least {_MIN_SESSION_TOKEN_LENGTH} characters (or unbounded)."
+            )
+            raise ConfigurationError(msg)
+        return name
 
     def _flag(self, columns: dict[str, Column[Any]], option: str, name: str | None) -> str | None:
         if name is None:
@@ -217,6 +270,8 @@ class ModelUserBackend:
             [
                 str(getattr(row, self._password_field)),
                 *(str(getattr(row, f)) for f in (self._is_active_field, self._is_admin_field) if f),
+                # Only with the option, so the v0.1 formula (and sessions) stay as they were.
+                *([getattr(row, self._token_field) or ""] if self._token_field else []),
             ]
         )
         return AuthenticatedUser(
@@ -290,13 +345,21 @@ class _ModelAccounts:
         password_field: str,
         input_fields: tuple[str, ...],
         validators: tuple[PasswordValidator, ...],
+        token_field: str | None = None,
     ) -> None:
         self._model = model
+        self._token_field = token_field
         self._parse_pk = parse_pk
         self._pk_field = pk_field
         self._username_field = username_field
         self._flags = flags
-        own = {pk_field, username_field, password_field, *flags}
+        own = {
+            pk_field,
+            username_field,
+            password_field,
+            *flags,
+            *((token_field,) if token_field else ()),
+        }
         #: Text columns `create_admin` accepts in `fields`.
         self._settable = tuple(
             name for name, column in columns.items() if name not in own and is_text(column)
@@ -392,8 +455,32 @@ class _ModelAccounts:
                 self._password_field: await hash_password_async(password),
             },
             **dict.fromkeys(self._flags, True),
+            **({self._token_field: new_session_token()} if self._token_field else {}),
             **fields,
         )
         session.add(row)
         await session.flush()
         return str(getattr(row, self._pk_field))
+
+
+class _TokenRevocation:
+    """`SessionRevocation` over `ModelUserBackend(session_token_field=...)`."""
+
+    def __init__(
+        self, model: type[Any], *, parse_pk: Callable[[str], Any], token_field: str
+    ) -> None:
+        self._model = model
+        self._parse_pk = parse_pk
+        self._token_field = token_field
+
+    async def rotate_session_token(self, session: AsyncSession, account_id: str) -> None:
+        """Store a fresh token (the caller commits); `LookupError` if the account is gone."""
+        try:
+            pk = self._parse_pk(account_id)
+        except ValueError:
+            pk = None
+        row = None if pk is None else await session.get(self._model, pk)
+        if row is None:
+            msg = "No such account."
+            raise LookupError(msg)
+        setattr(row, self._token_field, new_session_token())

@@ -119,3 +119,32 @@ async def _exercise(app: object) -> None:
         pk = created.json()["pk"]
         deleted = await client.delete(f"/admin/api/v1/models/tasks/items/{pk}", headers=headers)
         assert deleted.status_code == 204
+
+
+def test_installed_package_has_no_test_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scans of tests/unit/test_no_test_hooks.py, on the installed wheel (M20)."""
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from tests.unit import test_no_test_hooks as scan  # noqa: PLC0415
+
+    assert "site-packages" in scan.PACKAGE.parts
+    scan.test_the_sources_are_scanned()
+    scan.test_only_the_secret_key_is_read_from_the_environment()
+    scan.test_sessions_always_use_the_real_clock()
+
+
+async def test_installed_package_has_no_extra_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The route allowlist of tests/unit/test_no_test_hooks.py, on the installed wheel."""
+    from fastapi import FastAPI  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from tests._stubs import StubAuthBackend  # noqa: PLC0415
+    from tests.unit import test_no_test_hooks as scan  # noqa: PLC0415
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    try:
+        scan.test_no_route_sets_time_or_bypasses_checks(
+            FastAPI(), engine, secrets.token_urlsafe(48), StubAuthBackend()
+        )
+    finally:
+        await engine.dispose()

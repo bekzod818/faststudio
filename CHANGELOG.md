@@ -77,9 +77,26 @@ listed under **Changed** or **Removed** with migration notes.
   - "Change password" and "Set password" in the UI;
   - contract (additive): `MetaResponse.capabilities`,
     `AccountMeta.set_password`.
+- Sessions (ADR-0013):
+  - `Admin(session_idle_timeout=...)` (off by default): sessions also end
+    after that long without a request, and active ones slide. Off, the
+    session cookie is unchanged from 0.1.x. Enable it only once every worker
+    runs 0.2 (0.1 workers refuse the longer cookie);
+  - `Admin(session_max_age=...)` also accepts int seconds;
+  - "Sign out everywhere": `POST /auth/sign-out-everywhere`, a header button,
+    the `session_revocation` capability (`SessionRevocation` in
+    `faststudio.auth.capabilities`) and
+    `MetaResponse.capabilities.sign_out_everywhere`. `contrib.auth`
+    provides it; `ModelUserBackend(session_token_field=...)` names a string
+    column of your user model for it (turning it on signs everyone out once);
+  - a save that meets an expired session asks for the password in place and
+    retries with the original input.
 
 ### Changed
 
+- A write (POST, PATCH, DELETE) sent with an expired session cookie now
+  gets `401 not_authenticated` instead of `403 csrf_failed`, with the dead
+  cookie cleared; nothing runs in either case.
 - The README and getting-started create the first admin with
   `faststudio createadmin`; the v0.1 `create_admin.py` script is kept under
   "Without the CLI".

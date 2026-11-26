@@ -56,6 +56,15 @@ def test_readme_configuration_table_lists_every_setting() -> None:
     assert documented == _admin_parameters() - _WIRING
 
 
+def test_model_user_backend_signature_is_documented() -> None:
+    from faststudio import ModelUserBackend  # noqa: PLC0415
+
+    documented = CONFIGURATION.split("`ModelUserBackend(model, *, ", 1)[1].split(")`", 1)[0]
+    names = set(re.findall(r"([a-z_]+)=", documented))
+    expected = set(inspect.signature(ModelUserBackend.__init__).parameters) - {"self", "model"}
+    assert names == expected
+
+
 def test_configuration_reference_lists_every_model_admin_option() -> None:
     documented = _table_names(CONFIGURATION, "| Option | Default | Notes |")
     # `model` is the class keyword (`class UserAdmin(ModelAdmin, model=User)`).

@@ -105,6 +105,42 @@ def test_invalid_session_max_age(age: timedelta) -> None:
         _resolve(session_max_age=age)
 
 
+@pytest.mark.parametrize("age", [3600, timedelta(hours=1)])
+def test_session_max_age_accepts_int_seconds_or_timedelta(age: int | timedelta) -> None:
+    assert _resolve(session_max_age=age).session_max_age == timedelta(hours=1)
+
+
+def test_invalid_int_session_max_age() -> None:
+    with pytest.raises(ConfigurationError, match="session_max_age must be at least 60 seconds"):
+        _resolve(session_max_age=59)
+
+
+def test_idle_timeout_is_off_by_default() -> None:
+    assert _resolve().session_idle_timeout is None
+
+
+@pytest.mark.parametrize("timeout", [60, 1800, timedelta(minutes=30), timedelta(hours=8)])
+def test_idle_timeout_accepted(timeout: int | timedelta) -> None:
+    resolved = _resolve(session_idle_timeout=timeout).session_idle_timeout
+    expected = timeout if isinstance(timeout, timedelta) else timedelta(seconds=timeout)
+    assert resolved == expected
+
+
+@pytest.mark.parametrize(
+    ("timeout", "message"),
+    [
+        (59, "session_idle_timeout must be at least 60 seconds"),
+        (timedelta(0), "session_idle_timeout must be at least 60 seconds"),
+        (8 * 3600 + 1, "session_idle_timeout must not exceed session_max_age"),
+        (timedelta(hours=9), "session_idle_timeout must not exceed session_max_age"),
+        (10**15, "session_idle_timeout is too large"),
+    ],
+)
+def test_invalid_idle_timeout(timeout: int | timedelta, message: str) -> None:
+    with pytest.raises(ConfigurationError, match=message):
+        _resolve(session_idle_timeout=timeout)
+
+
 @pytest.mark.parametrize("size", [0, -5, 1001])
 def test_invalid_max_page_size(size: int) -> None:
     with pytest.raises(ConfigurationError, match="max_page_size"):
@@ -129,7 +165,11 @@ def test_invalid_max_list_offset(offset: int) -> None:
         ("max_list_offset", True, "max_list_offset must be int"),
         ("title", None, "title must be str"),
         ("title", 1, "title must be str"),
-        ("session_max_age", 3600, "session_max_age must be timedelta"),
+        ("session_max_age", True, "session_max_age must be int seconds or timedelta"),
+        ("session_max_age", 3600.0, "session_max_age must be int seconds or timedelta"),
+        ("session_max_age", "3600", "session_max_age must be int seconds or timedelta"),
+        ("session_idle_timeout", True, "session_idle_timeout must be int seconds or timedelta"),
+        ("session_idle_timeout", "600", "session_idle_timeout must be int seconds or timedelta"),
         ("max_page_size", "100", "max_page_size must be int"),
         ("max_page_size", True, "max_page_size must be int"),
         ("max_page_size", 10.0, "max_page_size must be int"),
