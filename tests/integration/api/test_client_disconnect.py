@@ -80,7 +80,11 @@ async def test_a_client_leaving_mid_body_is_not_an_error(  # noqa: PLR0917 - fix
     async with AsyncSession(db) as session:
         before = list(await session.scalars(select(Team.name).order_by(Team.id)))
     with caplog.at_level(logging.DEBUG, logger="faststudio"):
-        await _send_without_body(app, api, method, path)
+        sent = await _send_without_body(app, api, method, path)
+    starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert [m["status"] for m in starts] == [400]  # one answer, the contract's error body
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    assert b'"invalid_query"' in body
     problems = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert problems == [], [r.getMessage() for r in problems]
     assert any("disconnected" in r.getMessage() for r in caplog.records)

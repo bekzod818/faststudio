@@ -68,6 +68,8 @@ describe("readConfig", () => {
     JSON.stringify({ ...valid, max_list_offset: 10, title: 5 }),
     JSON.stringify({ ...valid, max_list_offset: -1 }),
     JSON.stringify({ ...valid, max_list_offset: Number.POSITIVE_INFINITY }),
+    JSON.stringify({ ...valid, max_list_offset: 1e21 }), // beyond the safe integers, as zod
+    JSON.stringify({ ...valid, max_list_offset: 2 ** 53 }),
     JSON.stringify([valid]),
     "null",
     '"a string"',

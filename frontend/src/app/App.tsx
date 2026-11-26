@@ -26,6 +26,7 @@ function createRuntime(config: AppConfig) {
       {
         path: "/login",
         // Lazy, with zod and react-hook-form: signed-in admins rarely need it.
+        errorElement: <RouteError />,
         hydrateFallbackElement: <PageLoading />,
         lazy: async () => ({ Component: (await import("@/pages/LoginPage")).LoginPage }),
       },

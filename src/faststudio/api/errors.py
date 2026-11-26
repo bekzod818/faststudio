@@ -161,7 +161,8 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
         # re-raise to the server; nothing was written (the body never arrived).
         del exc
         logger.debug("Client disconnected during %s %r", request.method, request.url.path)
-        return Response(status_code=400)
+        # The contract's error body, like FastAPI's own body-parse 400.
+        return error_response(400, "invalid_query")
 
     async def on_unhandled(request: Request, exc: Exception) -> Response:
         # Starlette re-raises after this response is sent, so host error handlers

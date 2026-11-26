@@ -21,7 +21,7 @@ function parseBlock(raw: unknown): AppConfig | null {
     typeof title !== "string" ||
     title.length === 0 ||
     typeof offset !== "number" ||
-    !Number.isInteger(offset) ||
+    !Number.isSafeInteger(offset) ||
     offset <= 0
   ) {
     return null;
