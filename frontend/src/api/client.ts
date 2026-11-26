@@ -104,6 +104,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const inFlight = new Map<AbortController, Promise<unknown>>();
   let closing = 0;
 
+  /** Abort every request in flight and wait until each has settled. */
+  async function drain(): Promise<void> {
+    const settling = [...inFlight].map(([controller, settled]) => {
+      controller.abort();
+      return settled;
+    });
+    await Promise.all(settling);
+  }
+
   /** Fetch with our own abort controller, also following the caller's signal. */
   function tracked(url: string, init: RequestInit, signal: AbortSignal | undefined) {
     const controller = new AbortController();
@@ -176,9 +185,20 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (response.status === 401 && code === "not_authenticated") {
         const reauthenticate = options.reauthenticate;
         if (method !== "GET" && !retried && !SESSION_PATHS.has(path) && reauthenticate) {
-          const outcome = await reauthenticate();
+          // A session-ending write (a password change) holds the gate: open it
+          // while the admin signs in again, or the sign-in could not be sent.
+          if (endingSession) closing -= 1;
+          let outcome: ReauthOutcome;
+          try {
+            outcome = await reauthenticate();
+          } finally {
+            if (endingSession) closing += 1;
+          }
           // The new sign-in set a new CSRF cookie: the retry reads it.
-          if (outcome === "retry") return request<T>(method, path, body, getOptions, true);
+          if (outcome === "retry") {
+            if (endingSession) await drain(); // what started meanwhile must not race it
+            return request<T>(method, path, body, getOptions, true, endingSession);
+          }
           if (outcome === "discard") throw error;
         }
         options.onUnauthorized?.();
@@ -196,11 +216,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     endSession: async <T>(path: string, body?: unknown): Promise<T> => {
       closing += 1;
       try {
-        const settling = [...inFlight].map(([controller, settled]) => {
-          controller.abort();
-          return settled;
-        });
-        await Promise.all(settling);
+        await drain();
         return await request<T>("POST", path, body, {}, false, true);
       } finally {
         closing -= 1;

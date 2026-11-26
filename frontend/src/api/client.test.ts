@@ -173,4 +173,41 @@ describe("api client", () => {
     ]);
     await expect(api.get("/later")).resolves.toEqual({ ok: true }); // open again
   });
+
+  it("lets the admin sign in again when a password change meets an ended session", async () => {
+    const sent: string[] = [];
+    let signedIn = false;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      sent.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/auth/login")) {
+        signedIn = true;
+        return Promise.resolve(jsonResponse(200, { user: { id: "1", username: "a" } }));
+      }
+      return Promise.resolve(
+        signedIn
+          ? new Response(null, { status: 204 })
+          : jsonResponse(401, { error: { code: "not_authenticated", message: "Sign in." } }),
+      );
+    });
+    const onUnauthorized = vi.fn();
+    const api = createApiClient({
+      apiUrl: "/api",
+      fetch: fetchMock,
+      onUnauthorized,
+      // The dialog: signs in through the same client while the change waits.
+      reauthenticate: async () => {
+        await api.post("/auth/login", { username: "a", password: "p" });
+        return "retry";
+      },
+    });
+    await expect(api.endSession("/auth/password", { x: 1 })).resolves.toBeUndefined();
+    expect(sent).toEqual([
+      "POST /api/auth/password",
+      "POST /api/auth/login",
+      "POST /api/auth/password",
+    ]);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    await expect(api.get("/later")).resolves.toBeUndefined(); // the gate is open again
+  });
 });
