@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "gen:contract": "node scripts/gen-contract.mjs",
-    "check:contract": "node scripts/gen-contract.mjs --check"
+    "check:contract": "node scripts/gen-contract.mjs --check",
+    "check:size": "node scripts/check-bundle-size.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.2",
