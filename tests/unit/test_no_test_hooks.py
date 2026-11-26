@@ -66,7 +66,7 @@ def _clock_writes(tree: ast.AST) -> list[int]:
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id in {"setattr", "object.__setattr__"}
+            and node.func.id == "setattr"
         ) or (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)

@@ -223,11 +223,12 @@ export function useLogin() {
 /** Change the signed-in admin's password (`POST /auth/password`, 204). */
 export function useChangePassword() {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (body: ChangePasswordRequest) => {
       // A late response could otherwise replace the session it re-issues.
-      await api.abortAll();
-      return api.post("/auth/password", body);
+      await queryClient.cancelQueries(); // also stops their retries
+      return api.endSession("/auth/password", body);
     },
   });
 }
@@ -242,12 +243,13 @@ export function useSetPassword(identity: string, pk: string) {
 
 export function useLogout() {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      // A response still in flight may carry a renewed session cookie: it must
-      // never arrive after the logout and bring the session back.
-      await api.abortAll();
-      return api.post(LOGOUT_PATH);
+      // A response still in flight, or a retry, may carry a renewed session
+      // cookie: it must never arrive after the logout and bring it back.
+      await queryClient.cancelQueries();
+      return api.endSession(LOGOUT_PATH);
     },
   });
 }
@@ -255,10 +257,11 @@ export function useLogout() {
 /** End every session of the signed-in admin (`POST /auth/sign-out-everywhere`, 204). */
 export function useSignOutEverywhere() {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      await api.abortAll();
-      return api.post(SIGN_OUT_EVERYWHERE_PATH);
+      await queryClient.cancelQueries();
+      return api.endSession(SIGN_OUT_EVERYWHERE_PATH);
     },
   });
 }

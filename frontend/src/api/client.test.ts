@@ -132,29 +132,45 @@ describe("api client", () => {
     await expect(api.get("/x", { signal: controller.signal })).rejects.toBe(abort);
   });
 
-  it("aborts every request in flight and waits for them (ADR-0013)", async () => {
+  it("ends a session only after every request in flight settled (ADR-0013)", async () => {
     const events: string[] = [];
-    const fetchMock = vi.fn<typeof fetch>(
-      (input, init) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => {
-            events.push(`aborted ${input as string}`);
-            reject(new DOMException("aborted", "AbortError"));
-          });
-        }),
-    );
+    let finishLogout: (response: Response) => void = () => undefined;
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = input as string;
+      events.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/auth/logout")) {
+        return new Promise<Response>((resolve) => {
+          finishLogout = resolve;
+        });
+      }
+      if (url.endsWith("/later")) return Promise.resolve(jsonResponse(200, { ok: true }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          events.push(`aborted ${url}`);
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
     const api = createApiClient({ apiUrl: "/api", fetch: fetchMock });
     const read = api.get("/models/a/items");
     const write = api.patch("/models/a/items/1", { x: 1 });
-    await api.abortAll();
-    events.push("drained");
+    const logout = api.endSession("/auth/logout");
     await expect(read).rejects.toMatchObject({ name: "AbortError" });
     await expect(write).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => {
+      expect(events).toContain("POST /api/auth/logout");
+    });
+    // While the logout is on its way nothing else is sent (no retry, no click).
+    await expect(api.get("/models/a/items")).rejects.toMatchObject({ code: "network_error" });
+    finishLogout(new Response(null, { status: 204 }));
+    await expect(logout).resolves.toBeUndefined();
     expect(events).toEqual([
+      "GET /api/models/a/items",
+      "PATCH /api/models/a/items/1",
       "aborted /api/models/a/items",
       "aborted /api/models/a/items/1",
-      "drained",
+      "POST /api/auth/logout",
     ]);
-    await api.abortAll(); // nothing left: resolves at once
+    await expect(api.get("/later")).resolves.toEqual({ ok: true }); // open again
   });
 });

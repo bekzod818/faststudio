@@ -27,7 +27,7 @@ function json(status: number, body: unknown): Response {
 const NOT_AUTHENTICATED = { error: { code: "not_authenticated", message: "Sign in." } };
 
 describe("App", () => {
-  let routes: Record<string, () => Response>;
+  let routes: Record<string, () => Response | Promise<Response>>;
   /** Paths whose response never arrives; aborting rejects them (logged in `events`). */
   let hanging: Set<string>;
   let events: string[];
@@ -123,21 +123,32 @@ describe("App", () => {
     },
   );
 
-  it("aborts requests in flight before signing out (a late one could renew the session)", async () => {
+  it("aborts requests in flight before signing out, and sends nothing until it is done", async () => {
     routes["/auth/me"] = () => json(200, ME);
-    routes["/auth/logout"] = () => new Response(null, { status: 204 });
+    // Slower than TanStack's 1 s retry delay: an aborted query must not retry meanwhile.
+    routes["/auth/logout"] = () =>
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(new Response(null, { status: 204 }));
+        }, 1500);
+      });
     hanging.add("/meta"); // e.g. a slow read still running when Sign out is clicked
     window.history.replaceState(null, "", "/admin/");
     render(<App config={CONFIG} />);
     await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/admin/login");
-    });
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/admin/login");
+      },
+      { timeout: 4000 },
+    );
     const logout = events.indexOf("POST /auth/logout");
     expect(logout).toBeGreaterThan(-1);
     expect(events.indexOf("aborted /meta")).toBeGreaterThan(-1);
     expect(events.indexOf("aborted /meta")).toBeLessThan(logout);
-  });
+    // Nothing that carries the old session cookie after the logout was sent.
+    expect(events.slice(logout + 1).filter((e) => !e.startsWith("aborted"))).toEqual([]);
+  }, 10_000);
 
   it("signs out everywhere after confirmation", async () => {
     routes["/auth/me"] = () => json(200, ME);

@@ -54,12 +54,14 @@ export interface ApiClient {
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T = undefined>(path: string): Promise<T>;
   /**
-   * Abort every request in flight and wait until each has settled. Called
-   * before a request that ends the session (logout, sign out everywhere, a
-   * password change): with `session_idle_timeout` any response may renew
-   * the session cookie, and a late one must not bring the session back.
+   * POST a request that ends or replaces the session (logout, sign out
+   * everywhere, a password change). With `session_idle_timeout` any response
+   * may renew the session cookie, and a late one must not bring the session
+   * back, so: every request in flight is aborted and awaited first, and until
+   * this POST settles every other request fails at once without being sent
+   * (`network_error`). Callers cancel their query retries first.
    */
-  abortAll(): Promise<void>;
+  endSession<T = undefined>(path: string, body?: unknown): Promise<T>;
 }
 
 /** Writes that start or end a session: a 401 there is never retried. */
@@ -100,6 +102,7 @@ function queryString(params: QueryParams | undefined): string {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   const inFlight = new Map<AbortController, Promise<unknown>>();
+  let closing = 0;
 
   /** Fetch with our own abort controller, also following the caller's signal. */
   function tracked(url: string, init: RequestInit, signal: AbortSignal | undefined) {
@@ -133,8 +136,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     body?: unknown,
     getOptions: GetOptions = {},
     retried = false,
+    endingSession = false,
   ): Promise<T> {
     const { params, signal } = getOptions;
+    if (closing > 0 && !endingSession) {
+      // Nothing may reach the server (and renew the cookie) while the session ends.
+      throw new ApiError(0, "network_error", "The session is ending.");
+    }
     const headers = new Headers({ accept: "application/json" });
     if (method !== "GET") {
       const token = readCookie(CSRF_COOKIE);
@@ -185,12 +193,18 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, body) => request("POST", path, body),
     patch: (path, body) => request("PATCH", path, body),
     delete: (path) => request("DELETE", path),
-    abortAll: async () => {
-      const settling = [...inFlight].map(([controller, settled]) => {
-        controller.abort();
-        return settled;
-      });
-      await Promise.all(settling);
+    endSession: async <T>(path: string, body?: unknown): Promise<T> => {
+      closing += 1;
+      try {
+        const settling = [...inFlight].map(([controller, settled]) => {
+          controller.abort();
+          return settled;
+        });
+        await Promise.all(settling);
+        return await request<T>("POST", path, body, {}, false, true);
+      } finally {
+        closing -= 1;
+      }
     },
   };
 }

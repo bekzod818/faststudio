@@ -102,8 +102,10 @@ These follow the maintainer-approved M20 plan, except where marked
 - **Logout and concurrent refreshes.** With the idle timeout, any
   authenticated response may renew the cookie, so a response still in
   flight when the admin signs out could otherwise bring the session back.
-  The SPA aborts every request in flight, and waits for them, before it
-  sends logout, sign out everywhere or a password change. Residual risk
+  Before it sends logout, sign out everywhere or a password change, the SPA
+  cancels its queries (stopping their retries), aborts every request in
+  flight and waits for them, and until that POST settles it sends nothing
+  else. Residual risk
   (stateless sessions): a request from *another tab* that is in flight
   during the logout can still renew the cookie; "sign out everywhere" ends
   such a session for good. Likewise another tab may sign in as a different
