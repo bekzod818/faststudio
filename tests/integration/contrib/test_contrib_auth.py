@@ -27,6 +27,7 @@ from faststudio.contrib.auth import (
     permission_admin,
     user_admin,
 )
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.contrib_models import AUTH, ContribBase, Note
 
 ORIGIN = "https://testserver"
@@ -51,6 +52,7 @@ class NoteAdmin(ModelAdmin, model=Note):
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ]
 )
 async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
@@ -59,6 +61,8 @@ async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[As
         if not name.endswith("_test"):
             pytest.fail(f"Refusing to drop tables in {name!r}: use a database named *_test.")
         engine = create_async_engine(POSTGRES_URL)
+    elif request.param == "mysql":
+        engine = create_async_engine(throwaway(MYSQL_URL))
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/contrib.db")
 

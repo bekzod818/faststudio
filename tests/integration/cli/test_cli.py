@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from faststudio import hash_password
 from faststudio.auth.passwords import verify_password_async
 from faststudio.cli import main
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.contrib_models import AUTH, ContribBase
 from tests.integration.cli import apps
 from tests.integration.cli.conftest import FakeTerminal
@@ -35,12 +36,15 @@ APP = "tests.integration.cli.apps"
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ]
 )
 def url(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     if request.param == "postgres":
         assert (make_url(POSTGRES_URL).database or "").endswith("_test")
         value = POSTGRES_URL
+    elif request.param == "mysql":
+        value = throwaway(MYSQL_URL)
     else:
         value = f"sqlite+aiosqlite:///{tmp_path}/cli.db"
     monkeypatch.setattr(apps, "DATABASE_URL", value)
@@ -400,6 +404,43 @@ def test_concurrent_syncs_tolerate_each_other(terminal: FakeTerminal, db: str) -
 # --------------------------------------------------------------------------- checkusers
 
 
+def _check_mysql_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
+    """MySQL's default collation (utf8mb4_0900_ai_ci) already treats 'Ann' and 'ANN'
+    (and full-width or ligature forms) as equal: the unique username index refuses
+    the collision itself, so only drift is left for checkusers to repair."""
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    table = AUTH.user.__table__  # type: ignore[attr-defined]
+
+    def row(pk: int, username: str, normalized: str) -> dict[str, object]:
+        return {
+            "id": pk,
+            "username": username,
+            "username_normalized": normalized,
+            "password_hash": "!",
+            "session_token": str(pk) * 43,
+        }
+
+    async def seed() -> None:
+        engine = create_async_engine(db)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(insert(table), [row(1, "Ann", "ann"), row(2, "Bob", "stale")])
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(insert(table), [row(3, "ANN", "ann-old")])
+        finally:
+            await engine.dispose()
+
+    _run(seed())
+    assert cli(terminal, "checkusers", "--app", f"{APP}:contrib") == 1
+    assert "Stale normalized username: 'Bob' (id 2)" in terminal.text
+    assert "Collision" not in terminal.text
+    assert cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix", "--yes") == 0
+    rows = dict(_run(_query(db, select(AUTH.user.id, AUTH.user.username_normalized))))
+    assert rows == {1: "ann", 2: "bob"}
+
+
 def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
     async def seed() -> None:
         engine = create_async_engine(db)
@@ -433,6 +474,9 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
             )
         await engine.dispose()
 
+    if db.startswith("mysql"):
+        _check_mysql_refuses_collisions(terminal, db)
+        return
     _run(seed())
     assert cli(terminal, "checkusers", "--app", f"{APP}:contrib") == 1
     assert "Collision on 'ann'" in terminal.text

@@ -15,15 +15,20 @@ from faststudio import Admin, ConfigurationError, ModelUserBackend
 from faststudio.api._permission_sync import plan_sync
 from faststudio.api._startup_sync import StartupPermissionSync
 from faststudio.contrib.auth import DatabaseAuthBackend
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.contrib_models import AUTH, ContribBase
 from tests.factories.models import AdminUser
 from tests.integration.cli.apps import NoteAdmin
 
 
-@pytest.fixture
-async def db(tmp_path: Path) -> AsyncEngine:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/startup.db")
+@pytest.fixture(params=["sqlite", mysql_param("mysql")])
+async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncEngine:
+    if request.param == "mysql":
+        engine = create_async_engine(throwaway(MYSQL_URL))
+    else:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/startup.db")
     async with engine.begin() as conn:
+        await conn.run_sync(ContribBase.metadata.drop_all)
         await conn.run_sync(ContribBase.metadata.create_all)
     return engine
 

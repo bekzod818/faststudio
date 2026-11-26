@@ -1,17 +1,15 @@
-"""The account guard on a real PostgreSQL server (ADR-0009).
+"""The account guard on real PostgreSQL and MySQL servers (ADR-0009).
 
-Runs only when FASTSTUDIO_TEST_POSTGRES_URL points at a throwaway database
-whose name ends in ``_test``, e.g.
-``postgresql+asyncpg://user@localhost:5432/faststudio_test`` (the PostgreSQL CI
-job). Each test DROPS and recreates the ``admin_users`` and ``teams`` tables.
-SQLite cannot exercise ``FOR UPDATE`` or snapshot isolation, which is what
-these tests are about.
+Runs when FASTSTUDIO_TEST_POSTGRES_URL / FASTSTUDIO_TEST_MYSQL_URL point at a
+throwaway database whose name ends in ``_test`` (see tests/_databases.py), at
+each isolation level. Each test DROPS and recreates the ``admin_users`` and
+``teams`` tables. SQLite cannot exercise ``FOR UPDATE`` or snapshot isolation,
+which is what these tests are about.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
@@ -19,11 +17,11 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import delete
-from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from faststudio import ModelUserBackend
 from faststudio.api import write as write_module
+from tests._databases import MYSQL_URL, POSTGRES_URL, mysql_param, postgres_param, throwaway
 from tests.factories.models import AdminUser, Base, Team
 from tests.integration.security._accounts import (
     HASH,
@@ -35,28 +33,47 @@ from tests.integration.security._accounts import (
     synchronize_writes,
 )
 
-URL = os.environ.get("FASTSTUDIO_TEST_POSTGRES_URL", "")
 TABLES = [Base.metadata.tables["admin_users"], Base.metadata.tables["teams"]]
 SNAPSHOT_LEVELS = {"REPEATABLE READ", "SERIALIZABLE"}
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(not URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL to run"),
-]
+LEVELS = ("READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE")
 
 
-@pytest.fixture(params=["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"])
+def _expected_loser(isolation: str) -> str:
+    """How the losing request of two concurrent demotions is refused (always a 409).
+
+    PostgreSQL's snapshot levels abort the loser with a serialization failure
+    (``conflict``). InnoDB's ``FOR UPDATE`` is a locking read of the latest
+    committed row at every level, so the loser waits, sees the other demotion
+    and is refused by the rule itself (``last_admin``), as under READ COMMITTED.
+    """
+    server, level = isolation.split("/")
+    if server == "postgres" and level in SNAPSHOT_LEVELS:
+        return "conflict"
+    if (server, level) == ("mysql", "SERIALIZABLE"):
+        # InnoDB turns the plain reads into shared locks: the two demotions
+        # deadlock and the victim is refused as a conflict.
+        return "conflict"
+    return "last_admin"
+
+
+@pytest.fixture(
+    params=[
+        *(postgres_param(f"postgres/{level}") for level in LEVELS),
+        *(mysql_param(f"mysql/{level}") for level in LEVELS),
+    ]
+)
 def isolation(request: pytest.FixtureRequest) -> str:
-    level: str = request.param
-    return level
+    """``server/level``; tests read the level after the slash."""
+    value: str = request.param
+    return value
 
 
 @pytest.fixture
 async def db(isolation: str) -> AsyncIterator[AsyncEngine]:
-    database = make_url(URL).database or ""
-    if not database.endswith("_test"):
-        pytest.fail(f"Refusing to drop tables in {database!r}: use a database named *_test.")
-    engine = create_async_engine(URL, isolation_level=isolation)
+    server, level = isolation.split("/")
+    url = throwaway(POSTGRES_URL if server == "postgres" else MYSQL_URL)
+    engine = create_async_engine(url, isolation_level=level)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all, tables=TABLES)
         await conn.run_sync(Base.metadata.create_all, tables=TABLES)
@@ -119,7 +136,7 @@ async def test_concurrent_demotions_leave_one_admin(
             bob.patch("admin_users", 1, {"is_admin": False}),
         )
     )
-    assert code(loser) == ("conflict" if isolation in SNAPSHOT_LEVELS else "last_admin")
+    assert code(loser) == _expected_loser(isolation), code(loser)
     assert active_admins(await flags(db)) == 1
 
 
@@ -151,9 +168,17 @@ async def test_update_racing_a_delete_is_a_conflict(
     db: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
     case: tuple[str, int, dict[str, object]],
+    isolation: str,
 ) -> None:
-    """The row is deleted after the update loaded it: 409 (StaleDataError or 40001)."""
+    """The row is deleted after the update loaded it: 409 (StaleDataError or 40001).
+
+    Under MySQL SERIALIZABLE that cannot happen: the update's read share-locks
+    the row, so the other request's delete waits until the update commits. The
+    test then checks that instead (with a short lock-wait timeout).
+    """
     identity, pk, body = case
+    serializable_mysql = isolation == "mysql/SERIALIZABLE"
+    blocked: list[bool] = []
     alice = await sign_in("alice")
     statement = delete(Team).where(Team.id == pk)
     if identity == "admin_users":
@@ -161,10 +186,26 @@ async def test_update_racing_a_delete_is_a_conflict(
     check_relations = write_module._check_relations
 
     async def delete_meanwhile(*args: Any) -> None:
-        async with db.begin() as conn:  # another request deletes the row and commits
-            await conn.execute(statement)
+        if serializable_mysql:
+            from sqlalchemy import text  # noqa: PLC0415
+            from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+            async with db.connect() as conn:
+                await conn.execute(text("SET SESSION innodb_lock_wait_timeout = 1"))
+                try:
+                    await conn.execute(statement)
+                except OperationalError as exc:  # 1205: waits for the update's lock
+                    blocked.append(getattr(exc.orig, "args", (None,))[0] == 1205)
+                await conn.rollback()
+        else:
+            async with db.begin() as conn:  # another request deletes the row and commits
+                await conn.execute(statement)
         await check_relations(*args)
 
     monkeypatch.setattr(write_module, "_check_relations", delete_meanwhile)
     response = await alice.patch(identity, pk, body)
+    if serializable_mysql:
+        assert blocked == [True]  # the delete had to wait for the update
+        assert response.status_code == 200, response.text
+        return
     assert (response.status_code, code(response)) == (409, "conflict"), response.text

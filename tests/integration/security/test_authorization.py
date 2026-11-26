@@ -23,6 +23,7 @@ from starlette.requests import Request
 
 from faststudio import Admin, ModelAdmin, hash_password
 from faststudio.auth.permissions import has_perm
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.auth_models import (
     AuthBase,
     AuthGroup,
@@ -111,6 +112,7 @@ GROUPED = "member"  # holds docs.view through a group
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ]
 )
 async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
@@ -119,6 +121,8 @@ async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[As
         if not name.endswith("_test"):
             pytest.fail(f"Refusing to drop tables in {name!r}: use a database named *_test.")
         engine = create_async_engine(POSTGRES_URL)
+    elif request.param == "mysql":
+        engine = create_async_engine(throwaway(MYSQL_URL))
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/authz.db")
     async with engine.begin() as conn:

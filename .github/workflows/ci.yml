@@ -97,6 +97,43 @@ jobs:
         shell: bash  # -eo pipefail: a failing pytest fails the step despite tee
         run: uv run pytest -m postgres -q | tee pytest.log && ! grep -q "skipped" pytest.log
 
+  test-mysql:
+    # InnoDB locking, collations and ON DUPLICATE KEY UPDATE (item 3 of the v0.2 plan).
+    name: Test (MySQL 8.4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.4@sha256:8c233bad33d520a7aae1c1e619c3a9775f4a1ba2d463d692fada04ec7f40be00
+        env:
+          MYSQL_ROOT_PASSWORD: faststudio-ci-root-only
+          MYSQL_DATABASE: faststudio_test
+          MYSQL_USER: faststudio
+          MYSQL_PASSWORD: faststudio-ci-only
+        ports:
+          - 3306:3306
+        # TCP ping: the temporary server during initialisation listens on the socket only.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -ufaststudio -pfaststudio-ci-only"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 60
+    env:
+      FASTSTUDIO_TEST_MYSQL_URL: mysql+aiomysql://faststudio:faststudio-ci-only@127.0.0.1:3306/faststudio_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - name: Let the test user create triggers (binary logging is on)
+        run: docker exec "${{ job.services.mysql.id }}" mysql -uroot -pfaststudio-ci-root-only -e "SET PERSIST log_bin_trust_function_creators = 1"
+      - name: MySQL tests (must run, not skip)
+        shell: bash  # -eo pipefail: a failing pytest fails the step despite tee
+        run: uv run pytest -m mysql -q | tee pytest.log && ! grep -q "skipped" pytest.log
+
   test-lowest:
     # The declared minimum versions must work: users may have them installed.
     name: Test (lowest dependencies, Python 3.11)

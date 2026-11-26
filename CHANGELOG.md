@@ -96,6 +96,10 @@ listed under **Changed** or **Removed** with migration notes.
   - a save that meets an expired session asks for the password in place and
     retries with the original input.
 
+- Tested databases are documented (SQLite with Python 3.11–3.13,
+  PostgreSQL 17, MySQL 8.4 LTS with `aiomysql[rsa]`); CI runs the MySQL
+  suite.
+
 ### Changed
 
 - A write (POST, PATCH, DELETE) sent with an expired session cookie now

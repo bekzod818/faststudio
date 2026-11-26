@@ -23,6 +23,7 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 |---|---|
 | Python tests + coverage | `uv run pytest --cov` |
 | PostgreSQL tests (throwaway database; skipped without the variable) | `FASTSTUDIO_TEST_POSTGRES_URL=postgresql+asyncpg://user@localhost/faststudio_test uv run pytest -m postgres` |
+| MySQL tests (throwaway MySQL 8.4 database; skipped without the variable) | `FASTSTUDIO_TEST_MYSQL_URL=mysql+aiomysql://user:password@127.0.0.1/faststudio_test uv run pytest -m mysql` |
 | Lint / format | `uv run ruff check . && uv run ruff format .` |
 | Type check | `uv run mypy` |
 | Frontend lint / test | `pnpm -C frontend lint && pnpm -C frontend test` |
@@ -30,6 +31,26 @@ pnpm -C frontend build                  # build the SPA into src/faststudio/stat
 | E2E | `pnpm -C frontend build && pnpm -C frontend test:e2e` (starts `examples/basic --ephemeral`) |
 | Example app | `uv run python -m examples.basic` (see `examples/basic/README.md`) |
 | Build wheel | `pnpm -C frontend build && uv build && uv run python scripts/verify_wheel.py dist/*.whl` |
+
+## Test databases
+
+SQLite always runs. PostgreSQL and MySQL tests run when their URL is set
+(tables are dropped and recreated, so the database name must end in
+`_test`; see `tests/_databases.py`). CI runs `-m postgres` against
+PostgreSQL 17 and `-m mysql` against MySQL 8.4 LTS, and fails if any of
+those tests is skipped.
+
+- **MySQL driver: `aiomysql[rsa]`** (dev dependency only). We chose it over
+  `asyncmy` because it is pure Python on top of PyMySQL (wheels on every
+  platform and Python version, no compiler), is maintained under aio-libs,
+  and is a dialect SQLAlchemy documents and tests (`mysql+aiomysql`). The
+  `rsa` extra brings `cryptography`, which MySQL 8.4's default
+  `caching_sha2_password` authentication needs.
+- One MySQL test creates a trigger. With binary logging on (the default), a
+  user without SUPER needs `SET PERSIST log_bin_trust_function_creators = 1`
+  (run once as root; the CI job does this).
+- Do not share one `*_test` database between test runs that execute at the
+  same time: each run drops the tables.
 
 ## Workflow
 
