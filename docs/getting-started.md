@@ -206,12 +206,13 @@ like the CLI does. These snippets are kept for v0.2 and removed in v0.3.
 
 ## A complete example
 
-[`examples/basic`](https://github.com/bekzod818/faststudio/blob/main/examples/basic/README.md) is a runnable app with four
-models covering every supported field type, demo data and a `create_admin`
-command. In a clone of the repository:
+[`examples/basic`](https://github.com/bekzod818/faststudio/blob/main/examples/basic/README.md) is a runnable app with five
+models covering every supported field type and demo data. In a clone of the
+repository:
 
 ```bash
 export FASTSTUDIO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-python -m examples.basic.create_admin admin
+python -m examples.basic          # first start: creates the tables; stop it with Ctrl-C
+faststudio createadmin --app examples.basic.app:create_app --username admin
 python -m examples.basic
 ```

@@ -11,7 +11,7 @@ from typing import TypeVar, cast, overload
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from faststudio.api._app import create_admin_app, wrap_admin_app
@@ -46,6 +46,22 @@ _T = TypeVar("_T")
 logger = logging.getLogger("faststudio")
 _A = TypeVar("_A", bound=type[ModelAdmin])
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+#: Attribute on the admin's `Mount` route pointing back at its `Admin`, so
+#: `faststudio --app main:app` can find it (lives exactly as long as the app).
+_ADMIN_ATTR = "_faststudio_admin"
+
+
+def mounted_admins(app: FastAPI) -> list[Admin]:
+    """Return the Admins mounted on `app`, by base URL (private; used by the CLI)."""
+    found = [
+        admin
+        for route in app.router.routes
+        if isinstance(route, Mount)
+        and isinstance(admin := getattr(route, _ADMIN_ATTR, None), Admin)
+    ]
+    return sorted(found, key=lambda admin: admin._settings.base_url)
 
 
 class Admin:
@@ -191,6 +207,7 @@ class Admin:
                 session_maker=self._session_maker,
             )
         app.mount(base_url, mounted, name="faststudio")
+        setattr(app.router.routes[-1], _ADMIN_ATTR, self)
         if self._capabilities.register_admins is not None:
             # The backend's own models (e.g. contrib.auth users and groups).
             self._capabilities.register_admins(self)

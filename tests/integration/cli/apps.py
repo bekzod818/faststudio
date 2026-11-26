@@ -77,7 +77,7 @@ def no_accounts() -> Admin:
 
 
 not_an_admin = object()
-fastapi_app = FastAPI()  # callable, but not an Admin factory
+fastapi_app = FastAPI()  # an application with no Admin mounted
 
 
 def env_secret() -> Admin:
@@ -102,4 +102,55 @@ def binds_only() -> Admin:
     maker = async_sessionmaker(binds={ContribBase: create_async_engine(DATABASE_URL)})
     return Admin(
         FastAPI(), session_maker=maker, auth_backend=DatabaseAuthBackend(AUTH), secret_key=SECRET
+    )
+
+
+def host_app() -> FastAPI:
+    """An application factory with one mounted Admin (like examples/basic)."""
+    app = FastAPI()
+    admin = Admin(
+        app,
+        engine=create_async_engine(DATABASE_URL),
+        auth_backend=DatabaseAuthBackend(AUTH),
+        secret_key=SECRET,
+    )
+    admin.register(NoteAdmin)
+    return app
+
+
+#: The same application as a module-level object; tests set it once DATABASE_URL is known.
+mounted_app: FastAPI | None = None
+
+
+def no_admin_app() -> FastAPI:
+    """A FastAPI application without FastStudio."""
+    return FastAPI()
+
+
+def two_admins_app() -> FastAPI:
+    """Two Admins mounted on one application: ambiguous."""
+    app = FastAPI()
+    for base_url in ("/admin", "/staff"):
+        Admin(
+            app,
+            engine=create_async_engine(DATABASE_URL),
+            auth_backend=StubAuthBackend(),
+            secret_key=SECRET,
+            base_url=base_url,
+        )
+    return app
+
+
+def not_an_app() -> object:
+    """A factory returning something else."""
+    return {"app": "nope"}
+
+
+def needs_arguments(database_url: str) -> Admin:
+    """Not a zero-argument factory."""
+    return Admin(
+        FastAPI(),
+        engine=create_async_engine(database_url),
+        auth_backend=StubAuthBackend(),
+        secret_key=SECRET,
     )

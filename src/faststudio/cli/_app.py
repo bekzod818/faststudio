@@ -1,12 +1,20 @@
-"""Resolve ``--app module.path:attr`` to an `Admin` (ADR-0012 §2)."""
+"""Resolve ``--app module.path:attr`` to an `Admin` (ADR-0012 §2).
+
+The target is an `Admin`, a FastAPI application with exactly one `Admin`
+mounted, or a zero-argument factory returning either. The application's
+lifespan never runs: the CLI imports and builds, it does not start the app.
+"""
 
 from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
-from faststudio.admin import Admin
+from fastapi import FastAPI
+
+from faststudio.admin import Admin, mounted_admins
 from faststudio.cli._io import CliError
 from faststudio.exceptions import ConfigurationError
 
@@ -20,8 +28,24 @@ def _failed(spec: str, exc: Exception) -> str:
     )
 
 
+_NOT_A_TARGET = "is not a faststudio.Admin, a FastAPI app or a factory of one."
+
+
 def load_admin(spec: str) -> Admin:
-    """Import `spec` (``module.path:attr``): an `Admin` or a factory returning one."""
+    """Resolve `spec` (``module.path:attr``) to the `Admin` it names."""
+    target = _import(spec)
+    if not isinstance(target, Admin | FastAPI) and callable(target):
+        target = _call_factory(spec, target)
+    if isinstance(target, FastAPI):
+        return _the_mounted_admin(spec, target)
+    if not isinstance(target, Admin):
+        msg = f"{spec} {_NOT_A_TARGET}"
+        raise CliError(msg, code=2)
+    return target
+
+
+def _import(spec: str) -> object:
+    """Import the module of `spec` and return its attribute."""
     module_name, sep, attr = spec.partition(":")
     if not sep or not module_name or not attr:
         msg = f"--app must look like module.path:attr, got {spec!r}."
@@ -44,17 +68,38 @@ def load_admin(spec: str) -> Admin:
             msg = f"{module_name!r} has no attribute {attr!r}."
             raise CliError(msg, code=2)
         target = getattr(target, part)
-    if not isinstance(target, Admin) and callable(target):
-        try:
-            target = target()
-        except TypeError:  # e.g. a FastAPI app, which is callable but not a factory
-            msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
-            raise CliError(msg, code=2) from None
-        except ConfigurationError as exc:
-            raise CliError(f"Cannot load {spec}: {exc}", code=2) from None
-        except Exception as exc:
-            raise CliError(_failed(spec, exc), code=2) from None
-    if not isinstance(target, Admin):
-        msg = f"{spec} is not a faststudio.Admin (or a factory returning one)."
-        raise CliError(msg, code=2)
     return target
+
+
+def _call_factory(spec: str, factory: Callable[[], object]) -> object:
+    """Call a zero-argument factory; it must return an `Admin` or a FastAPI app."""
+    try:
+        result = factory()
+    except TypeError:  # it needs arguments: not a factory
+        msg = f"{spec} {_NOT_A_TARGET}"
+        raise CliError(msg, code=2) from None
+    except ConfigurationError as exc:
+        raise CliError(f"Cannot load {spec}: {exc}", code=2) from None
+    except Exception as exc:
+        raise CliError(_failed(spec, exc), code=2) from None
+    if not isinstance(result, Admin | FastAPI):
+        msg = f"{spec} returned {type(result).__name__}, not a faststudio.Admin or a FastAPI app."
+        raise CliError(msg, code=2)
+    return result
+
+
+def _the_mounted_admin(spec: str, app: FastAPI) -> Admin:
+    admins = mounted_admins(app)
+    if len(admins) == 1:
+        return admins[0]
+    if not admins:
+        msg = f"{spec} has no faststudio.Admin mounted."
+        raise CliError(msg, code=2)
+    listed = ", ".join(
+        f"{admin._settings.base_url} ({admin._settings.title!r})" for admin in admins
+    )
+    msg = (
+        f"{len(admins)} faststudio.Admin instances are mounted on {spec}: {listed}; "
+        "point --app at the one you mean (module.path:admin)."
+    )
+    raise CliError(msg, code=2)

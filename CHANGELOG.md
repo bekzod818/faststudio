@@ -54,7 +54,10 @@ listed under **Changed** or **Removed** with migration notes.
 - The `faststudio` command line (ADR-0012): `createadmin`,
   `changepassword`, `syncpermissions` (`--dry-run`, `--prune`, `--yes`) and
   `checkusers` (`--fix`). Passwords are only read interactively, twice.
-- `Admin(sync_permissions_on_startup=True)`.
+  `--app` takes an `Admin`, a FastAPI application with one `Admin` mounted,
+  or a factory returning either (e.g. `examples.basic.app:create_app`).
+- `Admin(sync_permissions_on_startup=True)`. Several processes starting at
+  once sync without errors or log noise.
 - `AccountManager.find_account`, `required_fields` and `create_admin`;
   `BackendCapabilities.username_audit` (`UsernameAudit`, `AuditedAccount`);
   `PermissionSchema.name_field`.

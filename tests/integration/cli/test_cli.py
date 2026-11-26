@@ -102,7 +102,10 @@ def cli(terminal: FakeTerminal, *argv: str) -> int:
         (["createadmin", "--app", "no_such_module_xyz:admin"], 2, "Cannot import"),
         (["createadmin", "--app", f"{APP}:missing"], 2, "has no attribute"),
         (["createadmin", "--app", f"{APP}:not_an_admin"], 2, "is not a faststudio.Admin"),
-        (["createadmin", "--app", f"{APP}:fastapi_app"], 2, "is not a faststudio.Admin"),
+        (["createadmin", "--app", f"{APP}:fastapi_app"], 2, "has no faststudio.Admin mounted"),
+        (["createadmin", "--app", f"{APP}:no_admin_app"], 2, "has no faststudio.Admin mounted"),
+        (["createadmin", "--app", f"{APP}:not_an_app"], 2, "returned dict"),
+        (["createadmin", "--app", f"{APP}:needs_arguments"], 2, "a factory of one"),
     ],
 )
 def test_app_resolution_errors(
@@ -110,6 +113,27 @@ def test_app_resolution_errors(
 ) -> None:
     assert cli(terminal, *argv) == code
     assert message in terminal.text
+
+
+def test_several_mounted_admins_are_listed(terminal: FakeTerminal, url: str) -> None:
+    assert cli(terminal, "createadmin", "--app", f"{APP}:two_admins_app") == 2
+    assert "2 faststudio.Admin instances are mounted" in terminal.text
+    assert "/admin" in terminal.text
+    assert "/staff" in terminal.text
+    assert "point --app at the one you mean" in terminal.text
+
+
+@pytest.mark.usefixtures("db")
+@pytest.mark.parametrize("target", ["host_app", "mounted_app"])
+def test_a_fastapi_app_or_factory_is_an_app_target(
+    terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    """The application (or its factory) is enough when exactly one Admin is mounted."""
+    monkeypatch.setattr(apps, "mounted_app", apps.host_app())
+    terminal.passwords = [GOOD, GOOD]
+    assert cli(terminal, "createadmin", "--app", f"{APP}:{target}", "--username", "ann") == 0
+    assert "Created admin 'ann'" in terminal.text
+    assert cli(terminal, "syncpermissions", "--app", f"{APP}:{target}", "--dry-run") == 0
 
 
 def test_argparse_errors_and_help(
