@@ -13,6 +13,8 @@ REQUIRED = (
     "faststudio/py.typed",
     "faststudio/static/index.html",
     "faststudio/schemas/contract.schema.json",
+    "faststudio/auth/data/common-passwords.txt.gz",
+    "faststudio/auth/data/NOTICE",
 )
 
 
@@ -24,6 +26,8 @@ def verify(wheel: Path) -> list[str]:
     assets = [n for n in names if n.startswith("faststudio/static/assets/")]
     if not any(n.endswith(".js") for n in assets):
         problems.append("no JavaScript bundle under faststudio/static/assets/")
+    if not any(n.endswith("/licenses/THIRD_PARTY_NOTICES") for n in names):
+        problems.append("missing THIRD_PARTY_NOTICES in the wheel metadata")
     if any(n.endswith(".map") for n in names):
         problems.append("source maps must not ship in the wheel")
     # Only the package and its metadata: never tests, examples or E2E launchers.

@@ -193,8 +193,9 @@ applies to edit, delete and link counts (404).
   unless `password_endpoints=True`), because the CLI always uses `accounts`.
   M19 adds `find_account`, `required_fields` and `create_admin` before
   0.2.0 is tagged.
-- **Validators** live in core (`faststudio.auth.validators`); no
-  common-password list is bundled (A5 open).
+- **Validators** live in core (`faststudio.auth.validators`). A
+  common-password list is bundled and on by default (A5, resolved in v0.2
+  item 4: Dropbox zxcvbn, MIT; see `faststudio/auth/data/NOTICE`).
 - **Setting another account's password** needs every permission *and* the
   model's edit hooks (`can_edit`, `has_edit_permission(obj)`); a record
   hidden by `has_view_permission(obj)` is a 404, as on retrieve.

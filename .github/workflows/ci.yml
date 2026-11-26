@@ -171,6 +171,9 @@ jobs:
       - run: pnpm -C frontend audit --prod --audit-level=high
       - name: pnpm audit (including dev tooling such as codegen)
         run: pnpm -C frontend audit --audit-level=high
+      # Last, so a raw.githubusercontent.com outage never hides an audit result.
+      - name: Bundled common-password list matches its pinned source (A5)
+        run: uv run python scripts/build_common_passwords.py --check
 
   frontend:
     name: Frontend (lint, test, build)

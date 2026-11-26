@@ -72,9 +72,11 @@ listed under **Changed** or **Removed** with migration notes.
   `BackendCapabilities.register_admins`.
 - Passwords (ADR-0011, ADR-0013):
   - validators in `faststudio.auth.validators` (`DEFAULT_VALIDATORS`:
-    length, similarity to name and email, not only digits;
-    `CommonPasswordValidator` for a list you provide; FastStudio bundles
-    none);
+    length, similarity to name and email, not only digits, not one of
+    20 000 common passwords). `CommonPasswordValidator()` uses a bundled
+    list from Dropbox zxcvbn (MIT; provenance in
+    `faststudio/auth/data/NOTICE` and `THIRD_PARTY_NOTICES`), or your own
+    file;
   - the `accounts` capability (`AccountManager`) and `password_endpoints`;
   - `ModelUserBackend(password_validators=..., password_endpoints=False)`;
   - `POST /auth/password` and `POST /models/{identity}/items/{pk}/password`;

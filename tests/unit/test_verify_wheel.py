@@ -34,6 +34,9 @@ def test_valid_wheel(tmp_path: Path, verify_wheel: ModuleType) -> None:
             "faststudio/static/index.html",
             "faststudio/static/assets/a.js",
             "faststudio/schemas/contract.schema.json",
+            "faststudio/auth/data/common-passwords.txt.gz",
+            "faststudio/auth/data/NOTICE",
+            "faststudio-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES",
         ],
     )
     assert verify_wheel.verify(wheel) == []
@@ -46,6 +49,8 @@ def test_wheel_without_spa_fails(tmp_path: Path, verify_wheel: ModuleType) -> No
     assert "missing faststudio/static/index.html" in problems
     assert any("JavaScript bundle" in p for p in problems)
     assert any("source maps" in p for p in problems)
+    assert "missing faststudio/auth/data/NOTICE" in problems  # the bundled list's provenance
+    assert "missing THIRD_PARTY_NOTICES in the wheel metadata" in problems
     assert verify_wheel.main([str(wheel)]) == 1
 
 

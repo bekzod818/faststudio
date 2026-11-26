@@ -75,18 +75,28 @@ backend = ModelUserBackend(
         MinimumLengthValidator(14),
         UserAttributeSimilarityValidator(),  # username and email
         NumericPasswordValidator(),
-        CommonPasswordValidator("common-passwords.txt.gz"),  # your own list
+        CommonPasswordValidator(),  # the bundled list; or ("my-list.txt.gz")
     ],
     password_endpoints=True,  # see the warning below
 )
 ```
 
 The default is `DEFAULT_VALIDATORS`: at least 12 characters, not similar to
-the username or email, not only digits. **FastStudio ships no list of common
-passwords**: we found none whose licence clearly allows redistribution.
-`CommonPasswordValidator` reads a file you provide (one password per line,
-UTF-8, optionally gzip-compressed; compared case-insensitively). Make sure
-you may use the list you choose.
+the username or email, not only digits, and not one of 20 000 common
+passwords. It applies to `ModelUserBackend`, `contrib.auth`, the HTTP
+password endpoints and the `faststudio` CLI unless you pass your own
+`password_validators`.
+
+`CommonPasswordValidator()` uses the **bundled list**: the 20 000 most
+frequent entries of Dropbox zxcvbn's password list (commit `67c4ece9`, MIT
+licence; source, version, checksum and licence text in
+`faststudio/auth/data/NOTICE` and the repository's `THIRD_PARTY_NOTICES`).
+zxcvbn credits Mark Burnett's 10M password corpus, reported as released to
+the public domain; zxcvbn ships its data under the repository's MIT
+licence. The list holds passwords only and is read on first use.
+`CommonPasswordValidator("my-list.txt.gz")` reads your own file instead (one
+password per line, UTF-8, optionally gzip-compressed); both compare
+case-insensitively.
 
 **HTTP password endpoints** are off for `ModelUserBackend` unless
 `password_endpoints=True`:

@@ -176,4 +176,6 @@ the [architecture overview](https://github.com/bekzod818/faststudio/blob/main/do
 
 ## License
 
-[MIT](https://github.com/bekzod818/faststudio/blob/main/LICENSE) © 2026 Bekzod
+[MIT](https://github.com/bekzod818/faststudio/blob/main/LICENSE) © 2026 Bekzod. The bundled common-password list comes from
+Dropbox zxcvbn (MIT); see
+[THIRD_PARTY_NOTICES](https://github.com/bekzod818/faststudio/blob/main/THIRD_PARTY_NOTICES).
