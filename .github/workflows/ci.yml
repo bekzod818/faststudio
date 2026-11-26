@@ -196,6 +196,8 @@ jobs:
       - run: pnpm -C frontend typecheck
       - run: pnpm -C frontend test
       - run: pnpm -C frontend build
+      - name: Entry chunk under Vite's 500 kB warning size
+        run: pnpm -C frontend check:size
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: spa

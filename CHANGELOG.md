@@ -107,6 +107,9 @@ listed under **Changed** or **Removed** with migration notes.
 - The login rate limit treats spellings that differ only in accents as one
   username (e.g. `José` and `jose`, which MySQL's default collation signs
   in as the same account), in addition to case and width.
+- The admin UI's first download is about a quarter smaller (main script
+  505 kB → 375 kB, gzip 160 kB → 121 kB): the login page and its form
+  libraries load only when needed.
 - A write (POST, PATCH, DELETE) sent with an expired session cookie now
   gets `401 not_authenticated` instead of `403 csrf_failed`, with the dead
   cookie cleared; nothing runs in either case.
@@ -130,6 +133,12 @@ listed under **Changed** or **Removed** with migration notes.
   only links change. On SQLite a no-change `UPDATE` takes the write lock,
   so SQLite triggers do fire. Under PostgreSQL REPEATABLE READ, concurrent
   link edits of one record may merge (documented).
+
+### Fixed
+
+- A browser that disconnects while sending a create or edit no longer
+  produces a server traceback ("Exception in ASGI application") or an
+  error log; one debug line is logged instead.
 
 ## [0.1.1] - 2026-11-24
 

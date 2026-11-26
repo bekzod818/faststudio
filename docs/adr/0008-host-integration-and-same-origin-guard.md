@@ -41,3 +41,7 @@ be fully isolated from the host:
   preflight responses still reach browsers but the real request is refused.
 - Server-to-server API clients are not blocked by the guard.
 - Hosts see each admin 500 in their own error handling.
+- A client that disconnects while sending a body (`ClientDisconnect`) is
+  not an error: it is logged at debug level and not re-raised to the host
+  (v0.2 item 5). Nothing is written, since the body never arrived; proxy
+  logs still show such requests.

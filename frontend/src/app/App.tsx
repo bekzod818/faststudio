@@ -16,7 +16,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { ConfigProvider } from "@/lib/ConfigProvider";
 import type { AppConfig } from "@/lib/config";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { LoginPage } from "@/pages/LoginPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 
 function createRuntime(config: AppConfig) {
@@ -24,7 +23,13 @@ function createRuntime(config: AppConfig) {
   const reauth = createReauthStore();
   const router = createBrowserRouter(
     [
-      { path: "/login", element: <LoginPage /> },
+      {
+        path: "/login",
+        // Lazy, with zod and react-hook-form: signed-in admins rarely need it.
+        errorElement: <RouteError />,
+        hydrateFallbackElement: <PageLoading />,
+        lazy: async () => ({ Component: (await import("@/pages/LoginPage")).LoginPage }),
+      },
       {
         element: <RequireAuth />,
         // Shown on first load while a lazily loaded page's chunk arrives.

@@ -198,21 +198,23 @@ test("edits many-to-many tags with the multi-select", async ({ page }) => {
   await expect(chips.getByRole("listitem")).toHaveText(["urgent", "docs"]);
 
   const save = page.getByRole("button", { name: "Save changes" });
-  let patch = page.waitForRequest((request) => request.method() === "PATCH");
+  const patch = page.waitForRequest((request) => request.method() === "PATCH");
   await save.click();
   expect((await patch).postDataJSON()).toEqual({ tags: [1, 6] });
   await expect(toastText(page, "Changes saved.")).toBeVisible();
 
   // Edits of other fields leave the set out of the PATCH.
-  patch = page.waitForRequest((request) => request.method() === "PATCH");
+  // Wait for each response (not just the request): a reload or the next save
+  // must not race a PATCH still in flight.
+  let saved = page.waitForResponse((r) => r.request().method() === "PATCH" && r.ok());
   await page.getByLabel("Priority").fill("2");
   await save.click();
-  expect((await patch).postDataJSON()).toEqual({ priority: 2 });
+  expect((await saved).request().postDataJSON()).toEqual({ priority: 2 });
 
   await page.getByRole("button", { name: "Remove urgent from Tags" }).click();
-  patch = page.waitForRequest((request) => request.method() === "PATCH");
+  saved = page.waitForResponse((r) => r.request().method() === "PATCH" && r.ok());
   await save.click();
-  expect((await patch).postDataJSON()).toEqual({ tags: [6] });
+  expect((await saved).request().postDataJSON()).toEqual({ tags: [6] });
   await page.reload();
   await expect(chips.getByRole("listitem")).toHaveText(["docs"]);
 
