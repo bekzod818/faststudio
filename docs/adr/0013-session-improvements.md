@@ -69,3 +69,29 @@ planned for v0.3. v0.2 should narrow the gap without adding storage.
   action.
 - With the idle timeout enabled, v0.1 workers reject the 5-item cookie, so
   enable it only after every worker runs 0.2. This is documented.
+
+## Implementation notes (M20, 2026-11-26, maintainer-approved)
+
+- `session_idle_timeout` and `session_max_age` both accept int seconds or a
+  `timedelta` (bool refused; at least 60 seconds, as `session_max_age`
+  already required in 0.1).
+- `load()` also refuses a 5-item cookie whose `seen` is before `iat` or
+  beyond the 60 s skew limit.
+- The refresh is appended by a pure ASGI layer inside the security-headers
+  layer, so it is `Cache-Control: no-store`; it is skipped on a 401 and on
+  any response that sets the session cookie itself (login, logout, password
+  changes, sign out everywhere). `Max-Age` is the remaining absolute
+  lifetime.
+- `ModelUserBackend(session_token_field=...)`: the column must be a string
+  column of its own (not the key, username, password or a flag) of at least
+  43 characters or unbounded; it is a secret field. NULL or empty values
+  count as "" and still sign in; `create_admin` sets a fresh token; password
+  changes leave it alone.
+- When a write meets a 401 the SPA keeps the form in memory, asks for the
+  password in a dialog and retries; a different account discards the form.
+- Tests control time only by passing `clock=` to `SessionManager` from test
+  code; the package has no time-shifting hook (a test checks this).
+- An unsafe request with a session cookie that no longer loads (expired,
+  idle) is `401 not_authenticated` before the CSRF check (previously `403
+  csrf_failed`, since its token was bound to the dead session). This is what
+  lets the UI offer the in-place sign-in; nothing runs in either case.

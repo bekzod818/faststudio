@@ -39,7 +39,10 @@ SQLAlchemy expressions); host app configuration (trusted, validated at startup).
 | Absolute expiry via the signed issue time (`session_max_age`), plus a 60 s future-skew limit; expired ⇒ 401. Logout clears the browser's cookie but cannot revoke a copy of it before expiry (see Known limitations). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` (incl. `test_logout_does_not_revoke_a_copied_cookie`) |
 | `auth_version` in cookie must match the user's current value (`ModelUserBackend`: SHA-256 of password hash + active/admin flags); password change, deactivation or losing admin rights invalidates sessions. `AuthenticatedUser.auth_version` is a required, non-empty field so custom backends cannot silently disable this. | `tests/integration/security/test_auth.py`, `tests/unit/auth/test_model_backend.py`, `tests/unit/test_authenticated_user.py` |
 | `ModelUserBackend` admits only active **and** admin users; its column configuration is validated at startup. | `tests/unit/auth/test_model_backend.py` |
-| Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path` = browser-visible admin root (proxy prefix + `base_url`), `Max-Age` = `session_max_age`. | `tests/integration/security/test_auth.py` |
+| Cookie flags: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path` = browser-visible admin root (proxy prefix + `base_url`), `Max-Age` = `session_max_age` (on a sliding refresh: the remaining absolute lifetime). | `tests/integration/security/test_auth.py`, `tests/integration/security/test_session_idle.py` |
+| Optional idle timeout (`session_idle_timeout`, ADR-0013): the cookie then carries a signed last-seen time; `now - seen > timeout` ⇒ 401, and a `seen` before the issue time or beyond the skew limit is refused. Active sessions slide at most every `min(timeout / 4, 5 min)`, keeping the session id (CSRF binding) and the issue time (absolute expiry unchanged). A refresh is never added to a 401 or to a response that sets the session cookie itself (login, logout, password changes, sign out everywhere). Responses carrying it are `Cache-Control: no-store` like every admin response. The SPA does not poll, so only real use slides a session. Off, the cookie is byte-identical to 0.1.x. **The idle timeout bounds abandoned cookies only; an attacker actively using a stolen cookie keeps it alive until the absolute `session_max_age` or "sign out everywhere".** | `tests/unit/auth/test_session_idle.py`, `tests/integration/security/test_session_idle.py`, `frontend/src/app/query.test.ts` |
+| "Sign out everywhere" (`POST /auth/sign-out-everywhere`, `session_revocation` capability): rotates a random per-account token that is part of `auth_version`, so every session of the account ends; needs a session and CSRF; clears this browser's cookie like logout. `contrib.auth` provides it; `ModelUserBackend` only with `session_token_field` (validated string column ≥ 43 characters, a secret field). `404` without the capability. | `tests/integration/security/test_sign_out_everywhere.py`, `tests/integration/contrib/test_contrib_auth.py` |
+| The shipped package contains no hook that shifts session time or bypasses checks (no environment variable, flag or route); tests inject a clock through `SessionManager(clock=...)` from outside the package. | `tests/unit/test_no_test_hooks.py` |
 
 ### T2. Credential attacks and user enumeration
 
@@ -90,6 +93,7 @@ Residual risks (documented, accepted for v0.1):
 | All POST/PUT/PATCH/DELETE under `/api/` (including login, logout and unknown paths, checked before routing) require header `X-FastStudio-CSRF` equal to cookie `faststudio_csrftoken` (double submit) and an HMAC-valid token. | `tests/integration/security/test_auth.py`, `tests/integration/test_errors.py` |
 | After login the token is bound to the session id (`HMAC(key, sid|nonce)`); a token from another session, or an anonymous token while signed in (cookie tossing), is rejected (login itself still accepts an anonymous token). | `tests/unit/auth/test_tokens.py`, `tests/integration/security/test_auth.py` |
 | `Origin` / `Sec-Fetch-Site` must indicate same origin when present. Enforced for **every** `/api/*` request, including GET, so a permissive host CORS policy cannot expose admin reads (ADR-0008). | `tests/integration/security/test_origin.py`, `tests/integration/security/test_auth.py` |
+| An unsafe request whose session cookie is present but no longer valid (expired, idle, tampered) is `401 not_authenticated` before the token check, with that cookie cleared and an anonymous token issued; nothing runs, as with a `403`. (Its token was bound to the dead session, so it could otherwise only be `403 csrf_failed`, and the UI could not offer to sign in again.) The origin check still runs first; with a valid session the token check is unchanged. | `tests/integration/security/test_session_idle.py::test_an_idle_write_is_401_not_a_csrf_failure`, `::test_a_write_without_a_valid_token_is_still_refused` |
 | `SameSite=Lax` session cookie as defense in depth. | `tests/integration/security/test_auth.py` |
 | A session or CSRF cookie that appears more than once in a request (planted by a sibling subdomain with `Domain=`) is treated as absent by both the server and the SPA, so a planted value never decides the session or the token (fails closed). | `tests/integration/security/test_auth.py::test_repeated_session_cookie_is_rejected`, `::test_repeated_csrf_cookie_is_rejected`, `frontend/src/lib/cookies.test.ts` |
 | Token rotated on login and logout, and reset to an anonymous token whenever an invalid session is cleared; a missing or invalid token cookie is replaced on the next response (never on cacheable `/assets/` responses). | `tests/integration/security/test_auth.py` |
@@ -195,16 +199,18 @@ request; they do not end sessions.
 - **Logout only clears the browser's cookie.** Sessions are stateless signed
   cookies (ADR-0004): the server keeps no session list, so signing out cannot
   invalidate a copy of the cookie. A copied or stolen session cookie stays
-  valid until `session_max_age` after sign-in (default 8 hours; absolute, not
-  renewed by activity) unless the user's password or active/admin flags
-  change, which changes `auth_version` and revokes every session of that user
-  (`ModelUserBackend`; a custom backend revokes sessions when its own
-  `auth_version` changes). Mitigations today: `HttpOnly` and `Secure`
-  cookies, a short `session_max_age`, changing the password after a suspected
-  leak, and rotating `FASTSTUDIO_SECRET_KEY`, which signs everyone out at
-  once.
-  Planned: an idle timeout and "sign out everywhere" in v0.2, and a
-  server-side session store with per-session revocation in v0.3.
+  valid until `session_max_age` after sign-in (default 8 hours; absolute)
+  unless the user's password or active/admin flags change, or the user
+  signs out everywhere, each of which changes `auth_version` and revokes
+  every session of that user (a custom backend revokes sessions when its
+  own `auth_version` changes). With `session_idle_timeout`, a cookie that
+  is left unused also expires; one that an attacker keeps using does not,
+  until `session_max_age` or "sign out everywhere". Mitigations: `HttpOnly`
+  and `Secure` cookies, a short `session_max_age`, an idle timeout, "sign
+  out everywhere" (backends with `session_revocation`), changing the
+  password after a suspected leak, and rotating `FASTSTUDIO_SECRET_KEY`,
+  which signs everyone out at once.
+  Planned: a server-side session store with per-session revocation in v0.3.
 - Without a permission backend every admin can access every registered
   model; object-level permission hooks do not filter lists or choices (T9).
 - The account-safety guard (ADR-0009) only covers writes through the admin

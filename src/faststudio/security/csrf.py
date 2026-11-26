@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from faststudio._spa import ADMIN_ROOT_KEY
 from faststudio.api._paths import LOGIN_PATH
 from faststudio.api.errors import error_response
-from faststudio.auth.cookies import csrf_cookie, single_cookie
+from faststudio.auth.cookies import csrf_cookie, expired_session_cookie, single_cookie
 from faststudio.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from faststudio.auth.session import SESSION_COOKIE
 
@@ -36,6 +36,12 @@ class CsrfMiddleware:
     current session. Anonymous tokens are accepted only without a session,
     or on the login route. Any response gets a fresh token cookie when the
     current one is missing or invalid; routes that rotate it themselves win.
+
+    An unsafe request carrying a session cookie that is no longer valid
+    (expired, idle, tampered) gets `401 not_authenticated` with the cookie
+    cleared, before the token check: its token was bound to that session, so
+    it would otherwise always be `403 csrf_failed`, and the UI could not
+    tell an ended session from a forged request. Nothing runs either way.
     """
 
     def __init__(self, app: ASGIApp, context: AdminContext) -> None:
@@ -49,7 +55,8 @@ class CsrfMiddleware:
             await self.app(scope, receive, send)
             return
         connection = HTTPConnection(scope)
-        session = self.context.sessions.load(single_cookie(scope, SESSION_COOKIE))
+        raw_session = single_cookie(scope, SESSION_COOKIE)
+        session = self.context.sessions.load(raw_session)
         session_id = session.session_id if session else None
         cookie_token = single_cookie(scope, CSRF_COOKIE)
         cookie_ok = cookie_token is not None and self.context.csrf.verify(
@@ -61,6 +68,17 @@ class CsrfMiddleware:
         send = self._issuing_send(scope, send, session_id, refresh=refresh)
         is_api = relative == "/api" or relative.startswith("/api/")
         if is_api and scope["method"] in UNSAFE_METHODS:
+            if raw_session and session is None and relative != LOGIN_PATH:
+                response = error_response(401, "not_authenticated")
+                response.headers.append(
+                    "set-cookie",
+                    expired_session_cookie(
+                        path=scope.get(ADMIN_ROOT_KEY, scope.get("root_path", "")) or "/",
+                        secure=self.context.settings.secure_cookies,
+                    ),
+                )
+                await response(scope, receive, send)  # plus a fresh anonymous token
+                return
             header = connection.headers.get(CSRF_HEADER)
             if not self._valid(header, cookie_token, session_id, login=relative == LOGIN_PATH):
                 response = error_response(403, "csrf_failed")

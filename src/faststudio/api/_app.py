@@ -8,11 +8,13 @@ from starlette.types import ASGIApp
 
 from faststudio._spa import AdminRootRecorder, SpaSite
 from faststudio.api._context import AdminContext
+from faststudio.api._session_refresh import SessionRefreshMiddleware
 from faststudio.api.auth import protected_router, public_router
 from faststudio.api.errors import install_error_handlers
 from faststudio.api.models import router as models_router
 from faststudio.api.passwords import own_router as own_password_router
 from faststudio.api.passwords import router as password_router
+from faststudio.api.sessions import router as sessions_router
 from faststudio.api.write import router as write_router
 from faststudio.security.csrf import CsrfMiddleware
 from faststudio.security.headers import SecurityHeadersMiddleware
@@ -40,6 +42,7 @@ def create_admin_app(context: AdminContext) -> FastAPI:
     app.include_router(write_router)
     app.include_router(own_password_router)
     app.include_router(password_router)
+    app.include_router(sessions_router)
     app.mount(
         "/assets",
         StaticFiles(directory=context.static_dir / "assets", check_dir=False),
@@ -50,7 +53,11 @@ def create_admin_app(context: AdminContext) -> FastAPI:
 
 
 def wrap_admin_app(app: ASGIApp, context: AdminContext) -> ASGIApp:
-    """Outer layers, outermost first: headers, admin root, same-origin guard, CSRF."""
+    """Outer layers, outermost first: headers, admin root, session refresh, origin, CSRF.
+
+    The headers layer stays outermost so a response carrying a refreshed
+    session cookie is `Cache-Control: no-store` like every other one.
+    """
     return SecurityHeadersMiddleware(
-        AdminRootRecorder(SameOriginGuard(CsrfMiddleware(app, context)))
+        AdminRootRecorder(SessionRefreshMiddleware(SameOriginGuard(CsrfMiddleware(app, context))))
     )

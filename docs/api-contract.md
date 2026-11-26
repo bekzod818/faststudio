@@ -182,6 +182,24 @@ echo a password.
   record (`403`; a record hidden from retrieve is `404`); never for one's
   own account (`403`; use `/auth/password`).
 
+### Sessions
+
+`POST /auth/sign-out-everywhere` (no body) ends every session of the
+signed-in admin, this one included. It exists only when the auth backend
+provides `session_revocation` (otherwise `404`);
+`MetaResponse.capabilities.sign_out_everywhere` says whether it does. It
+needs a session (`401`) and the CSRF header. On success (`204`) the session
+cookie is cleared and an anonymous CSRF cookie is set, as on logout; every
+other session of the account gets `401` on its next request.
+
+With `session_idle_timeout`, any authenticated API response may carry a
+renewed `faststudio_session` cookie (same session, later last-seen time;
+`Max-Age` is the remaining absolute lifetime). Responses are always
+`Cache-Control: no-store`. A `401` never renews the cookie. A write whose
+session cookie has expired is `401 not_authenticated` (not `403
+csrf_failed`); the response clears that cookie and sets an anonymous CSRF
+cookie, so the client can sign in again and resend the write.
+
 ### Choices
 
 `GET /models/{identity}/fields/{field}/choices?page=&q=` works only for

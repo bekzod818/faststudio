@@ -14,7 +14,8 @@ raises `faststudio.ConfigurationError`. Environment variables use the
 | `secret_key` | `str` | env | `FASTSTUDIO_SECRET_KEY` | Signs sessions and CSRF tokens. ≥ 32 characters, random; weak or placeholder values fail startup. |
 | `title` | `str` | `"FastStudio"` | – | UI title, 1–100 characters (surrounding whitespace stripped). |
 | `base_url` | `str` | `"/admin"` | – | Mount path such as `/admin` or `/back-office/studio`. Segments may use letters, digits, `.`, `_`, `~`, `-`; a trailing `/` is removed. `/`, empty or dot segments, queries, fragments and percent-encoding are rejected. |
-| `session_max_age` | `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
+| `session_max_age` | `int` (seconds) or `timedelta` | 8 h | – | Absolute session lifetime; at least 60 seconds. |
+| `session_idle_timeout` | `int` (seconds), `timedelta` or `None` | `None` (off) | – | Also end a session after this long without a request; 60 seconds up to `session_max_age`. See [Sessions](#sessions). |
 | `secure_cookies` | `bool` | `True` | – | `Secure` cookie flag. Browsers accept secure cookies on `http://localhost`, so keep this on for local dev too. `False` logs a warning at startup. |
 | `max_page_size` | `int` | `100` | – | Hard cap for list requests and `ModelAdmin.page_size`; 1–1000. |
 | `max_list_offset` | `int` | `10_000` | – | Lists and relation pickers never skip this many rows or more; see [Deep pagination](#deep-pagination). 1–10 000 000. |
@@ -45,7 +46,7 @@ to the host, so your error monitoring sees them.
 `ModelUserBackend(model, *, username_field="username",
 password_field="password_hash", is_active_field="is_active",
 is_admin_field="is_admin", password_validators=DEFAULT_VALIDATORS,
-password_endpoints=False)` reads admins from your own SQLAlchemy model.
+password_endpoints=False, session_token_field=None)` reads admins from your own SQLAlchemy model.
 Column names are checked at startup. Only active admins can sign in; pass
 `is_admin_field=None` only if every row of that table is an administrator.
 Store passwords with `faststudio.hash_password()` (argon2id); rows without a
@@ -101,11 +102,47 @@ you may use the list you choose.
 The UI shows "Change password" in the header and "Set password" on account
 records when the endpoints are available.
 
+### Sessions
+
 Sessions are signed cookies (`faststudio_session`, HttpOnly, `SameSite=Lax`,
 Secure unless `secure_cookies=False`) scoped to the admin path. Changing a
 user's password, deactivating them or removing admin rights signs them out
 everywhere on their next request. Rotating `FASTSTUDIO_SECRET_KEY` signs
 everyone out.
+
+- **Absolute lifetime** (`session_max_age`, 8 hours by default): a session
+  ends that long after sign-in, whatever happens.
+- **Idle timeout** (`session_idle_timeout`, off by default): a session also
+  ends after that long without a request. Active sessions slide: the cookie
+  is renewed at most every `min(timeout / 4, 5 minutes)`, keeping its
+  session id and its absolute end. The UI does no background polling, so
+  only real use keeps a session alive. If a save hits an expired session,
+  the UI asks for the password in place and retries the save with the
+  original input (kept in memory only). The idle timeout limits cookies left
+  behind (an unlocked, abandoned browser); it does not stop someone actively
+  using a stolen cookie, which stays valid until `session_max_age` or
+  "Sign out everywhere".
+- **Sign out everywhere**: a button in the header ends every session of the
+  signed-in admin, in every browser. It needs a backend with the
+  `session_revocation` capability: `contrib.auth` has it; for
+  `ModelUserBackend` pass `session_token_field`:
+
+```python
+class User(Base):
+    ...
+    session_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+backend = ModelUserBackend(User, session_token_field="session_token")
+```
+
+The column must be a string of at least 43 characters (or unbounded). Its
+value becomes part of every session, so **turning the option on signs
+every admin out once**. Rows where it is NULL or empty can still sign in;
+the first "Sign out everywhere" stores a random token, and
+`faststudio createadmin` sets one. Password changes leave it alone (the
+password hash already ends the other sessions). It is a secret field:
+exclude it from the user model's `ModelAdmin`, or registration fails.
 
 Custom backends implement `faststudio.AuthBackend` (async `authenticate()` and
 `get_user()`, returning `faststudio.AuthenticatedUser`); FastStudio provides

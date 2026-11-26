@@ -3,11 +3,14 @@ import { useState } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { createApiClient } from "@/api/client";
+import { queryKeys } from "@/api/hooks";
 import { ApiProvider } from "@/api/provider";
 import { RequireAuth } from "@/app/auth/RequireAuth";
 import { PageLoading, RouteError } from "@/app/RouteError";
 import { Layout } from "@/app/Layout";
-import { shouldRetry } from "@/app/query";
+import { QUERY_DEFAULTS } from "@/app/query";
+import { createReauthStore } from "@/app/reauth";
+import { ReauthDialog } from "@/app/ReauthDialog";
 import { createUnauthorizedHandler } from "@/app/session";
 import { ThemeProvider } from "@/app/theme/ThemeProvider";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,12 +21,8 @@ import { LoginPage } from "@/pages/LoginPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 
 function createRuntime(config: AppConfig) {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: shouldRetry, refetchOnWindowFocus: false },
-      mutations: { retry: false },
-    },
-  });
+  const queryClient = new QueryClient({ defaultOptions: QUERY_DEFAULTS });
+  const reauth = createReauthStore();
   const router = createBrowserRouter(
     [
       { path: "/login", element: <LoginPage /> },
@@ -81,21 +80,28 @@ function createRuntime(config: AppConfig) {
       queryClient,
       router: () => router,
       basename: config.baseUrl,
+      reauthenticating: reauth.isOpen,
     }),
+    // Only a signed-in admin is asked; anonymous visitors go to the login page.
+    reauthenticate: () =>
+      queryClient.getQueryData(queryKeys.me) === undefined
+        ? Promise.resolve("cancel")
+        : reauth.request(),
   });
-  return { router, queryClient, client };
+  return { router, queryClient, client, reauth };
 }
 
 export function App({ config }: { config: AppConfig }) {
   // useState, not useMemo: React may discard memoized values, and the router
   // and cache must live exactly as long as the app.
-  const [{ router, queryClient, client }] = useState(() => createRuntime(config));
+  const [{ router, queryClient, client, reauth }] = useState(() => createRuntime(config));
   return (
     <ConfigProvider value={config}>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <ApiProvider client={client}>
             <RouterProvider router={router} />
+            <ReauthDialog store={reauth} router={() => router} />
             <Toaster />
           </ApiProvider>
         </QueryClientProvider>

@@ -126,6 +126,25 @@ def test_an_unrelated_guards_attribute_is_ignored(
     _admin(app, engine, secret_key, _backend(guards=lambda m: True))
 
 
+class _SyncRevoker:
+    def rotate_session_token(self, session: object, account_id: str) -> None:
+        del session, account_id
+
+
+class _Revoker:
+    async def rotate_session_token(self, session: object, account_id: str) -> None:
+        del session, account_id
+
+
+def test_valid_session_revocation_is_kept(
+    app: FastAPI, engine: AsyncEngine, secret_key: str
+) -> None:
+    revoker = _Revoker()
+    backend = _backend(faststudio_capabilities=BackendCapabilities(session_revocation=revoker))
+    admin = _admin(app, engine, secret_key, backend)
+    assert admin._capabilities.session_revocation is revoker
+
+
 @pytest.mark.parametrize(
     ("capabilities", "match"),
     [
@@ -133,6 +152,8 @@ def test_an_unrelated_guards_attribute_is_ignored(
         ({"permissions": object()}, "permissions must implement PermissionBackend"),
         ({"permissions": _SyncResolver()}, "async resolve"),
         ({"permissions": _Resolver}, "PermissionBackend"),  # a class, not an instance
+        ({"session_revocation": object()}, "session_revocation must implement SessionRevocation"),
+        ({"session_revocation": _SyncRevoker()}, "async rotate_session_token"),
     ],
 )
 def test_invalid_capabilities_are_refused(

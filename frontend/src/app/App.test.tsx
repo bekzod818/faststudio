@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/api/client";
-import { toast } from "@/lib/toast";
+import { getToasts, toast } from "@/lib/toast";
 
 import { App } from "./App";
 import { shouldRetry } from "./query";
@@ -27,7 +28,7 @@ const NOT_AUTHENTICATED = { error: { code: "not_authenticated", message: "Sign i
 
 describe("App", () => {
   let routes: Record<string, () => Response>;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>>;
 
   beforeEach(() => {
     routes = {};
@@ -80,6 +81,62 @@ describe("App", () => {
       });
     },
   );
+
+  const metaWith = (signOutEverywhere: boolean) => () =>
+    json(200, {
+      schema_version: "1",
+      version: "0",
+      title: "Test Admin",
+      show_powered_by: true,
+      user: ME.user,
+      models: [],
+      capabilities: { change_password: false, sign_out_everywhere: signOutEverywhere },
+    });
+
+  it.each([true, false])(
+    "offers sign out everywhere only when the backend does (%s)",
+    async (offered) => {
+      routes["/auth/me"] = () => json(200, ME);
+      routes["/meta"] = metaWith(offered);
+      window.history.replaceState(null, "", "/admin/");
+      render(<App config={CONFIG} />);
+      expect(await screen.findByRole("button", { name: "Sign out" })).toBeVisible();
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Sign out everywhere" }) !== null).toBe(
+          offered,
+        );
+      });
+    },
+  );
+
+  it("signs out everywhere after confirmation", async () => {
+    routes["/auth/me"] = () => json(200, ME);
+    routes["/meta"] = metaWith(true);
+    routes["/auth/sign-out-everywhere"] = () => new Response(null, { status: 204 });
+    window.history.replaceState(null, "", "/admin/");
+    render(<App config={CONFIG} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out everywhere" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sign out everywhere?" });
+    expect(dialog).toHaveTextContent(/every browser and on every device/u);
+    const posted = () =>
+      fetchMock.mock.calls.filter(([url]) => url.endsWith("/auth/sign-out-everywhere"));
+    // Cancelling sends nothing.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(posted()).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog", { name: "Sign out everywhere?" })).getByRole(
+        "button",
+        { name: "Sign out everywhere" },
+      ),
+    );
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/admin/login");
+    });
+    expect(posted()).toHaveLength(1);
+    expect((posted()[0]?.[1] as RequestInit).method).toBe("POST");
+    expect(getToasts().map((t) => t.message)).toContain("Signed out on every device.");
+  });
 
   it("returns an expired session to login with the in-app path", async () => {
     routes["/auth/me"] = () => json(200, ME);

@@ -36,10 +36,13 @@ export function createUnauthorizedHandler(options: {
   queryClient: QueryClient;
   router: () => RouterLike;
   basename: string;
+  /** While the in-place sign-in dialog is open, failed reads wait for it. */
+  reauthenticating?: () => boolean;
 }): () => void {
   return () => {
     const { queryClient } = options;
     if (queryClient.getQueryData(queryKeys.me) === undefined) return;
+    if (options.reauthenticating?.() === true) return;
     void queryClient.cancelQueries();
     queryClient.removeQueries();
     const router = options.router();

@@ -561,3 +561,43 @@ async def test_core_inserts_get_the_sign_in_key_too(db: AsyncEngine) -> None:
         row = await session.get(AUTH.user, 50)
         assert row is not None
         assert row.username_normalized == "coreuser"
+
+
+# --------------------------------------------------------------------------- sign out everywhere
+
+
+async def test_sign_out_everywhere_ends_every_session(sign_in: SignIn, db: AsyncEngine) -> None:
+    here, elsewhere, other = await sign_in("Staff"), await sign_in("Staff"), await sign_in()
+    meta = (await here.get("/meta")).json()
+    assert meta["capabilities"]["sign_out_everywhere"] is True
+    async with AsyncSession(db) as session:
+        before = (await session.get(AUTH.user, 2)).session_token  # type: ignore[union-attr]
+
+    # CSRF is required like on every other write.
+    refused = await here.http.post(f"{API}/auth/sign-out-everywhere", headers={"origin": ORIGIN})
+    assert refused.status_code == 403
+    assert (await elsewhere.get("/auth/me")).status_code == 200
+
+    response = await here.send("POST", "/auth/sign-out-everywhere")
+    assert response.status_code == 204
+    cookies = response.headers.get_list("set-cookie")
+    assert any(c.startswith("faststudio_session=") and "Max-Age=0" in c for c in cookies)
+    assert any(c.startswith("faststudio_csrftoken=") for c in cookies)
+    assert (await here.get("/auth/me")).status_code == 401
+    assert (await elsewhere.get("/auth/me")).status_code == 401
+    assert (await other.get("/auth/me")).status_code == 200  # other accounts are untouched
+    async with AsyncSession(db) as session:
+        after = (await session.get(AUTH.user, 2)).session_token  # type: ignore[union-attr]
+    assert after != before
+    assert len(after) >= 43
+    # The password still works: a fresh sign-in starts a new session.
+    again = await sign_in("Staff")
+    assert (await again.get("/auth/me")).status_code == 200
+
+
+async def test_rotating_a_missing_account_raises(db: AsyncEngine) -> None:
+    backend = DatabaseAuthBackend(AUTH, register_admins=False)
+    async with AsyncSession(db) as session:
+        for missing in ("99", "x"):
+            with pytest.raises(LookupError):
+                await backend.rotate_session_token(session, missing)

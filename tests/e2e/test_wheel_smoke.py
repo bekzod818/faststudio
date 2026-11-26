@@ -119,3 +119,14 @@ async def _exercise(app: object) -> None:
         pk = created.json()["pk"]
         deleted = await client.delete(f"/admin/api/v1/models/tasks/items/{pk}", headers=headers)
         assert deleted.status_code == 204
+
+
+def test_installed_package_has_no_test_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scans of tests/unit/test_no_test_hooks.py, on the installed wheel (M20)."""
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from tests.unit import test_no_test_hooks as scan  # noqa: PLC0415
+
+    assert "site-packages" in scan.PACKAGE.parts
+    scan.test_the_sources_are_scanned()
+    scan.test_only_the_secret_key_is_read_from_the_environment()
+    scan.test_sessions_always_use_the_real_clock()

@@ -23,6 +23,7 @@ from faststudio.auth.capabilities import (
     AccountManager,
     BackendCapabilities,
     PermissionBackend,
+    SessionRevocation,
     UsernameAudit,
 )
 from faststudio.auth.csrf import CsrfTokens
@@ -67,7 +68,8 @@ class Admin:
         secret_key: str | None = None,
         title: str = "FastStudio",
         base_url: str = "/admin",
-        session_max_age: timedelta = timedelta(hours=8),
+        session_max_age: int | timedelta = timedelta(hours=8),
+        session_idle_timeout: int | timedelta | None = None,
         secure_cookies: bool = True,
         max_page_size: int = 100,
         max_list_offset: int = DEFAULT_MAX_LIST_OFFSET,
@@ -88,7 +90,12 @@ class Admin:
                 32 random characters.
             title: Title shown in the UI.
             base_url: Mount path, e.g. ``/admin``.
-            session_max_age: Absolute session lifetime.
+            session_max_age: Absolute session lifetime, as int seconds or a
+                ``timedelta`` (at least 60 seconds).
+            session_idle_timeout: Also end a session after this long without
+                a request (int seconds or ``timedelta``, 60 seconds up to
+                ``session_max_age``). ``None`` (the default) turns it off.
+                Active sessions slide; the absolute lifetime still applies.
             secure_cookies: Set the ``Secure`` cookie flag. Disable only for
                 plain-HTTP development on non-localhost hosts.
             max_page_size: Upper bound for list page sizes.
@@ -129,6 +136,7 @@ class Admin:
             title=title,
             base_url=base_url,
             session_max_age=session_max_age,
+            session_idle_timeout=session_idle_timeout,
             secure_cookies=secure_cookies,
             max_page_size=max_page_size,
             max_list_offset=max_list_offset,
@@ -147,6 +155,7 @@ class Admin:
             sessions=SessionManager(
                 self._settings.secret_key,
                 max_age=int(self._settings.session_max_age.total_seconds()),
+                idle_timeout=_seconds(self._settings.session_idle_timeout),
             ),
             csrf=CsrfTokens(self._settings.secret_key),
             rate_limiter=_validate_rate_limiter(rate_limiter),
@@ -240,6 +249,10 @@ class _TrailingSlashRedirect:
         await RedirectResponse(target, status_code=307)(scope, receive, send)
 
 
+def _seconds(duration: timedelta | None) -> int | None:
+    return None if duration is None else int(duration.total_seconds())
+
+
 def _require_instance(value: object, cls: type[_T], msg: str) -> _T:
     """Runtime type guard: static types are bypassed by untyped callers."""
     if not isinstance(value, cls):
@@ -323,6 +336,13 @@ def _resolve_capabilities(backend: AuthBackend) -> BackendCapabilities:
         "username_audit",
         sync=(),
         coroutines=("audit", "fix"),
+    )
+    _check_protocol(
+        capabilities.session_revocation,
+        SessionRevocation,
+        "session_revocation",
+        sync=(),
+        coroutines=("rotate_session_token",),
     )
     if capabilities.accounts is not None:
         validators: object = capabilities.accounts.password_validators

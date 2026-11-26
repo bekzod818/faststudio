@@ -241,6 +241,12 @@ export function useLogout() {
   return useMutation({ mutationFn: () => api.post("/auth/logout") });
 }
 
+/** End every session of the signed-in admin (`POST /auth/sign-out-everywhere`, 204). */
+export function useSignOutEverywhere() {
+  const api = useApi();
+  return useMutation({ mutationFn: () => api.post("/auth/sign-out-everywhere") });
+}
+
 /** Cancel and drop every cached query (the previous admin's data). */
 export function useForgetSession(): () => void {
   const queryClient = useQueryClient();

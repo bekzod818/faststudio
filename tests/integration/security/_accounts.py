@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -18,6 +19,8 @@ ORIGIN = "https://testserver"
 BASE = "/admin/api/v1/models"
 PASSWORD = "a long test passphrase"
 HASH = hash_password(PASSWORD)
+#: The `make_auth_admin` fixture (conftest.py): keyword options -> mounted `Admin`.
+AuthAdminFactory = Callable[..., Admin]
 
 
 class AdminUserAdmin(ModelAdmin, model=AdminUser):

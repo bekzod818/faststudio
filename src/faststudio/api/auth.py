@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from faststudio._spa import ADMIN_ROOT_KEY
 from faststudio.api._context import AdminContext
 from faststudio.api._paths import API_PREFIX
+from faststudio.api._session_refresh import offer_refresh
 from faststudio.api.errors import ApiError
 from faststudio.auth.backend import AuthenticatedUser
 from faststudio.auth.cookies import (
@@ -60,6 +61,19 @@ async def current_user(request: Request) -> AuthenticatedUser:
                 csrf_cookie(context.csrf.issue(session_id=None), path=path, secure=secure),
             ]
         raise ApiError(401, "not_authenticated", set_cookies=cookies)
+    sessions = context.sessions
+    if sessions.refresh_due(session):
+        # Sliding idle timeout: same session id (CSRF stays bound) and issue
+        # time, so the absolute expiry is unchanged; Max-Age is what is left.
+        offer_refresh(
+            request.scope,
+            session_cookie(
+                sessions.refresh(session),
+                path=cookie_path(request),
+                max_age=sessions.remaining(session),
+                secure=context.settings.secure_cookies,
+            ),
+        )
     return user
 
 

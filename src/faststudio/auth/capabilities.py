@@ -33,6 +33,7 @@ __all__ = [
     "PermissionBackend",
     "PermissionSchema",
     "Permissions",
+    "SessionRevocation",
     "UsernameAudit",
 ]
 
@@ -206,6 +207,25 @@ class UsernameAudit(Protocol):
         ...
 
 
+@runtime_checkable
+class SessionRevocation(Protocol):
+    """Capability: end every session of an account ("sign out everywhere", ADR-0013).
+
+    Sessions are stateless; an account's sessions end when its
+    ``auth_version`` changes. Implementations rotate a random per-account
+    token that is part of the ``auth_version``.
+    """
+
+    async def rotate_session_token(self, session: AsyncSession, account_id: str) -> None:
+        """Replace the account's session token (the caller commits).
+
+        Raises:
+            LookupError: if the account does not exist.
+
+        """
+        ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PermissionSchema:
     """Where a backend stores users, groups and permissions (ADR-0011 §6).
@@ -253,6 +273,8 @@ class BackendCapabilities:
             and groups of `faststudio.contrib.auth`).
         username_audit: Finds and repairs a drifted sign-in key
             (``faststudio checkusers``).
+        session_revocation: Ends every session of an account, offered to
+            signed-in admins as "Sign out everywhere".
         password_endpoints: Offer the HTTP password endpoints (needs
             `accounts` and an `account_guard`). Off by default: with
             `ModelUserBackend` every admin holds `ALL`, so any admin could
@@ -268,5 +290,6 @@ class BackendCapabilities:
     permission_schema: PermissionSchema | None = None
     accounts: AccountManager | None = None
     username_audit: UsernameAudit | None = None
+    session_revocation: SessionRevocation | None = None
     password_endpoints: bool = False
     register_admins: Callable[[Admin], None] | None = None

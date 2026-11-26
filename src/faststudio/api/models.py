@@ -67,7 +67,8 @@ async def meta(request: Request, user: CurrentUser, perms: Perms) -> MetaRespons
             set_password=password_endpoints and perms is ALL,
         ),
         capabilities=CapabilitiesMeta(
-            change_password=password_endpoints, sign_out_everywhere=False
+            change_password=password_endpoints,
+            sign_out_everywhere=context.capabilities.session_revocation is not None,
         ),
     )
 

@@ -4,6 +4,13 @@ import { readCookie } from "@/lib/cookies";
 export const CSRF_COOKIE = "faststudio_csrftoken";
 export const CSRF_HEADER = "X-FastStudio-CSRF";
 
+/**
+ * What to do with a write that met `401 not_authenticated` after asking the
+ * admin to sign in again: `retry` (same account), `discard` (another
+ * account signed in) or `cancel` (the usual "session ended" flow).
+ */
+export type ReauthOutcome = "retry" | "discard" | "cancel";
+
 /** Client-side codes in addition to the server's `ErrorCode`s. */
 export type ClientErrorCode = ErrorCode | "network_error";
 
@@ -25,7 +32,15 @@ export interface ApiClientOptions {
   fetch?: typeof fetch;
   /** Called once per `401 not_authenticated` (expired or revoked session). */
   onUnauthorized?: () => void;
+  /**
+   * Asked when a write gets `401 not_authenticated`: `retry` resends it once,
+   * `discard` fails it quietly, `cancel` runs `onUnauthorized`.
+   */
+  reauthenticate?: () => Promise<ReauthOutcome>;
 }
+
+/** Writes that start or end a session: a 401 there is never retried. */
+const SESSION_PATHS = new Set(["/auth/login", "/auth/logout", "/auth/sign-out-everywhere"]);
 
 /** Query parameters; `undefined` values are skipped. */
 export type QueryParams = Record<string, string | number | undefined>;
@@ -79,8 +94,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     method: string,
     path: string,
     body?: unknown,
-    { params, signal }: GetOptions = {},
+    getOptions: GetOptions = {},
+    retried = false,
   ): Promise<T> {
+    const { params, signal } = getOptions;
     const headers = new Headers({ accept: "application/json" });
     if (method !== "GET") {
       const token = readCookie(CSRF_COOKIE);
@@ -110,8 +127,18 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     if (response.ok) return payload as T;
     if (isErrorBody(payload)) {
       const { code, message, details } = payload.error;
-      if (response.status === 401 && code === "not_authenticated") options.onUnauthorized?.();
-      throw new ApiError(response.status, code, message, details);
+      const error = new ApiError(response.status, code, message, details);
+      if (response.status === 401 && code === "not_authenticated") {
+        const reauthenticate = options.reauthenticate;
+        if (method !== "GET" && !retried && !SESSION_PATHS.has(path) && reauthenticate) {
+          const outcome = await reauthenticate();
+          // The new sign-in set a new CSRF cookie: the retry reads it.
+          if (outcome === "retry") return request<T>(method, path, body, getOptions, true);
+          if (outcome === "discard") throw error;
+        }
+        options.onUnauthorized?.();
+      }
+      throw error;
     }
     throw new ApiError(response.status, "internal_error", "Unexpected server response.");
   }
