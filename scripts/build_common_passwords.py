@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import http.client
 import io
 import sys
 import time
@@ -52,7 +53,9 @@ def download() -> bytes:
             with urllib.request.urlopen(URL, timeout=60) as response:
                 data: bytes = response.read(MAX_SOURCE_BYTES + 1)
             break
-        except (urllib.error.URLError, TimeoutError) as exc:
+        # URLError covers HTTP errors; IncompleteRead and OSError cover a
+        # connection dropped mid-body.
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
             if attempt == ATTEMPTS:
                 msg = f"cannot download {URL} after {ATTEMPTS} attempts ({exc})"
                 raise SystemExit(msg) from None

@@ -188,7 +188,9 @@ both.
   `"aiomysql[rsa]>=0.3"` (or `aiomysql` plus `cryptography`).
 - **MySQL collations.** With the default `utf8mb4_0900_ai_ci`, comparisons
   are case- and accent-insensitive: a unique username column refuses `Ann`
-  next to `ANN`, and signing in as `jose` finds `José`. That collation
+  next to `ANN`, and signing in as `jose` finds `José` (the login rate
+  limiter folds case, width and accents too, so such spellings share one
+  limit on every database). That collation
   predates newer Unicode case pairs (e.g. Georgian capital letters), so
   `faststudio checkusers` can still find collisions; keep running it. With
   a binary collation (`utf8mb4_bin`), usernames compare as on PostgreSQL.

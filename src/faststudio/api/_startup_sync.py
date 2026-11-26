@@ -35,7 +35,8 @@ RETRY_INTERVAL = 30.0
 RACE_ATTEMPTS = 5
 #: No new attempt starts later than this many seconds after the first one.
 RACE_BUDGET = 2.0
-# Tests replace these names, not asyncio.sleep / time.monotonic for everything.
+# Module-level references, so the retry timing can be replaced locally
+# (e.g. by a test) without patching asyncio.sleep or time.monotonic globally.
 _sleep = asyncio.sleep
 _monotonic = time.monotonic
 

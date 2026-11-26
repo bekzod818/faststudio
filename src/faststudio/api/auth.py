@@ -92,12 +92,17 @@ protected_router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(current_us
 
 
 def rate_limit_username(username: str) -> str:
-    """Normalize a username for rate-limit keys (NFKC, case-folded, trimmed).
+    """Normalize a username for rate-limit keys (accents removed, NFKC, case-folded).
 
-    Variants a database collation may treat as equal ("Admin", " admin",
-    full-width letters) then share one bucket.
+    Variants a database collation may treat as equal share one bucket:
+    "Admin" / " admin" / full-width letters, and "José" / "jose", which
+    MySQL's default utf8mb4_0900_ai_ci (accent-insensitive) signs in as the
+    same account. Folding more than the database only makes the limit
+    stricter, never looser.
     """
-    return unicodedata.normalize("NFKC", username).casefold().strip()
+    decomposed = unicodedata.normalize("NFKD", username)
+    unaccented = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return unicodedata.normalize("NFKC", unaccented).casefold().strip()
 
 
 def _user_response(user: AuthenticatedUser) -> UserResponse:
