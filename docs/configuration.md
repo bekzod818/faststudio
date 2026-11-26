@@ -152,6 +152,42 @@ For several workers, pass a shared `rate_limiter` implementing
 `faststudio.RateLimiter` (async `hit(key) -> RateLimitDecision` and
 `reset(key)`), e.g. backed by Redis.
 
+## Databases
+
+FastStudio uses SQLAlchemy's async engines and is tested in CI on:
+
+| Database | Version | Driver (URL prefix) |
+|---|---|---|
+| SQLite | the one bundled with Python 3.11–3.13 | `aiosqlite` (`sqlite+aiosqlite://`) |
+| PostgreSQL | 17 | `asyncpg` (`postgresql+asyncpg://`) |
+| MySQL | 8.4 LTS | `aiomysql[rsa]` (`mysql+aiomysql://`) |
+
+The servers' default isolation level (READ COMMITTED on PostgreSQL,
+REPEATABLE READ on MySQL) is tested throughout. The concurrency tests also
+run the account rules (ADR-0009) at READ COMMITTED, REPEATABLE READ and
+SERIALIZABLE on both servers, and many-to-many writes at all three levels on
+both.
+
+- **SQLite:** enable foreign keys (below). One writer at a time.
+- **Concurrent writes** that lose a race (a lock conflict, a deadlock or a
+  serialization failure) get `409 conflict` on both servers. Under
+  SERIALIZABLE, InnoDB turns plain reads into shared locks, so concurrent
+  edits of the same accounts deadlock more often; one request still wins.
+- **MySQL 8.4** authenticates with `caching_sha2_password` by default, which
+  needs the `cryptography` package on the client: install
+  `"aiomysql[rsa]>=0.3"` (or `aiomysql` plus `cryptography`).
+- **MySQL collations.** With the default `utf8mb4_0900_ai_ci`, comparisons
+  are case- and accent-insensitive: a unique username column refuses `Ann`
+  next to `ANN`, and signing in as `jose` finds `José`. That collation
+  predates newer Unicode case pairs (e.g. Georgian capital letters), so
+  `faststudio checkusers` can still find collisions; keep running it. With
+  a binary collation (`utf8mb4_bin`), usernames compare as on PostgreSQL.
+- **MariaDB** is not tested. It shares the MySQL SQL paths, but its error
+  codes and snapshot behaviour differ in places, so test your setup.
+- Other databases with an async SQLAlchemy driver may work; FastStudio uses
+  a savepoint per insert where it cannot rely on an "insert, skip
+  duplicates" statement.
+
 ## Writes and database constraints
 
 Create, edit and delete go through the generated write schemas and a single

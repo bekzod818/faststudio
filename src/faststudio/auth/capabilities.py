@@ -108,6 +108,14 @@ class PermissionBackend(Protocol):
         keyed by the same values: an account left out is treated as possibly
         holding `ALL` when it is the target of a write (refused), and as
         holding nothing when it would gain permissions.
+
+        It may run after the target account's row was locked, inside a
+        snapshot (REPEATABLE READ): core re-reads only that row under the
+        lock, and a set ``AccountGuard.admin_flag`` on it refuses the write by
+        itself. If your `ALL` can come from other tables (e.g. a superuser
+        group), a grant committed concurrently may be judged from the older
+        snapshot; express such accounts through the admin flag if that
+        matters to you.
         """
         ...
 

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from faststudio import hash_password
 from faststudio.auth.passwords import verify_password_async
 from faststudio.cli import main
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.contrib_models import AUTH, ContribBase
 from tests.integration.cli import apps
 from tests.integration.cli.conftest import FakeTerminal
@@ -35,12 +36,15 @@ APP = "tests.integration.cli.apps"
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ]
 )
 def url(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     if request.param == "postgres":
         assert (make_url(POSTGRES_URL).database or "").endswith("_test")
         value = POSTGRES_URL
+    elif request.param == "mysql":
+        value = throwaway(MYSQL_URL)
     else:
         value = f"sqlite+aiosqlite:///{tmp_path}/cli.db"
     monkeypatch.setattr(apps, "DATABASE_URL", value)
@@ -400,7 +404,65 @@ def test_concurrent_syncs_tolerate_each_other(terminal: FakeTerminal, db: str) -
 # --------------------------------------------------------------------------- checkusers
 
 
+ANN_SMALL = "\u10d0nn"  # Georgian letter AN (mkhedruli) + "nn"
+ANN_CAPITAL = "\u1c90nn"  # Georgian capital letter AN (mtavruli) + "nn"
+
+
+@pytest.mark.parametrize("kind", [mysql_param("mysql")])
+def test_mysql_collation_refuses_case_variants(kind: str) -> None:
+    """MySQL's default collation already refuses 'Ann' next to 'ANN' (1062)."""
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    del kind
+    url = throwaway(MYSQL_URL)
+    table = AUTH.user.__table__  # type: ignore[attr-defined]
+
+    async def check() -> None:
+        await _reset(url)
+        engine = create_async_engine(url)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    insert(table),
+                    [
+                        {
+                            "id": 1,
+                            "username": "Ann",
+                            "username_normalized": "ann",
+                            "password_hash": "!",
+                            "session_token": "a" * 43,
+                        }
+                    ],
+                )
+            with pytest.raises(IntegrityError) as caught:
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        insert(table),
+                        [
+                            {
+                                "id": 2,
+                                "username": "ANN",
+                                "username_normalized": "ann2",
+                                "password_hash": "!",
+                                "session_token": "b" * 43,
+                            }
+                        ],
+                    )
+            orig = caught.value.orig
+            assert orig is not None
+            assert orig.args[0] == 1062  # duplicate key on the username index
+        finally:
+            await engine.dispose()
+            await _drop(url)
+
+    _run(check())
+
+
 def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
+    """Two usernames with one sign-in key. Georgian small/capital letters: NFKC and
+    casefold (Unicode 15) merge them, while MySQL's utf8mb4_0900_ai_ci (UCA 9.0)
+    still tells them apart, so the collision exists on every tested database."""
+
     async def seed() -> None:
         engine = create_async_engine(db)
         async with engine.begin() as conn:
@@ -410,8 +472,8 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
                 [
                     {
                         "id": 1,
-                        "username": "Ann",
-                        "username_normalized": "ann",
+                        "username": ANN_SMALL,
+                        "username_normalized": ANN_SMALL,
                         "password_hash": "!",
                         "session_token": "a" * 43,
                     },
@@ -424,7 +486,7 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
                     },
                     {
                         "id": 3,
-                        "username": "ANN",
+                        "username": ANN_CAPITAL,
                         "username_normalized": "ann-old",
                         "password_hash": "!",
                         "session_token": "c" * 43,
@@ -435,9 +497,9 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
 
     _run(seed())
     assert cli(terminal, "checkusers", "--app", f"{APP}:contrib") == 1
-    assert "Collision on 'ann'" in terminal.text
+    assert f"Collision on {ANN_SMALL!r}" in terminal.text
     assert "Stale normalized username: 'Bob' (id 2)" in terminal.text
-    assert "'ANN' (id 3) (collides: fix by renaming)" in terminal.text
+    assert f"{ANN_CAPITAL!r} (id 3) (collides: fix by renaming)" in terminal.text
 
     terminal.tty = False
     assert cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix") == 2
@@ -448,7 +510,7 @@ def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal,
         cli(terminal, "checkusers", "--app", f"{APP}:contrib", "--fix", "--yes") == 1
     )  # collision
     rows = dict(_run(_query(db, select(AUTH.user.id, AUTH.user.username_normalized))))
-    assert rows == {1: "ann", 2: "bob", 3: "ann-old"}  # Bob fixed; the collision untouched
+    assert rows == {1: ANN_SMALL, 2: "bob", 3: "ann-old"}  # Bob fixed; the collision untouched
 
     async def rename() -> None:
         engine = create_async_engine(db)

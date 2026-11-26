@@ -24,6 +24,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from faststudio import Admin, ModelAdmin, hash_password
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.auth_models import (
     AuthBase,
     AuthGroup,
@@ -90,6 +91,7 @@ GROUPS = {READERS: ("readers", ["docs.view"]), WRITERS: ("writers", ["docs.edit"
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ]
 )
 async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
@@ -98,6 +100,8 @@ async def db(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[As
         if not name.endswith("_test"):
             pytest.fail(f"Refusing to drop tables in {name!r}: use a database named *_test.")
         engine = create_async_engine(POSTGRES_URL)
+    elif request.param == "mysql":
+        engine = create_async_engine(throwaway(MYSQL_URL))
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/escalation.db")
     async with engine.begin() as conn:
@@ -458,6 +462,63 @@ async def test_superuser_accounts_are_off_limits(sign_in: SignIn) -> None:
     assert (await manager.delete(f"/models/users/items/{SU2}")).status_code == 403
     root = await sign_in("root")
     assert (await root.delete(f"/models/users/items/{SU2}")).status_code == 204
+
+
+@pytest.mark.parametrize(
+    ("method", "body"),
+    [("patch", {"is_active": False}), ("patch", {"username": "x"}), ("delete", None)],
+)
+async def test_a_promotion_committed_meanwhile_is_seen(
+    sign_in: SignIn,
+    db: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    body: object,
+) -> None:
+    """Alice becomes a superuser after the manager's request loaded her, before the
+    lock: the write must still be refused. On MySQL REPEATABLE READ only the locked
+    re-read is current; without the fix the PATCH lands (200) and the DELETE
+    removes the new superuser (204)."""
+    from sqlalchemy import update  # noqa: PLC0415
+
+    from faststudio.api import write as write_module  # noqa: PLC0415
+
+    if method == "delete":  # otherwise the permission check refuses before the race
+        async with AsyncSession(db) as session:
+            permission = AuthPermission(codename="users.delete")
+            session.add(permission)
+            await session.flush()
+            await session.execute(
+                insert(user_permissions),
+                [{"user_id": MANAGER, "permission_id": permission.id}],
+            )
+            await session.commit()
+    manager = await sign_in("manager")
+    original = vars(write_module)["check_escalation"]
+    promoted: list[bool] = []
+
+    async def promote_meanwhile(*args: object, **kwargs: object) -> None:
+        try:
+            async with db.begin() as conn:  # root's concurrent promotion commits
+                await conn.execute(
+                    update(AuthUser).where(AuthUser.id == ALICE).values(is_superuser=True)
+                )
+        finally:
+            promoted.append(True)  # the race really happened (or was attempted)
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(write_module, "check_escalation", promote_meanwhile)
+    path = f"/models/users/items/{ALICE}"
+    response = await (manager.delete(path) if method == "delete" else manager.patch(path, body))
+    assert promoted == [True]
+    # SQLite serializes writers: during the delete the request already holds the
+    # write lock, so the promotion itself fails and the request is a 409.
+    expected = 409 if (db.dialect.name, method) == ("sqlite", "delete") else 403
+    assert response.status_code == expected, response.text
+    async with AsyncSession(db) as session:
+        alice = await session.get(AuthUser, ALICE)
+        assert alice is not None  # never deleted
+        assert (alice.username, alice.is_active) == ("alice", True)  # never changed
 
 
 async def test_a_grant_takes_effect_on_the_next_request(sign_in: SignIn, db: AsyncEngine) -> None:

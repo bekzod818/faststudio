@@ -21,12 +21,12 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from faststudio.api._startup_sync import RACE_ATTEMPTS
+from tests._databases import MYSQL_URL, mysql_param
 from tests.factories.contrib_models import AUTH, ContribBase
 
 ROOT = Path(__file__).resolve().parents[3]
 PROCESSES = int(os.environ.get("SYNC_PROCESSES", "8"))
 POSTGRES_URL = os.environ.get("FASTSTUDIO_TEST_POSTGRES_URL", "")
-MYSQL_URL = os.environ.get("FASTSTUDIO_TEST_MYSQL_URL", "")
 
 
 def _url(kind: str, tmp_path: Path) -> str:
@@ -84,13 +84,7 @@ def _wait_until_ready(barrier: Path, workers: list[subprocess.Popen[str]], deadl
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
-        pytest.param(
-            "mysql",
-            marks=[
-                pytest.mark.mysql,
-                pytest.mark.skipif(not MYSQL_URL, reason="set FASTSTUDIO_TEST_MYSQL_URL"),
-            ],
-        ),
+        mysql_param("mysql"),
     ],
 )
 def test_many_processes_starting_at_once(kind: str, tmp_path: Path) -> None:

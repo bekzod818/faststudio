@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
 
 from faststudio import Admin, ModelAdmin, ModelUserBackend, hash_password
 from faststudio.api import write as write_module
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.models import (
     AdminUser,
     Article,
@@ -132,6 +133,9 @@ class ArticleAdmin(ModelAdmin, model=Article):
             )
             for kind in ("postgres", "postgres-repeatable-read", "postgres-serializable")
         ),
+        mysql_param("mysql"),  # InnoDB's default, REPEATABLE READ
+        mysql_param("mysql-read-committed"),
+        mysql_param("mysql-serializable"),
     ]
 )
 def database(request: pytest.FixtureRequest, tmp_path: Path) -> str:
@@ -151,6 +155,13 @@ async def db(database: str, tmp_path: Path) -> AsyncIterator[AsyncEngine]:
             "postgres-serializable": "SERIALIZABLE",
         }[database]
         engine = create_async_engine(POSTGRES_URL, isolation_level=isolation)
+    elif database.startswith("mysql"):
+        isolation = {
+            "mysql": "REPEATABLE READ",
+            "mysql-read-committed": "READ COMMITTED",
+            "mysql-serializable": "SERIALIZABLE",
+        }[database]
+        engine = create_async_engine(throwaway(MYSQL_URL), isolation_level=isolation)
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/m2m.db")
         pragma = "ON" if database == "sqlite-fk-on" else "OFF"
@@ -657,11 +668,20 @@ _TRIGGERS = {
         "CREATE TRIGGER fs_test_post_updates AFTER UPDATE ON posts "
         "BEGIN INSERT INTO post_update_audit VALUES (1); END",
     ],
+    "mysql": [
+        "CREATE TABLE post_update_audit (n integer NOT NULL)",
+        "CREATE TRIGGER fs_test_post_updates AFTER UPDATE ON posts "
+        "FOR EACH ROW INSERT INTO post_update_audit VALUES (1)",
+    ],
 }
 _DROP = {
     "postgres": [
         "DROP TRIGGER IF EXISTS fs_test_post_updates ON posts",
         "DROP FUNCTION IF EXISTS fs_test_count_post_updates()",
+        "DROP TABLE IF EXISTS post_update_audit",
+    ],
+    "mysql": [
+        "DROP TRIGGER IF EXISTS fs_test_post_updates",
         "DROP TABLE IF EXISTS post_update_audit",
     ],
     "sqlite": [
@@ -687,7 +707,7 @@ async def test_links_only_write_never_updates_the_record_row(
     SQLite has no `SELECT ... FOR UPDATE`, so FastStudio takes its write lock
     with a no-change UPDATE there, and the trigger fires once (documented).
     """
-    kind = "postgres" if database.startswith("postgres") else "sqlite"
+    kind = next((k for k in ("postgres", "mysql") if database.startswith(k)), "sqlite")
     try:
         async with db.begin() as conn:
             for statement in _TRIGGERS[kind]:

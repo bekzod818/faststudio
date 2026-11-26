@@ -437,6 +437,11 @@ async def check_escalation(
             ):
                 raise _forbidden()
         if intent.action != "create":
+            # The locked re-read above is current; the backend's resolve_accounts
+            # may read a snapshot (InnoDB REPEATABLE READ) that predates a
+            # concurrent promotion. A superuser-like flag set now decides alone.
+            if flag is not None and getattr(intent.obj, flag) is True:
+                raise _forbidden()
             pk = getattr(intent.obj, registered.pk_field)
             accounts = await backend.resolve_accounts(session, [pk])
             # Fail closed: an account the backend does not report (e.g. keys of

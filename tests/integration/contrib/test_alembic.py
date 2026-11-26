@@ -13,6 +13,7 @@ from sqlalchemy import MetaData
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tests._databases import MYSQL_URL, mysql_param, throwaway
 from tests.factories.contrib_models import ContribBase
 
 POSTGRES_URL = os.environ.get("FASTSTUDIO_TEST_POSTGRES_URL", "")
@@ -57,12 +58,15 @@ def _diff(connection: Any, metadata: MetaData) -> list[Any]:
                 pytest.mark.skipif(not POSTGRES_URL, reason="set FASTSTUDIO_TEST_POSTGRES_URL"),
             ],
         ),
+        mysql_param("mysql"),
     ],
 )
 async def test_autogenerate_round_trip(url: str, tmp_path: Path) -> None:
     if url == "postgres":
         assert (make_url(POSTGRES_URL).database or "").endswith("_test")
         engine = create_async_engine(POSTGRES_URL)
+    elif url == "mysql":
+        engine = create_async_engine(throwaway(MYSQL_URL))
     else:
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/alembic.db")
     metadata = _auth_metadata()
