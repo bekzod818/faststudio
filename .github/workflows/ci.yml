@@ -163,8 +163,6 @@ jobs:
           python-version: "3.12"
       - run: uv sync
       - run: uv run bandit -c pyproject.toml -r src
-      - name: Bundled common-password list matches its pinned source (A5)
-        run: uv run python scripts/build_common_passwords.py --check
       - name: pip-audit (runtime + dev dependencies)
         run: uv export --color never --no-header --no-emit-project --format requirements-txt -o /tmp/requirements.txt && uv run pip-audit --strict --no-deps --disable-pip -r /tmp/requirements.txt
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -173,6 +171,9 @@ jobs:
       - run: pnpm -C frontend audit --prod --audit-level=high
       - name: pnpm audit (including dev tooling such as codegen)
         run: pnpm -C frontend audit --audit-level=high
+      # Last, so a raw.githubusercontent.com outage never hides an audit result.
+      - name: Bundled common-password list matches its pinned source (A5)
+        run: uv run python scripts/build_common_passwords.py --check
 
   frontend:
     name: Frontend (lint, test, build)

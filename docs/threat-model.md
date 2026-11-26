@@ -76,7 +76,8 @@ Residual risks (documented, accepted for v0.1):
   spraying that many keys can reset a lockout.
 - **The bundled common-password list is small** (20 000 entries from
   Dropbox zxcvbn; plan amendment A5) and, with the default 12-character
-  minimum, mostly redundant: most of its entries are shorter. It does not
+  minimum, mostly redundant: only 97 entries are 12 characters or longer,
+  and about 89 of those are not already refused for being only digits. It does not
   catch passwords leaked later or long but guessable phrases; hosts with
   stricter needs can pass a bigger list (`CommonPasswordValidator(path)`) or
   check against a breach service themselves.

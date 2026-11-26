@@ -122,23 +122,27 @@ def test_the_bundled_list() -> None:
 
 
 def test_the_bundled_list_is_loaded_once_and_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    from importlib.resources.abc import Traversable  # noqa: PLC0415
+
     from faststudio.auth import validators  # noqa: PLC0415
 
     validators._bundled_passwords.cache_clear()
     loads: list[int] = []
     real = validators._read_list
 
-    def counting(path: object) -> frozenset[str]:
+    def counting(file: Path | Traversable) -> frozenset[str]:
         loads.append(1)
-        return real(path)  # type: ignore[arg-type]
+        return real(file)
 
     monkeypatch.setattr(validators, "_read_list", counting)
-    first, second = CommonPasswordValidator(), CommonPasswordValidator()
-    assert loads == []  # importing FastStudio or building defaults reads nothing
-    first.validate("x", user_inputs=())
-    second.validate("y", user_inputs=())
-    assert loads == [1]
-    validators._bundled_passwords.cache_clear()
+    try:
+        first, second = CommonPasswordValidator(), CommonPasswordValidator()
+        assert loads == []  # building validators reads nothing
+        first.validate("x", user_inputs=())
+        second.validate("y", user_inputs=())
+        assert loads == [1]  # one read, shared by every instance
+    finally:
+        validators._bundled_passwords.cache_clear()
 
 
 @pytest.mark.parametrize(

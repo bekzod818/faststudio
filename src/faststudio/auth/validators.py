@@ -166,7 +166,8 @@ class CommonPasswordValidator:
 
     Without `path`, FastStudio's bundled list of 20 000 common passwords is
     used (Dropbox zxcvbn, MIT; see ``faststudio/auth/data/NOTICE``). It is
-    read on first use and shared by every instance. With `path`, your own
+    read on first use and shared by every instance (a packaging that drops
+    the data file fails then, with `ConfigurationError`). With `path`, your own
     UTF-8 text file, optionally gzip-compressed (``.gz``), with one password
     per line is read at once, so a missing file fails at startup. Surrounding
     whitespace and empty lines are ignored; the comparison is

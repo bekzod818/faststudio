@@ -52,8 +52,21 @@ def test_the_list_is_the_documented_one() -> None:
     assert lines[:3] == ["123456", "password", "12345678"]
     assert all(line and " " not in line and "\t" not in line for line in lines)
     assert len(set(lines)) == len(lines)
-    # Pin the exact bytes; scripts/build_common_passwords.py --check re-derives them.
-    assert hashlib.sha256(raw).hexdigest() == EXPECTED_SHA256
+    # The exact committed bytes (offline); --check re-derives the text from the source.
+    assert hashlib.sha256(raw).hexdigest() == _build_script().OUTPUT_SHA256
 
 
-EXPECTED_SHA256 = "aedb63ea8cb64411f1726f86097fcd1b0e3fb24bb7ad7bdea585c1229deb7dc8"
+def test_importing_faststudio_reads_no_list() -> None:
+    """The bundled list is read on first use, never at import (A5)."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    code = (
+        "import faststudio, faststudio.contrib.auth\n"
+        "from faststudio.auth.validators import _bundled_passwords\n"
+        "assert _bundled_passwords.cache_info().currsize == 0\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False, timeout=60
+    )
+    assert result.returncode == 0, result.stderr

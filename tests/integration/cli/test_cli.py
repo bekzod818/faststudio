@@ -261,6 +261,7 @@ def test_model_user_backend_refuses_common_passwords_by_default(
     argv = ["createadmin", "--app", f"{APP}:model_users", "--username", "dan"]
     assert cli(terminal, *argv, "--set", "email=dan@example.com") == 1
     assert "This password is too common." in terminal.text
+    assert "123qweasdzxc" not in terminal.text  # never echoed
 
 
 @pytest.mark.parametrize("username", ["", " padded", "x" * 151, "bad\u202ename"])

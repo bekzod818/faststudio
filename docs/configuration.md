@@ -83,8 +83,9 @@ backend = ModelUserBackend(
 
 The default is `DEFAULT_VALIDATORS`: at least 12 characters, not similar to
 the username or email, not only digits, and not one of 20 000 common
-passwords. It applies to `ModelUserBackend`, `contrib.auth` and the
-`faststudio` CLI unless you pass your own `password_validators`.
+passwords. It applies to `ModelUserBackend`, `contrib.auth`, the HTTP
+password endpoints and the `faststudio` CLI unless you pass your own
+`password_validators`.
 
 `CommonPasswordValidator()` uses the **bundled list**: the 20 000 most
 frequent entries of Dropbox zxcvbn's password list (commit `67c4ece9`, MIT
