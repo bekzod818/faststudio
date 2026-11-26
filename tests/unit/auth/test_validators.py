@@ -98,12 +98,47 @@ def test_defaults_and_ordering() -> None:
         MinimumLengthValidator,
         UserAttributeSimilarityValidator,
         NumericPasswordValidator,
+        CommonPasswordValidator,
     ]
     assert validate_password("1234", DEFAULT_VALIDATORS, user_inputs=["admin"]) == [
         "Use at least 12 characters.",
         "Do not use only digits.",
+        "This password is too common.",
     ]
     assert validate_password("a long passphrase", DEFAULT_VALIDATORS, user_inputs=["bob"]) == []
+    # Long enough, not similar, not numeric, but on the bundled list (A5).
+    assert validate_password("1qaz2wsx3edc", DEFAULT_VALIDATORS, user_inputs=["bob"]) == [
+        "This password is too common."
+    ]
+
+
+def test_the_bundled_list() -> None:
+    """20 000 entries from zxcvbn (NOTICE), compared case-insensitively."""
+    validator = CommonPasswordValidator()
+    for common in ("password", "PassWord", "123456", "qwerty", "123qweasdzxc"):
+        assert validator.validate(common, user_inputs=()) == "This password is too common."
+    assert validator.validate("correct horse battery staple", user_inputs=()) is None
+    assert len(validator.passwords) == 20_000
+
+
+def test_the_bundled_list_is_loaded_once_and_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    from faststudio.auth import validators  # noqa: PLC0415
+
+    validators._bundled_passwords.cache_clear()
+    loads: list[int] = []
+    real = validators._read_list
+
+    def counting(path: object) -> frozenset[str]:
+        loads.append(1)
+        return real(path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(validators, "_read_list", counting)
+    first, second = CommonPasswordValidator(), CommonPasswordValidator()
+    assert loads == []  # importing FastStudio or building defaults reads nothing
+    first.validate("x", user_inputs=())
+    second.validate("y", user_inputs=())
+    assert loads == [1]
+    validators._bundled_passwords.cache_clear()
 
 
 @pytest.mark.parametrize(

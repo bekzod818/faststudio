@@ -5,17 +5,21 @@ Validators check a new password and return a message for the admin, or
 hard limits first (not empty, at most `MAX_PASSWORD_LENGTH` characters, no
 NUL), then each validator in order, and returns every message.
 
-FastStudio bundles no common-password list: no list with a clearly
-permissive licence was found (plan amendment A5). Use
-`CommonPasswordValidator` with a list file you are licensed to use.
+`CommonPasswordValidator()` uses the bundled list of 20 000 common
+passwords from Dropbox zxcvbn (MIT; source, version and licence in
+``faststudio/auth/data/NOTICE``); it is part of `DEFAULT_VALIDATORS`. Pass a
+path to use your own list instead.
 """
 
 from __future__ import annotations
 
+import functools
 import gzip
 import unicodedata
 from collections.abc import Iterable, Sequence
 from difflib import SequenceMatcher
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Final, Protocol, runtime_checkable
 
@@ -135,33 +139,53 @@ class UserAttributeSimilarityValidator:
         return None
 
 
-class CommonPasswordValidator:
-    """Not in a list of common passwords you provide (FastStudio bundles none).
+#: The bundled list (see faststudio/auth/data/NOTICE).
+BUNDLED_LIST: Final = "common-passwords.txt.gz"
 
-    `path` is a UTF-8 text file, optionally gzip-compressed (``.gz``), with
-    one password per line; surrounding whitespace and empty lines are
-    ignored, and the comparison is case-insensitive.
+
+def _read_list(file: Path | Traversable) -> frozenset[str]:
+    """Read a password list (UTF-8, optionally gzip), folded for comparison."""
+    try:
+        raw = file.read_bytes()
+        if file.name.endswith(".gz"):
+            raw = gzip.decompress(raw)
+        text = raw.decode("utf-8")
+    except (OSError, EOFError, UnicodeDecodeError, gzip.BadGzipFile) as exc:
+        msg = f"CommonPasswordValidator: cannot read {file} ({type(exc).__name__})."
+        raise ConfigurationError(msg) from None
+    return frozenset(_folded(line.strip()) for line in text.splitlines() if line.strip())
+
+
+@functools.cache
+def _bundled_passwords() -> frozenset[str]:
+    return _read_list(resources.files("faststudio.auth") / "data" / BUNDLED_LIST)
+
+
+class CommonPasswordValidator:
+    """Not in a list of common passwords.
+
+    Without `path`, FastStudio's bundled list of 20 000 common passwords is
+    used (Dropbox zxcvbn, MIT; see ``faststudio/auth/data/NOTICE``). It is
+    read on first use and shared by every instance. With `path`, your own
+    UTF-8 text file, optionally gzip-compressed (``.gz``), with one password
+    per line is read at once, so a missing file fails at startup. Surrounding
+    whitespace and empty lines are ignored; the comparison is
+    case-insensitive.
     """
 
-    def __init__(self, path: str | Path) -> None:
-        """Load the list now, so a missing file fails at startup.
+    def __init__(self, path: str | Path | None = None) -> None:
+        """Use the bundled list, or load `path` now.
 
         Raises:
-            ConfigurationError: if the file cannot be read.
+            ConfigurationError: if `path` cannot be read.
 
         """
-        file = Path(path)
-        try:
-            raw = file.read_bytes()
-            if file.suffix == ".gz":
-                raw = gzip.decompress(raw)
-            text = raw.decode("utf-8")
-        except (OSError, EOFError, UnicodeDecodeError, gzip.BadGzipFile) as exc:
-            msg = f"CommonPasswordValidator: cannot read {file} ({type(exc).__name__})."
-            raise ConfigurationError(msg) from None
-        self.passwords: frozenset[str] = frozenset(
-            _folded(line.strip()) for line in text.splitlines() if line.strip()
-        )
+        self._own: frozenset[str] | None = None if path is None else _read_list(Path(path))
+
+    @property
+    def passwords(self) -> frozenset[str]:
+        """The folded passwords this validator refuses."""
+        return _bundled_passwords() if self._own is None else self._own
 
     def validate(self, password: str, *, user_inputs: Sequence[str]) -> str | None:
         """Refuse passwords on the list."""
@@ -174,6 +198,7 @@ DEFAULT_VALIDATORS: Final[tuple[PasswordValidator, ...]] = (
     MinimumLengthValidator(12),
     UserAttributeSimilarityValidator(),
     NumericPasswordValidator(),
+    CommonPasswordValidator(),  # the bundled list (A5), read on first use
 )
 
 

@@ -148,3 +148,14 @@ async def test_installed_package_has_no_extra_routes(monkeypatch: pytest.MonkeyP
         )
     finally:
         await engine.dispose()
+
+
+def test_the_bundled_common_password_list_loads_from_the_wheel() -> None:
+    """Plan amendment A5: the list and its NOTICE ship in the package."""
+    from faststudio.auth.validators import CommonPasswordValidator  # noqa: PLC0415
+
+    data = resources.files("faststudio.auth") / "data"
+    assert "zxcvbn" in (data / "NOTICE").read_text(encoding="utf-8")
+    validator = CommonPasswordValidator()
+    assert validator.validate("password", user_inputs=()) == "This password is too common."
+    assert len(validator.passwords) == 20_000

@@ -173,7 +173,8 @@ async def test_change_password_revokes_other_sessions(sign_in: SignIn) -> None:
         (
             {"current_password": OLD, "new_password": "short"},
             "new_password",
-            ["Use at least 12 characters."],
+            # "short" is also on the bundled common-password list (A5).
+            ["Use at least 12 characters.", "This password is too common."],
         ),
         (
             {"current_password": OLD, "new_password": "alice-is-the-admin"},

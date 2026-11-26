@@ -239,6 +239,7 @@ def test_createadmin_set_validation(
         ([GOOD, GOOD + "x"], "The passwords do not match."),
         (["short", "short"], "Use at least 12 characters."),
         (["dan-the-admin-1", "dan-the-admin-1"], "less similar"),
+        (["1qaz2wsx3edc", "1qaz2wsx3edc"], "This password is too common."),  # bundled list
     ],
 )
 def test_createadmin_password_rules(
@@ -250,6 +251,16 @@ def test_createadmin_password_rules(
     assert message in terminal.text
     for secret in passwords:
         assert secret not in terminal.text
+
+
+def test_model_user_backend_refuses_common_passwords_by_default(
+    terminal: FakeTerminal, db: str
+) -> None:
+    """A5: the bundled list is on by default for every backend's CLI, not only contrib."""
+    terminal.passwords = ["123qweasdzxc", "123qweasdzxc"]
+    argv = ["createadmin", "--app", f"{APP}:model_users", "--username", "dan"]
+    assert cli(terminal, *argv, "--set", "email=dan@example.com") == 1
+    assert "This password is too common." in terminal.text
 
 
 @pytest.mark.parametrize("username", ["", " padded", "x" * 151, "bad\u202ename"])

@@ -1,0 +1,45 @@
+Third-party notices for FastStudio
+==================================
+
+FastStudio is MIT-licensed (see LICENSE). It bundles the following
+third-party material. The same notice ships inside the package at
+faststudio/auth/data/NOTICE.
+
+common-passwords.txt.gz
+-----------------------
+Contents: the 20 000 most frequent entries (one password per line, in
+          frequency order) of zxcvbn's data/passwords.txt.
+Source:   Dropbox zxcvbn, https://github.com/dropbox/zxcvbn
+Version:  commit 67c4ece9efc40c9d0a1d7d995b2b22a91be500c2
+          (data/passwords.txt, SHA-256
+          6313cc5ef683a0461416318ee3b16f3d771a3cd10ea2aae54571d27ff95d951f)
+Licence:  MIT (the zxcvbn repository's LICENSE.txt), reproduced below.
+Built by: scripts/build_common_passwords.py (pinned commit and checksum;
+          `--check` verifies this file against a fresh build).
+
+Provenance note: zxcvbn's README credits "Mark Burnett for releasing his
+10M password corpus", which was reported in 2015 as released to the public
+domain; the zxcvbn repository states no separate licence for its data files,
+which are distributed under the repository's MIT licence. The list contains
+passwords only (no usernames or other personal data).
+
+Copyright (c) 2012-2016 Dan Wheeler and Dropbox, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
