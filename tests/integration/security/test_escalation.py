@@ -476,32 +476,49 @@ async def test_a_promotion_committed_meanwhile_is_seen(
     body: object,
 ) -> None:
     """Alice becomes a superuser after the manager's request loaded her, before the
-    lock: the write must still be refused (MySQL REPEATABLE READ: the locked re-read
-    is current, a plain snapshot read is not)."""
+    lock: the write must still be refused. On MySQL REPEATABLE READ only the locked
+    re-read is current; without the fix the PATCH lands (200) and the DELETE
+    removes the new superuser (204)."""
     from sqlalchemy import update  # noqa: PLC0415
 
     from faststudio.api import write as write_module  # noqa: PLC0415
 
+    if method == "delete":  # otherwise the permission check refuses before the race
+        async with AsyncSession(db) as session:
+            permission = AuthPermission(codename="users.delete")
+            session.add(permission)
+            await session.flush()
+            await session.execute(
+                insert(user_permissions),
+                [{"user_id": MANAGER, "permission_id": permission.id}],
+            )
+            await session.commit()
     manager = await sign_in("manager")
     original = vars(write_module)["check_escalation"]
+    promoted: list[bool] = []
 
     async def promote_meanwhile(*args: object, **kwargs: object) -> None:
-        async with db.begin() as conn:  # root's concurrent promotion commits
-            await conn.execute(
-                update(AuthUser).where(AuthUser.id == ALICE).values(is_superuser=True)
-            )
+        try:
+            async with db.begin() as conn:  # root's concurrent promotion commits
+                await conn.execute(
+                    update(AuthUser).where(AuthUser.id == ALICE).values(is_superuser=True)
+                )
+        finally:
+            promoted.append(True)  # the race really happened (or was attempted)
         await original(*args, **kwargs)
 
     monkeypatch.setattr(write_module, "check_escalation", promote_meanwhile)
     path = f"/models/users/items/{ALICE}"
     response = await (manager.delete(path) if method == "delete" else manager.patch(path, body))
-    assert response.status_code in {403, 409}, response.text  # never a write
+    assert promoted == [True]
+    # SQLite serializes writers: during the delete the request already holds the
+    # write lock, so the promotion itself fails and the request is a 409.
+    expected = 409 if (db.dialect.name, method) == ("sqlite", "delete") else 403
+    assert response.status_code == expected, response.text
     async with AsyncSession(db) as session:
         alice = await session.get(AuthUser, ALICE)
-        assert alice is not None
-        # Untouched. (Where writers serialize, e.g. SQLite during a delete, the
-        # promotion itself is refused instead; either way the write never lands.)
-        assert (alice.username, alice.is_active) == ("alice", True)
+        assert alice is not None  # never deleted
+        assert (alice.username, alice.is_active) == ("alice", True)  # never changed
 
 
 async def test_a_grant_takes_effect_on_the_next_request(sign_in: SignIn, db: AsyncEngine) -> None:

@@ -408,16 +408,18 @@ ANN_SMALL = "\u10d0nn"  # Georgian letter AN (mkhedruli) + "nn"
 ANN_CAPITAL = "\u1c90nn"  # Georgian capital letter AN (mtavruli) + "nn"
 
 
-def test_mysql_collation_refuses_case_variants(terminal: FakeTerminal, db: str) -> None:
-    """On MySQL the default collation already refuses 'Ann' next to 'ANN' (1062)."""
-    if not db.startswith("mysql"):
-        return  # binary comparisons elsewhere: checkusers reports such pairs
+@pytest.mark.parametrize("kind", [mysql_param("mysql")])
+def test_mysql_collation_refuses_case_variants(kind: str) -> None:
+    """MySQL's default collation already refuses 'Ann' next to 'ANN' (1062)."""
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
+    del kind
+    url = throwaway(MYSQL_URL)
     table = AUTH.user.__table__  # type: ignore[attr-defined]
 
-    async def seed() -> None:
-        engine = create_async_engine(db)
+    async def check() -> None:
+        await _reset(url)
+        engine = create_async_engine(url)
         try:
             async with engine.begin() as conn:
                 await conn.execute(
@@ -451,9 +453,9 @@ def test_mysql_collation_refuses_case_variants(terminal: FakeTerminal, db: str) 
             assert orig.args[0] == 1062  # duplicate key on the username index
         finally:
             await engine.dispose()
+            await _drop(url)
 
-    _run(seed())
-    del terminal
+    _run(check())
 
 
 def test_checkusers_reports_fixes_and_refuses_collisions(terminal: FakeTerminal, db: str) -> None:
