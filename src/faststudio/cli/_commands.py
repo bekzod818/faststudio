@@ -9,7 +9,12 @@ from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any
 
 from faststudio.admin import Admin
-from faststudio.api._permission_sync import MAX_CODENAMES, apply_sync, plan_sync
+from faststudio.api._permission_sync import (
+    MAX_CODENAMES,
+    PermissionSyncError,
+    apply_sync,
+    plan_sync,
+)
 from faststudio.auth.capabilities import AccountManager, UsernameAudit
 from faststudio.auth.validators import validate_password
 from faststudio.cli._io import CliError, CliIO
@@ -151,7 +156,10 @@ async def sync_permissions(admin: Admin, args: argparse.Namespace, io: CliIO) ->
             io.error("Aborted: nothing was changed.")
             await session.rollback()
             return 1
-        await apply_sync(session, rules, plan, prune=prune)
+        try:
+            await apply_sync(session, rules, plan, prune=prune)
+        except PermissionSyncError as exc:  # rolled back by session.begin()
+            raise CliError(f"{exc} Nothing was changed.") from None
     io.write(
         f"Created {len(plan.missing)}, renamed {len(plan.renamed)}"
         + (f", deleted {len(plan.stale)} stale" if prune else "")

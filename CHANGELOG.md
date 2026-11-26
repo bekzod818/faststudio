@@ -57,7 +57,8 @@ listed under **Changed** or **Removed** with migration notes.
   `--app` takes an `Admin`, a FastAPI application with one `Admin` mounted,
   or a factory returning either (e.g. `examples.basic.app:create_app`).
 - `Admin(sync_permissions_on_startup=True)`. Several processes starting at
-  once sync without errors or log noise.
+  once sync without errors or log noise (a deadlock victim is retried after
+  a short backoff).
 - `AccountManager.find_account`, `required_fields` and `create_admin`;
   `BackendCapabilities.username_audit` (`UsernameAudit`, `AuditedAccount`);
   `PermissionSchema.name_field`.

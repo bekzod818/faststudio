@@ -31,3 +31,23 @@ def is_lock_conflict(exc: StatementError) -> bool:
     args: tuple[object, ...] = getattr(orig, "args", ())
     number = args[0] if args else None
     return type(number) is int and number in _MYSQL_LOCK_CODES
+
+
+# Lost races that end at once (no lock wait): deadlock victims and serialization
+# failures. Lock-wait timeouts (55P03, MySQL 1205, SQLite BUSY) are excluded:
+# they already waited the configured time.
+_SQLSTATE_RACES = frozenset({"40001", "40P01"})
+_MYSQL_RACES = frozenset({1213})
+
+
+def is_lost_race(exc: StatementError) -> bool:
+    """Return True for a deadlock victim or a serialization failure (retry at once)."""
+    orig = exc.orig
+    if isinstance(getattr(orig, "sqlite_errorcode", None), int):
+        return False  # SQLite waits for locks (busy timeout) instead of deadlocking
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if isinstance(sqlstate, str):
+        return sqlstate in _SQLSTATE_RACES
+    args: tuple[object, ...] = getattr(orig, "args", ())
+    number = args[0] if args else None
+    return type(number) is int and number in _MYSQL_RACES

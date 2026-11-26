@@ -105,8 +105,11 @@ def _insert_ignoring_duplicates(table: Table, codename: Column[Any], dialect: st
     if dialect in {"mysql", "mariadb"}:
         # Not INSERT IGNORE: that would also turn data errors (e.g. a codename
         # truncated to fit a short column) into warnings and store another codename.
-        statement = mysql_insert(table)
-        return statement.on_duplicate_key_update({codename.key: statement.inserted[codename.key]})
+        # The update is a no-op (codename = codename): MySQL applies it to the row
+        # matching *any* unique index, and assigning the new codename would re-key
+        # another permission that only shares, say, a unique name (a silent
+        # grant transfer). apply_sync then checks every codename exists.
+        return mysql_insert(table).on_duplicate_key_update({codename.key: codename})
     return insert(table)
 
 
@@ -115,6 +118,33 @@ def _pk(rules: EscalationRules) -> Column[Any]:
 
     column: Column[Any] = sa_inspect(rules.models["permission"]).primary_key[0]
     return column
+
+
+class PermissionSyncError(Exception):
+    """Some missing permissions could not be created (another unique column collides)."""
+
+
+async def _check_created(
+    session: AsyncSession,
+    rules: EscalationRules,
+    codenames: list[str],
+    bind: Any,  # noqa: ANN401
+) -> None:
+    """Fail unless every codename now exists (created here or by another worker)."""
+    found: set[str] = set()
+    for chunk in chunks(codenames):
+        rows = await session.execute(
+            select(rules.codename).where(rules.codename.in_(chunk)), bind_arguments=bind
+        )
+        found.update(rows.scalars())
+    missing = [codename for codename in codenames if codename not in found]
+    if missing:
+        msg = (
+            f"{len(missing)} permission(s) could not be created, e.g. {missing[0]!r}: another "
+            "unique column of the permission table (such as its name) collides with an "
+            "existing row."
+        )
+        raise PermissionSyncError(msg)
 
 
 async def apply_sync(
@@ -145,7 +175,9 @@ async def apply_sync(
             async with session.begin_nested():
                 await session.execute(statement, bind_arguments=bind)
         except IntegrityError:
-            continue  # created concurrently
+            continue  # created concurrently (checked below)
+    if plan.missing:
+        await _check_created(session, rules, list(plan.missing), bind)
     if rules.name_column is not None:
         for codename in plan.renamed:
             await session.execute(

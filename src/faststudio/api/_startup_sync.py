@@ -3,11 +3,12 @@
 Mounted sub-apps get no lifespan events, so the sync runs on the first HTTP
 request to the admin, once, under a lock created in the running loop. It
 never prunes. Several processes starting at once insert the same codenames
-concurrently: duplicates are skipped by the insert itself, and a lost lock
-race (e.g. an InnoDB deadlock) is retried at once, a few times, without
-logging. Any other failure is logged (type only) and retried on a later
-request; requests are served meanwhile, and missing permissions simply grant
-nothing.
+concurrently: duplicates are skipped by the insert itself, and a deadlock or
+serialization failure (e.g. an InnoDB deadlock victim) is retried after a
+short backoff, a few times within about 2 seconds, without logging. Any other
+failure, including a lock-wait timeout, is logged (type only) and retried on
+a later request after RETRY_INTERVAL; requests are served meanwhile, and
+missing permissions simply grant nothing.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from sqlalchemy.exc import StatementError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from faststudio.api._db_errors import is_lock_conflict
+from faststudio.api._db_errors import is_lost_race
 from faststudio.api._escalation import EscalationRules
 from faststudio.api._permission_sync import apply_sync, plan_sync
 from faststudio.registry import Registry
@@ -30,8 +31,11 @@ logger = logging.getLogger("faststudio")
 
 #: Seconds between attempts after a failed sync.
 RETRY_INTERVAL = 30.0
-#: Immediate attempts when the sync loses a lock race to another process.
-LOCK_ATTEMPTS = 5
+#: Attempts when the sync loses a race to another process (deadlock victim).
+RACE_ATTEMPTS = 5
+#: No new attempt starts later than this many seconds after the first one.
+RACE_BUDGET = 2.0
+_sleep = asyncio.sleep  # tests replace this one name, not asyncio.sleep
 
 
 class StartupPermissionSync:
@@ -72,17 +76,20 @@ class StartupPermissionSync:
 
     async def _attempt(self) -> None:
         attempt = 1
+        started = time.monotonic()
         while True:
             try:
                 async with self._session_maker() as session, session.begin():
                     plan = await plan_sync(session, self._rules, self._registry)
                     await apply_sync(session, self._rules, plan, prune=False)
             except StatementError as exc:
-                if attempt >= LOCK_ATTEMPTS or not is_lock_conflict(exc):
+                delay = 0.05 * 2 ** (attempt - 1) * (1 + secrets.randbelow(1000) / 1000)
+                over_budget = time.monotonic() + delay - started > RACE_BUDGET
+                if attempt >= RACE_ATTEMPTS or over_budget or not is_lost_race(exc):
                     raise
-                # Another process holds the lock; back off a little, with jitter.
-                jitter = 1 + secrets.randbelow(1000) / 1000
-                await asyncio.sleep(0.05 * 2 ** (attempt - 1) * jitter)
+                await _sleep(delay)  # another process won; back off with jitter
+                if time.monotonic() - started > RACE_BUDGET:
+                    raise  # the wait took longer than planned: no new attempt
                 attempt += 1
             else:
                 return

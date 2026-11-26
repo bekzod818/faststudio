@@ -1,11 +1,14 @@
 """One process of the concurrent startup-sync test (not a test module).
 
-    python -m tests.integration.cli._sync_worker DATABASE_URL START_FILE
+    python -m tests.integration.cli._sync_worker BARRIER_DIR
 
-Builds the contrib admin with ``sync_permissions_on_startup=True``, waits
-until START_FILE exists (so every process starts its first request at the
-same moment), sends one request and prints the `faststudio` log records at
-WARNING or above as JSON. Exit code 0 unless the request itself failed.
+Reads the database URL from FASTSTUDIO_SYNC_DATABASE_URL (not argv: no
+password in `ps`). Builds the contrib admin with
+``sync_permissions_on_startup=True``, writes ``ready-<pid>`` into BARRIER_DIR,
+waits until ``start`` exists there (so every process starts its first
+request at the same moment), sends one request and prints, as JSON: the
+response status, the `faststudio` log records at WARNING or above, how many
+codenames each sync attempt found missing, and the expected codenames.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,6 +27,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import faststudio.api._startup_sync as startup_sync
 from faststudio import Admin
+from faststudio.api._permission_sync import expected_permissions
 from faststudio.contrib.auth import DatabaseAuthBackend
 from tests.factories.contrib_models import AUTH
 from tests.integration.cli.apps import SECRET, NoteAdmin
@@ -37,7 +42,7 @@ class _Collect(logging.Handler):
         self.records.append(f"{record.levelname} {record.name}: {record.getMessage()}")
 
 
-async def _main(url: str, start: Path) -> int:
+async def _main(url: str, barrier: Path) -> int:
     seen: list[int] = []  # how many codenames this process found missing
     plan_sync = vars(startup_sync)["plan_sync"]
 
@@ -59,7 +64,9 @@ async def _main(url: str, start: Path) -> int:
         sync_permissions_on_startup=True,
     )
     admin.register(NoteAdmin)
-    deadline = time.monotonic() + 60
+    start = barrier / "start"
+    await asyncio.to_thread((barrier / f"ready-{os.getpid()}").touch)
+    deadline = time.monotonic() + 120
     while not await asyncio.to_thread(start.exists):
         if time.monotonic() > deadline:
             return 3
@@ -70,10 +77,15 @@ async def _main(url: str, start: Path) -> int:
             response = await http.get("/admin/api/v1/auth/me")
     finally:
         await engine.dispose()
-    report = {"status": response.status_code, "logs": collect.records, "missing": seen}
+    report = {
+        "status": response.status_code,
+        "logs": collect.records,
+        "missing": seen,
+        "expected": sorted(expected_permissions(admin._registry)),
+    }
     print(json.dumps(report))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(_main(sys.argv[1], Path(sys.argv[2]))))
+    sys.exit(asyncio.run(_main(os.environ["FASTSTUDIO_SYNC_DATABASE_URL"], Path(sys.argv[1]))))

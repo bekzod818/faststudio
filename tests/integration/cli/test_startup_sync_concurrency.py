@@ -11,13 +11,15 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from faststudio.api._startup_sync import RACE_ATTEMPTS
 from tests.factories.contrib_models import AUTH, ContribBase
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -43,13 +45,31 @@ async def _reset(url: str) -> None:
     await engine.dispose()
 
 
-async def _stored(url: str) -> tuple[int, int]:
+async def _stored(url: str) -> set[str]:
     engine = create_async_engine(url)
-    async with AsyncSession(engine) as session:
-        rows = await session.scalar(select(func.count()).select_from(AUTH.permission))
-        distinct = await session.scalar(select(func.count(AUTH.permission.codename.distinct())))
+    try:
+        async with AsyncSession(engine) as session:
+            return set(await session.scalars(select(AUTH.permission.codename)))
+    finally:
+        await engine.dispose()
+
+
+async def _drop(url: str) -> None:
+    engine = create_async_engine(url)
+    async with engine.begin() as conn:
+        await conn.run_sync(ContribBase.metadata.drop_all)
     await engine.dispose()
-    return int(rows or 0), int(distinct or 0)
+
+
+def _wait_until_ready(barrier: Path, workers: list[subprocess.Popen[str]], deadline: float) -> None:
+    """Every worker has imported and built its admin (ready file), or fail."""
+    while len(list(barrier.glob("ready-*"))) < len(workers):
+        if time.monotonic() > deadline:
+            pytest.fail("the workers did not get ready in time")
+        for worker in workers:
+            if worker.poll() is not None:
+                pytest.fail(f"a worker exited early: {worker.communicate()[1]}")
+        time.sleep(0.05)
 
 
 @pytest.mark.parametrize(
@@ -75,11 +95,15 @@ async def _stored(url: str) -> tuple[int, int]:
 def test_many_processes_starting_at_once(kind: str, tmp_path: Path) -> None:
     url = _url(kind, tmp_path)
     asyncio.run(_reset(url))
-    start = tmp_path / "start"
+    barrier = tmp_path / "barrier"
+    barrier.mkdir()
+    deadline = time.monotonic() + 180  # one budget for the whole test
+    env = {**os.environ, "FASTSTUDIO_SYNC_DATABASE_URL": url}
     workers = [
         subprocess.Popen(
-            [sys.executable, "-m", "tests.integration.cli._sync_worker", url, str(start)],
+            [sys.executable, "-m", "tests.integration.cli._sync_worker", str(barrier)],
             cwd=ROOT,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -87,15 +111,18 @@ def test_many_processes_starting_at_once(kind: str, tmp_path: Path) -> None:
         for _ in range(PROCESSES)
     ]
     try:
-        # Every worker has imported and built its admin before any starts.
-        import time  # noqa: PLC0415
-
-        time.sleep(3)
-        start.touch()
-        results = [worker.communicate(timeout=120) for worker in workers]
+        _wait_until_ready(barrier, workers, deadline)
+        (barrier / "start").touch()
+        results = [
+            worker.communicate(timeout=max(1.0, deadline - time.monotonic())) for worker in workers
+        ]
+        stored = asyncio.run(_stored(url))
     finally:
         for worker in workers:
-            worker.kill()
+            if worker.poll() is None:
+                worker.kill()
+            worker.communicate()  # reap, close the pipes
+        asyncio.run(_drop(url))
     racing = 0
     for worker, (out, err) in zip(workers, results, strict=True):
         assert worker.returncode == 0, err
@@ -103,9 +130,7 @@ def test_many_processes_starting_at_once(kind: str, tmp_path: Path) -> None:
         report = json.loads(out.strip().splitlines()[-1])
         assert report["status"] == 401  # anonymous /auth/me
         assert report["logs"] == []  # nothing logged at WARNING or above
-        assert len(report["missing"]) == 1  # synced once, on the first attempt
+        assert 1 <= len(report["missing"]) <= RACE_ATTEMPTS  # a lost race may retry
+        assert stored == set(report["expected"])  # every permission, nothing else
         racing += report["missing"][0] > 0
     assert racing >= 2  # the processes really raced to insert the same codenames
-    rows, distinct = asyncio.run(_stored(url))
-    assert rows == distinct  # each codename exactly once
-    assert rows >= 10  # notes.*, notes.publish, users/groups/permissions

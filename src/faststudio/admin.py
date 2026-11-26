@@ -54,13 +54,19 @@ _ADMIN_ATTR = "_faststudio_admin"
 
 
 def mounted_admins(app: FastAPI) -> list[Admin]:
-    """Return the Admins mounted on `app`, by base URL (private; used by the CLI)."""
-    found = [
-        admin
-        for route in app.router.routes
-        if isinstance(route, Mount)
-        and isinstance(admin := getattr(route, _ADMIN_ATTR, None), Admin)
-    ]
+    """Return the Admins mounted on `app` or its mounted sub-apps (private; for the CLI)."""
+    found: list[Admin] = []
+    pending: list[object] = [app]
+    while pending:
+        router = getattr(pending.pop(), "router", None)
+        for route in getattr(router, "routes", ()):
+            if not isinstance(route, Mount):
+                continue
+            admin = getattr(route, _ADMIN_ATTR, None)
+            if isinstance(admin, Admin):
+                found.append(admin)
+            else:
+                pending.append(route.app)  # e.g. app.mount("/api", sub_app)
     return sorted(found, key=lambda admin: admin._settings.base_url)
 
 
@@ -206,8 +212,10 @@ class Admin:
                 registry=self._registry,
                 session_maker=self._session_maker,
             )
-        app.mount(base_url, mounted, name="faststudio")
-        setattr(app.router.routes[-1], _ADMIN_ATTR, self)
+        # Built here, not with app.mount(), to tag this very route for the CLI.
+        route = Mount(base_url, app=mounted, name="faststudio")
+        setattr(route, _ADMIN_ATTR, self)
+        app.router.routes.append(route)
         if self._capabilities.register_admins is not None:
             # The backend's own models (e.g. contrib.auth users and groups).
             self._capabilities.register_admins(self)

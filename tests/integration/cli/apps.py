@@ -154,3 +154,20 @@ def needs_arguments(database_url: str) -> Admin:
         auth_backend=StubAuthBackend(),
         secret_key=SECRET,
     )
+
+
+def buggy_factory() -> Admin:
+    """A real factory with a bug inside: a TypeError while it runs."""
+    msg = "unsupported operand type(s) for +: 'int' and 'str'"
+    raise TypeError(msg)
+
+
+def nested_app() -> FastAPI:
+    """The admin's application mounted inside another one."""
+    outer = FastAPI()
+    outer.mount("/backoffice", host_app())
+    return outer
+
+
+#: A builtin without an inspectable signature (dict): called, returns a dict.
+builtin_factory = dict

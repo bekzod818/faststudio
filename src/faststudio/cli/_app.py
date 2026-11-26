@@ -8,6 +8,7 @@ lifespan never runs: the CLI imports and builds, it does not start the app.
 from __future__ import annotations
 
 import importlib
+import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -72,16 +73,24 @@ def _import(spec: str) -> object:
 
 
 def _call_factory(spec: str, factory: Callable[[], object]) -> object:
-    """Call a zero-argument factory; it must return an `Admin` or a FastAPI app."""
+    """Call a zero-argument factory; it must return an `Admin` or a FastAPI app.
+
+    Whatever the factory does when called runs (the app's lifespan does not).
+    """
     try:
-        result = factory()
+        inspect.signature(factory).bind()
     except TypeError:  # it needs arguments: not a factory
         msg = f"{spec} {_NOT_A_TARGET}"
         raise CliError(msg, code=2) from None
+    except ValueError:  # no signature (some builtins): just try calling it
+        pass
+    try:
+        result = factory()
     except ConfigurationError as exc:
         raise CliError(f"Cannot load {spec}: {exc}", code=2) from None
-    except Exception as exc:
-        raise CliError(_failed(spec, exc), code=2) from None
+    except Exception as exc:  # a bug in the factory, e.g. a TypeError inside it
+        msg = f"Calling {spec}() failed ({type(exc).__name__})."
+        raise CliError(msg, code=2) from None
     if not isinstance(result, Admin | FastAPI):
         msg = f"{spec} returned {type(result).__name__}, not a faststudio.Admin or a FastAPI app."
         raise CliError(msg, code=2)
@@ -93,7 +102,10 @@ def _the_mounted_admin(spec: str, app: FastAPI) -> Admin:
     if len(admins) == 1:
         return admins[0]
     if not admins:
-        msg = f"{spec} has no faststudio.Admin mounted."
+        msg = (
+            f"{spec} has no faststudio.Admin mounted (an Admin created in the app's "
+            "lifespan is not seen: point --app at the Admin itself)."
+        )
         raise CliError(msg, code=2)
     listed = ", ".join(
         f"{admin._settings.base_url} ({admin._settings.title!r})" for admin in admins

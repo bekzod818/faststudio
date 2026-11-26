@@ -388,9 +388,13 @@ never runs, and the CLI never creates tables: run your migrations first.
 - `Admin(..., sync_permissions_on_startup=True)` runs the sync (never
   `--prune`) on the first admin request instead. Several workers or
   replicas starting at once are fine: concurrent inserts of the same
-  permission are skipped, and a lost lock race is retried at once, without
-  logging. Other failures are logged (type only) and retried after 30
-  seconds; requests are served meanwhile.
+  permission are skipped, and a deadlock victim is retried after a short
+  backoff (at most 5 attempts within about 2 seconds), without logging.
+  Other failures, lock-wait timeouts included, are logged (type only) and
+  retried after 30 seconds; requests are served meanwhile.
+- `--app` calls a factory but never starts the application: what its
+  lifespan sets up (for example a database URL fetched at startup) is not
+  seen. Point `--app` at an `Admin` built with the right engine in that case.
 
 ## Users, groups and permissions (`contrib.auth`)
 

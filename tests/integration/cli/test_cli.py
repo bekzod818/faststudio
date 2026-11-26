@@ -106,6 +106,7 @@ def cli(terminal: FakeTerminal, *argv: str) -> int:
         (["createadmin", "--app", f"{APP}:no_admin_app"], 2, "has no faststudio.Admin mounted"),
         (["createadmin", "--app", f"{APP}:not_an_app"], 2, "returned dict"),
         (["createadmin", "--app", f"{APP}:needs_arguments"], 2, "a factory of one"),
+        (["createadmin", "--app", f"{APP}:builtin_factory"], 2, "returned dict"),
     ],
 )
 def test_app_resolution_errors(
@@ -123,8 +124,15 @@ def test_several_mounted_admins_are_listed(terminal: FakeTerminal, url: str) -> 
     assert "point --app at the one you mean" in terminal.text
 
 
+def test_a_type_error_inside_a_factory_is_not_called_a_bad_target(
+    terminal: FakeTerminal, url: str
+) -> None:
+    assert cli(terminal, "createadmin", "--app", f"{APP}:buggy_factory") == 2
+    assert terminal.err == [f"Calling {APP}:buggy_factory() failed (TypeError)."]
+
+
 @pytest.mark.usefixtures("db")
-@pytest.mark.parametrize("target", ["host_app", "mounted_app"])
+@pytest.mark.parametrize("target", ["host_app", "mounted_app", "nested_app"])
 def test_a_fastapi_app_or_factory_is_an_app_target(
     terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
@@ -563,9 +571,8 @@ def test_load_errors_are_short_messages(
     assert "FASTSTUDIO_SECRET_KEY" in terminal.text
     terminal.err.clear()
     assert cli(terminal, "syncpermissions", "--app", f"{APP}:broken") == 2
-    assert terminal.err == [
-        f'Cannot load {APP}:broken (RuntimeError). Run `python -c "import {APP}"` to see the error.'
-    ]
+    # The factory failed when called, not at import: the type only, no message.
+    assert terminal.err == [f"Calling {APP}:broken() failed (RuntimeError)."]
     assert "hunter2" not in terminal.text
     (tmp_path / "cli_boom_mod.py").write_text("raise ValueError('at import')\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
@@ -663,6 +670,29 @@ def test_insert_statements_per_dialect() -> None:
         Column("code_name", String(100), key="codename", unique=True),
     )
     renamed = _insert_ignoring_duplicates(keyed, keyed.c.codename, "mysql")
-    assert "code_name = VALUES(code_name)" in str(renamed.compile(dialect=mysql.dialect()))
+    # A no-op update: never re-key a row matched through another unique index.
+    rendered = str(renamed.compile(dialect=mysql.dialect()))
+    assert "ON DUPLICATE KEY UPDATE code_name = keyed_perms.code_name" in rendered
+    assert "VALUES(" not in rendered.split("ON DUPLICATE KEY UPDATE", 1)[1]
     plain = _insert_ignoring_duplicates(table, table.c.codename, "oracle")
     assert "IGNORE" not in str(plain)
+
+
+def test_permissions_that_cannot_be_created_fail_the_sync(
+    terminal: FakeTerminal, db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MySQL skips a row colliding on another unique column: the sync must notice."""
+    from sqlalchemy import text  # noqa: PLC0415
+
+    from faststudio.api import _permission_sync  # noqa: PLC0415
+
+    class Swallowed:  # what MySQL's no-op upsert does for such a row: nothing
+        def values(self, _values: object) -> object:
+            return text("SELECT 1")
+
+    monkeypatch.setattr(_permission_sync, "_insert_ignoring_duplicates", lambda *_args: Swallowed())
+    assert cli(terminal, "syncpermissions", "--app", f"{APP}:contrib") == 1
+    assert "could not be created" in terminal.text
+    assert "another unique column" in terminal.text
+    assert "Nothing was changed." in terminal.text
+    assert not _codenames(db)  # rolled back
