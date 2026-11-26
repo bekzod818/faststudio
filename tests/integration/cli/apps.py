@@ -171,3 +171,28 @@ def nested_app() -> FastAPI:
 
 #: A builtin without an inspectable signature (dict): called, returns a dict.
 builtin_factory = dict
+
+
+def wrapped_nested_app() -> FastAPI:
+    """The admin's application mounted inside another one, behind middleware."""
+    from starlette.middleware.gzip import GZipMiddleware  # noqa: PLC0415
+
+    outer = FastAPI()
+    outer.mount("/backoffice", GZipMiddleware(host_app()))
+    return outer
+
+
+def cyclic_app() -> FastAPI:
+    """An application mounted into itself (pathological): the search must end."""
+    app = host_app()
+    app.mount("/loop", app)
+    return app
+
+
+def router_mounted_app() -> FastAPI:
+    """The admin's application inside Mount(routes=[...]) (a bare Router)."""
+    from starlette.routing import Mount  # noqa: PLC0415
+
+    outer = FastAPI()
+    outer.router.routes.append(Mount("/staff", routes=[Mount("/area", app=host_app())]))
+    return outer

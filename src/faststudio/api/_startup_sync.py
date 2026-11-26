@@ -35,7 +35,9 @@ RETRY_INTERVAL = 30.0
 RACE_ATTEMPTS = 5
 #: No new attempt starts later than this many seconds after the first one.
 RACE_BUDGET = 2.0
-_sleep = asyncio.sleep  # tests replace this one name, not asyncio.sleep
+# Tests replace these names, not asyncio.sleep / time.monotonic for everything.
+_sleep = asyncio.sleep
+_monotonic = time.monotonic
 
 
 class StartupPermissionSync:
@@ -76,7 +78,7 @@ class StartupPermissionSync:
 
     async def _attempt(self) -> None:
         attempt = 1
-        started = time.monotonic()
+        started = _monotonic()
         while True:
             try:
                 async with self._session_maker() as session, session.begin():
@@ -84,11 +86,11 @@ class StartupPermissionSync:
                     await apply_sync(session, self._rules, plan, prune=False)
             except StatementError as exc:
                 delay = 0.05 * 2 ** (attempt - 1) * (1 + secrets.randbelow(1000) / 1000)
-                over_budget = time.monotonic() + delay - started > RACE_BUDGET
+                over_budget = _monotonic() + delay - started > RACE_BUDGET
                 if attempt >= RACE_ATTEMPTS or over_budget or not is_lost_race(exc):
                     raise
                 await _sleep(delay)  # another process won; back off with jitter
-                if time.monotonic() - started > RACE_BUDGET:
+                if _monotonic() - started > RACE_BUDGET:
                     raise  # the wait took longer than planned: no new attempt
                 attempt += 1
             else:

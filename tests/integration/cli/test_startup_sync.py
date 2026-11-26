@@ -279,7 +279,7 @@ async def test_retries_stop_within_the_time_budget(
 
     monkeypatch.setattr("faststudio.api._startup_sync.plan_sync", deadlocked)
     monkeypatch.setattr("faststudio.api._startup_sync._sleep", slow_sleep)
-    monkeypatch.setattr("faststudio.api._startup_sync.time.monotonic", lambda: clock["now"])
+    monkeypatch.setattr("faststudio.api._startup_sync._monotonic", lambda: clock["now"])
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://t") as http:
         await http.get("/admin/api/v1/auth/me")
     assert calls["n"] == 2  # the third attempt would start after the 2 s budget

@@ -7,6 +7,7 @@ Shared by ``faststudio syncpermissions`` and
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -124,18 +125,27 @@ class PermissionSyncError(Exception):
     """Some missing permissions could not be created (another unique column collides)."""
 
 
+def _created_query(rules: EscalationRules, chunk: Sequence[str], dialect: str) -> Any:  # noqa: ANN401
+    query = select(rules.codename).where(rules.codename.in_(chunk))
+    if dialect in {"mysql", "mariadb"}:
+        # A locking read sees the latest committed rows. A plain SELECT under
+        # MySQL's REPEATABLE READ reads this transaction's snapshot, which may
+        # predate a codename another worker committed (and the no-op upsert hit).
+        query = query.with_for_update(read=True)
+    return query
+
+
 async def _check_created(
     session: AsyncSession,
     rules: EscalationRules,
     codenames: list[str],
     bind: Any,  # noqa: ANN401
+    dialect: str,
 ) -> None:
     """Fail unless every codename now exists (created here or by another worker)."""
     found: set[str] = set()
     for chunk in chunks(codenames):
-        rows = await session.execute(
-            select(rules.codename).where(rules.codename.in_(chunk)), bind_arguments=bind
-        )
+        rows = await session.execute(_created_query(rules, chunk, dialect), bind_arguments=bind)
         found.update(rows.scalars())
     missing = [codename for codename in codenames if codename not in found]
     if missing:
@@ -177,7 +187,7 @@ async def apply_sync(
         except IntegrityError:
             continue  # created concurrently (checked below)
     if plan.missing:
-        await _check_created(session, rules, list(plan.missing), bind)
+        await _check_created(session, rules, list(plan.missing), bind, dialect)
     if rules.name_column is not None:
         for codename in plan.renamed:
             await session.execute(

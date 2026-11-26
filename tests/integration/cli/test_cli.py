@@ -132,7 +132,17 @@ def test_a_type_error_inside_a_factory_is_not_called_a_bad_target(
 
 
 @pytest.mark.usefixtures("db")
-@pytest.mark.parametrize("target", ["host_app", "mounted_app", "nested_app"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "host_app",
+        "mounted_app",
+        "nested_app",
+        "wrapped_nested_app",
+        "router_mounted_app",
+        "cyclic_app",
+    ],
+)
 def test_a_fastapi_app_or_factory_is_an_app_target(
     terminal: FakeTerminal, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
@@ -676,6 +686,22 @@ def test_insert_statements_per_dialect() -> None:
     assert "VALUES(" not in rendered.split("ON DUPLICATE KEY UPDATE", 1)[1]
     plain = _insert_ignoring_duplicates(table, table.c.codename, "oracle")
     assert "IGNORE" not in str(plain)
+
+
+def test_the_created_check_reads_the_latest_rows_on_mysql(url: str) -> None:
+    """Under REPEATABLE READ a plain SELECT could miss a concurrent worker's codename."""
+    from sqlalchemy.dialects import mysql  # noqa: PLC0415
+
+    from faststudio.api._permission_sync import _created_query  # noqa: PLC0415
+    from faststudio.cli._app import load_admin  # noqa: PLC0415
+
+    rules = load_admin(f"{APP}:contrib")._escalation
+    assert rules is not None
+    del url  # the admin's engine needs a URL; nothing is queried
+    on_mysql = _created_query(rules, ["a.view"], "mysql").compile(dialect=mysql.dialect())
+    assert str(on_mysql).endswith("LOCK IN SHARE MODE")
+    elsewhere = _created_query(rules, ["a.view"], "postgresql")  # a plain read
+    assert "LOCK IN SHARE MODE" not in str(elsewhere.compile(dialect=mysql.dialect()))
 
 
 def test_permissions_that_cannot_be_created_fail_the_sync(

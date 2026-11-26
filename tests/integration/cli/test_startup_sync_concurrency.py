@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import pytest
@@ -122,7 +123,10 @@ def test_many_processes_starting_at_once(kind: str, tmp_path: Path) -> None:
             if worker.poll() is None:
                 worker.kill()
             worker.communicate()  # reap, close the pipes
-        asyncio.run(_drop(url))
+        try:
+            asyncio.run(_drop(url))
+        except Exception as exc:
+            warnings.warn(f"could not drop the test tables: {exc!r}", stacklevel=1)
     racing = 0
     for worker, (out, err) in zip(workers, results, strict=True):
         assert worker.returncode == 0, err

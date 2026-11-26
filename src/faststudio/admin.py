@@ -54,20 +54,33 @@ _ADMIN_ATTR = "_faststudio_admin"
 
 
 def mounted_admins(app: FastAPI) -> list[Admin]:
-    """Return the Admins mounted on `app` or its mounted sub-apps (private; for the CLI)."""
-    found: list[Admin] = []
+    """Return the Admins mounted on `app` or its mounted sub-apps (private; for the CLI).
+
+    Follows mounts and ASGI middleware wrappers (their ``app`` attribute);
+    each application is visited once, so a mount cycle cannot loop.
+    """
+    found: dict[int, Admin] = {}
+    seen: set[int] = set()
     pending: list[object] = [app]
     while pending:
-        router = getattr(pending.pop(), "router", None)
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        # An application has a router; Mount(routes=[...]) gives a bare Router.
+        router = getattr(current, "router", None) or current
+        wrapped = getattr(current, "app", None)  # e.g. CORSMiddleware(sub_app)
+        if wrapped is not None and router is current:
+            pending.append(wrapped)
         for route in getattr(router, "routes", ()):
             if not isinstance(route, Mount):
                 continue
             admin = getattr(route, _ADMIN_ATTR, None)
             if isinstance(admin, Admin):
-                found.append(admin)
+                found[id(admin)] = admin
             else:
                 pending.append(route.app)  # e.g. app.mount("/api", sub_app)
-    return sorted(found, key=lambda admin: admin._settings.base_url)
+    return sorted(found.values(), key=lambda admin: admin._settings.base_url)
 
 
 class Admin:
