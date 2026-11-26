@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.exc import StatementError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 
 from faststudio.schemas.contract import ErrorBody, ErrorCode, ErrorResponse, ValidationIssue
 
@@ -154,6 +155,14 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
         errors = cast("RequestValidationError", exc).errors()
         return error_response(422, "validation_error", details=validation_issues(errors))
 
+    async def on_disconnect(request: Request, exc: Exception) -> Response:
+        # The browser left while sending the body (closed tab, navigation):
+        # nothing went wrong and nobody reads the answer. No traceback, no
+        # re-raise to the server; nothing was written (the body never arrived).
+        del exc
+        logger.debug("Client disconnected during %s %r", request.method, request.url.path)
+        return Response(status_code=400)
+
     async def on_unhandled(request: Request, exc: Exception) -> Response:
         # Starlette re-raises after this response is sent, so host error handlers
         # and monitoring still see admin failures (documented in ADR-0008).
@@ -175,4 +184,5 @@ def install_error_handlers(app: FastAPI, site: SpaSite) -> None:
     app.add_exception_handler(ApiError, on_api_error)
     app.add_exception_handler(StarletteHTTPException, on_http_error)
     app.add_exception_handler(RequestValidationError, on_validation_error)
+    app.add_exception_handler(ClientDisconnect, on_disconnect)
     app.add_exception_handler(Exception, on_unhandled)

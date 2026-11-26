@@ -1,5 +1,3 @@
-import "@/lib/zod-setup"; // first: before any zod schema parses
-
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

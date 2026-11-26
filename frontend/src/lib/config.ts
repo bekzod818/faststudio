@@ -1,18 +1,33 @@
-import { z } from "zod";
-
 /** In-app absolute path such as `/admin` or `/proxy/admin` (never `//host`). */
-const appPath = z
-  .string()
-  .regex(/^\/(?!\/)[^\s\\]*$/, "must be an absolute path on this site")
-  .refine((value) => !value.includes("://"), "must not contain a scheme");
+const APP_PATH = /^\/(?!\/)[^\s\\]*$/u;
 
-const SpaConfigSchema = z.object({
-  schema_version: z.literal("1"),
-  base_url: appPath,
-  api_url: appPath,
-  title: z.string().min(1),
-  max_list_offset: z.number().int().positive(),
-});
+function isAppPath(value: unknown): value is string {
+  return typeof value === "string" && APP_PATH.test(value) && !value.includes("://");
+}
+
+/**
+ * Validate the server-rendered block. Hand-written (no zod) so the boot path
+ * stays small; unknown keys are ignored, as before.
+ */
+function parseBlock(raw: unknown): AppConfig | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const block = raw as Record<string, unknown>;
+  const { schema_version: version, base_url: baseUrl, api_url: apiUrl, title } = block;
+  const offset = block.max_list_offset;
+  if (
+    version !== "1" ||
+    !isAppPath(baseUrl) ||
+    !isAppPath(apiUrl) ||
+    typeof title !== "string" ||
+    title.length === 0 ||
+    typeof offset !== "number" ||
+    !Number.isInteger(offset) ||
+    offset <= 0
+  ) {
+    return null;
+  }
+  return { schemaVersion: version, baseUrl, apiUrl, title, maxListOffset: offset };
+}
 
 export interface AppConfig {
   schemaVersion: "1";
@@ -50,15 +65,9 @@ export function readConfig(doc: Document = document): AppConfig {
   } catch {
     throw new Error("FastStudio: the runtime config block is not valid JSON.");
   }
-  const parsed = SpaConfigSchema.safeParse(raw);
-  if (!parsed.success) {
+  const config = parseBlock(raw);
+  if (config === null) {
     throw new Error("FastStudio: the runtime config block is invalid.");
   }
-  return {
-    schemaVersion: parsed.data.schema_version,
-    baseUrl: parsed.data.base_url,
-    apiUrl: parsed.data.api_url,
-    title: parsed.data.title,
-    maxListOffset: parsed.data.max_list_offset,
-  };
+  return config;
 }
