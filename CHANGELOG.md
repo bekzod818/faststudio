@@ -104,10 +104,13 @@ listed under **Changed** or **Removed** with migration notes.
 
 ### Changed
 
+- The login rate limit treats spellings that MySQL's default collation
+  signs in as one account as one username: besides case and width, also
+  accents (`José` / `jose`), invisible characters (soft hyphen, zero-width
+  space) and stroke letters (`ø` / `o`).
 - The admin UI's first download is about a quarter smaller (main script
   505 kB → 375 kB, gzip 160 kB → 121 kB): the login page and its form
   libraries load only when needed.
-
 - A write (POST, PATCH, DELETE) sent with an expired session cookie now
   gets `401 not_authenticated` instead of `403 csrf_failed`, with the dead
   cookie cleared; nothing runs in either case.

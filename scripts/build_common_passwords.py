@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import http.client
 import io
 import sys
 import time
@@ -52,7 +53,9 @@ def download() -> bytes:
             with urllib.request.urlopen(URL, timeout=60) as response:
                 data: bytes = response.read(MAX_SOURCE_BYTES + 1)
             break
-        except (urllib.error.URLError, TimeoutError) as exc:
+        # URLError covers HTTP errors; IncompleteRead and OSError cover a
+        # connection dropped mid-body.
+        except (http.client.HTTPException, OSError) as exc:  # URLError is an OSError
             if attempt == ATTEMPTS:
                 msg = f"cannot download {URL} after {ATTEMPTS} attempts ({exc})"
                 raise SystemExit(msg) from None
@@ -97,7 +100,9 @@ def compress(text: str) -> bytes:
 
 def main(argv: list[str]) -> int:
     """Write the list, or with ``--check`` compare it with a fresh build."""
-    parser = argparse.ArgumentParser(prog="build_common_passwords.py", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="build_common_passwords.py", description=__doc__, allow_abbrev=False
+    )
     parser.add_argument(
         "--check", action="store_true", help="verify the committed list; write nothing"
     )

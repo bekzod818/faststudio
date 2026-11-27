@@ -37,6 +37,12 @@ export interface ApiClientOptions {
    * `discard` fails it quietly, `cancel` runs `onUnauthorized`.
    */
   reauthenticate?: () => Promise<ReauthOutcome>;
+  /**
+   * How long a session-ending POST may take before it is given up
+   * (`network_error`), so a server that never answers cannot keep every
+   * other request blocked. Default 30 s.
+   */
+  sessionEndTimeoutMs?: number;
 }
 
 /** Query parameters; `undefined` values are skipped. */
@@ -102,8 +108,11 @@ function queryString(params: QueryParams | undefined): string {
  */
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const sessionEndTimeoutMs = options.sessionEndTimeoutMs ?? 30_000;
   const inFlight = new Map<AbortController, Promise<unknown>>();
   let closing = 0;
+  /** In-place sign-ins in progress: only their login may pass a closed gate. */
+  let reauthing = 0;
   /** The previous endSession(): a second one waits instead of aborting its POST. */
   let ending: Promise<unknown> = Promise.resolve();
 
@@ -114,6 +123,16 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return settled;
     });
     await Promise.all(settling);
+  }
+
+  /** A timer that aborts `controller` after the session-end timeout. */
+  function deadline(controller: AbortController): () => void {
+    const timer = setTimeout(() => {
+      controller.abort(new DOMException("timeout", "TimeoutError"));
+    }, sessionEndTimeoutMs);
+    return () => {
+      clearTimeout(timer);
+    };
   }
 
   /** Fetch with our own abort controller, also following the caller's signal. */
@@ -134,7 +153,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       inFlight.delete(controller);
       signal?.removeEventListener("abort", follow);
     });
-    return { pending, aborted: () => controller.signal.aborted };
+    return { pending, controller, aborted: () => controller.signal.aborted };
   }
 
   async function request<T>(
@@ -146,8 +165,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     endingSession = false,
   ): Promise<T> {
     const { params, signal } = getOptions;
-    if (closing > 0 && !endingSession) {
-      // Nothing may reach the server (and renew the cookie) while the session ends.
+    // Nothing may reach the server (and renew the old cookie) while a session
+    // ends. The in-place sign-in's login is the exception: it starts a new
+    // session and never renews the old one, and a queued sign-out still runs
+    // after it. Any other login (e.g. the login page) waits like the rest.
+    if (closing > 0 && !endingSession && !(path === LOGIN_PATH && reauthing > 0)) {
       throw new ApiError(0, "session_ending", "The session is ending.");
     }
     const headers = new Headers({ accept: "application/json" });
@@ -161,22 +183,42 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       init.body = JSON.stringify(body);
     }
     let response: Response;
+    // Session-ending calls never pass a signal of their own (endSession() uses
+    // {}); their deadline covers the headers and the body.
     const call = tracked(`${options.apiUrl}${path}${queryString(params)}`, init, signal);
+    const clear = endingSession ? deadline(call.controller) : undefined;
+    const timedOut = () =>
+      endingSession &&
+      call.controller.signal.reason instanceof DOMException &&
+      call.controller.signal.reason.name === "TimeoutError";
+    const noAnswer = () =>
+      new ApiError(
+        0,
+        "network_error",
+        "The server did not answer; the change may or may not have been applied.",
+      );
     try {
       response = await call.pending;
     } catch (error) {
+      clear?.();
+      if (timedOut()) throw noAnswer();
       // Let TanStack Query recognise its own cancellations.
       if (signal?.aborted) throw error;
       // Aborted by endSession(): neither a network failure nor worth a retry.
       if (call.aborted()) throw new ApiError(0, "session_ending", "The session is ending.");
       throw new ApiError(0, "network_error", "The server could not be reached.");
     }
-    if (response.status === 204) return undefined as T;
     let payload: unknown;
     try {
-      payload = await response.json();
-    } catch {
-      payload = null;
+      if (response.status === 204) return undefined as T;
+      try {
+        payload = await response.json();
+      } catch {
+        if (timedOut()) throw noAnswer(); // the body stalled past the deadline
+        payload = null;
+      }
+    } finally {
+      clear?.();
     }
     if (response.ok) return payload as T;
     if (isErrorBody(payload)) {
@@ -185,14 +227,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (response.status === 401 && code === "not_authenticated") {
         const reauthenticate = options.reauthenticate;
         if (method !== "GET" && !retried && !SESSION_PATHS.has(path) && reauthenticate) {
-          // A session-ending write (a password change) holds the gate: open it
-          // while the admin signs in again, or the sign-in could not be sent.
-          if (endingSession) closing -= 1;
+          // The sign-in passes the gate even while a session-ending write (a
+          // password change) holds it, or while another one is queued.
+          reauthing += 1;
           let outcome: ReauthOutcome;
           try {
             outcome = await reauthenticate();
           } finally {
-            if (endingSession) closing += 1;
+            reauthing -= 1;
           }
           // The new sign-in set a new CSRF cookie: the retry reads it.
           if (outcome === "retry") {

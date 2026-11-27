@@ -192,6 +192,20 @@ async def test_rate_limit_is_per_username(
     assert (await _login(https_client)).status_code == 200
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ["JOSÉ", " José", "jose\u0301", "\uff4a\uff4f\uff53\uff45"],  # the last: full-width
+)
+async def test_spellings_one_database_may_match_share_a_bucket(
+    make_auth_admin: AuthAdminFactory, https_client: httpx.AsyncClient, variant: str
+) -> None:
+    """Case, width and accents: MySQL's default collation signs in 'José' as 'jose'."""
+    make_auth_admin(rate_limiter=InMemoryRateLimiter(max_attempts=2, window_seconds=60))
+    for _ in range(2):
+        await _login(https_client, "jose", "x")
+    assert (await _login(https_client, variant, "x")).status_code == 429
+
+
 async def test_one_client_cannot_spray_many_usernames(
     make_auth_admin: AuthAdminFactory, app: FastAPI
 ) -> None:
