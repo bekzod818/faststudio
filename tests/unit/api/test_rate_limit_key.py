@@ -46,6 +46,28 @@ def test_letters_the_collation_equates_share_a_key(variant: str, plain: str) -> 
     assert rate_limit_username(variant) == rate_limit_username(plain)
 
 
+@pytest.mark.parametrize(
+    ("variant", "plain"),
+    [
+        # Checked against MySQL 8.4 utf8mb4_0900_ai_ci by the PR #23 reviewers.
+        ("admin\u0903", "admin"),  # Devanagari visarga (Mc), ignored
+        ("ad\u0903m\u0903in", "admin"),
+        ("admin\u17c7", "admin"),  # Khmer reahmuk (Mc)
+        ("admin\u0f7f", "admin"),  # Tibetan rnam bcad (Mc)
+        ("admin\u07fa", "admin"),  # NKo lajanyalan (Lm)
+        ("admin\u180a", "admin"),  # Mongolian nirugu (Po)
+        ("admin\u1cf2", "admin"),  # Vedic ardhavisarga (Lo)
+        ("admin\u0661", "admin1"),  # Arabic-Indic one
+        ("\u09e8\u09e8admin", "22admin"),  # Bengali digits
+        ("adm\u0365n", "admin"),  # combining Latin small letter i
+        ("jos\u0364", "jose"),  # combining Latin small letter e
+        ("\u0140ola", "lola"),  # l with middle dot
+    ],
+)
+def test_ignorables_digits_and_letter_forms_share_a_key(variant: str, plain: str) -> None:
+    assert rate_limit_username(variant) == rate_limit_username(plain)
+
+
 @pytest.mark.parametrize("name", ["admin", "root", "ann", "dan-the-admin", "x" * 150])
 def test_plain_names_are_unchanged(name: str) -> None:
     assert rate_limit_username(name) == name

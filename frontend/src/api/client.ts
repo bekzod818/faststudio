@@ -188,6 +188,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     const call = tracked(`${options.apiUrl}${path}${queryString(params)}`, init, signal);
     const clear = endingSession ? deadline(call.controller) : undefined;
     const timedOut = () =>
+      endingSession &&
       call.controller.signal.reason instanceof DOMException &&
       call.controller.signal.reason.name === "TimeoutError";
     const noAnswer = () =>

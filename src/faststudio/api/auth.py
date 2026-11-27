@@ -94,33 +94,60 @@ protected_router = APIRouter(prefix=API_PREFIX, dependencies=[Depends(current_us
 #: Letters MySQL's utf8mb4_0900_ai_ci equates with plain ones although Unicode
 #: gives them no decomposition (stroke letters, ligatures).
 _FOLDED_LETTERS = str.maketrans(
-    {"ø": "o", "ł": "l", "đ": "d", "ð": "d", "ħ": "h", "ŧ": "t", "æ": "ae", "œ": "oe"}
+    {
+        "ø": "o",
+        "ł": "l",
+        "đ": "d",
+        "ð": "d",
+        "ħ": "h",
+        "ŧ": "t",
+        "æ": "ae",
+        "œ": "oe",
+    }
 )
-#: Dropped from rate-limit keys: marks (accents, iota subscript, combining
-#: grapheme joiner) and format characters (soft hyphen, zero-width space and
-#: joiners, bidi marks), which accent-insensitive collations ignore.
-_DROPPED_CATEGORIES = frozenset({"Mn", "Me", "Cf"})
-_TATWEEL = "\u0640"  # Arabic elongation: ignored by MySQL's collation
+#: Mapped before NFKD, which would split them into a letter and a middle dot.
+_PRE_FOLDED = str.maketrans({"ŀ": "l", "Ŀ": "L"})
+#: Dropped from rate-limit keys: marks, including spacing signs such as the
+#: Devanagari visarga (accents, iota subscript, combining grapheme joiner),
+#: and format characters (soft hyphen, zero-width space and joiners, bidi
+#: marks), which accent-insensitive collations ignore.
+_DROPPED_CATEGORIES = frozenset({"Mn", "Mc", "Me", "Cf"})
+#: Other characters that collation ignores: Arabic tatweel, NKo and
+#: Samaritan modifiers, Mongolian nirugu, Vedic signs.
+_IGNORED = frozenset("\u0640\u07fa\u0824\u0828\u180a\u1cd3\u1cf2\u1cf3")
+_COMBINING_LETTER = "COMBINING LATIN SMALL LETTER "
+
+
+def _fold_char(char: str) -> str:
+    """One NFKD character as it counts for the rate-limit key ("" to drop it)."""
+    name = unicodedata.name(char, "")
+    if name.startswith(_COMBINING_LETTER):
+        # The collation weighs e.g. U+0364 as the letter e ("josͤ" = "jose").
+        letter = name.removeprefix(_COMBINING_LETTER).split(" ", 1)[0]
+        return letter.lower() if len(letter) == 1 else ""
+    if char in _IGNORED or unicodedata.category(char) in _DROPPED_CATEGORIES:
+        return ""
+    if unicodedata.category(char) == "Nd":
+        return str(unicodedata.decimal(char))  # e.g. Arabic-Indic one (U+0661) = "1"
+    return char
 
 
 def rate_limit_username(username: str) -> str:
     """Normalize a username for rate-limit keys.
 
-    Spellings a supported database's collation may sign in as one account
-    share one bucket: case and width ("Admin", full-width letters), accents
-    ("José" / "jose"), invisible characters (a soft hyphen or zero-width
-    space inside the name) and stroke letters or ligatures ("bjørn" /
-    "bjorn"), as MySQL's default utf8mb4_0900_ai_ci compares them. On
-    PostgreSQL, which compares exactly, this only makes the limit stricter.
+    Spellings that a supported database's collation may sign in as one
+    account should share one bucket. This approximates MySQL's default
+    utf8mb4_0900_ai_ci for the cases that matter: case and width ("Admin",
+    full-width letters), accents ("José" / "jose"), invisible and ignorable
+    characters (soft hyphen, zero-width space, Indic visarga), other-script
+    digits, and stroke letters or ligatures ("bjørn" / "bjorn"). It is not a
+    full collation table; the per-client budget caps what remains. Folding
+    more only ever makes the limit stricter; PostgreSQL compares exactly.
     """
     # Marks go before casefold, which would expand some of them (the Greek
     # iota subscript into a full iota); stroke letters are mapped after it.
-    decomposed = unicodedata.normalize("NFKD", username)
-    kept = "".join(
-        c
-        for c in decomposed
-        if c != _TATWEEL and unicodedata.category(c) not in _DROPPED_CATEGORIES
-    )
+    decomposed = unicodedata.normalize("NFKD", username.translate(_PRE_FOLDED))
+    kept = "".join(_fold_char(c) for c in decomposed)
     folded = unicodedata.normalize("NFKC", kept).casefold()
     return folded.translate(_FOLDED_LETTERS).strip()
 
